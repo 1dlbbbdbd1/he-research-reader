@@ -921,6 +921,17 @@ interface EvidenceEngine {
 - token 只从 Codex 的本机 config 读取并作为进程内认证信息使用；config、`.env`、本地工具、运行时、依赖缓存和构建产物都不进入 Git 历史。
 - 每次发布前必须同步本 README 的“当前进度”、更新 `CHANGELOG.md`，并确认 `npm test`、`npm run build` 通过。
 
+### 稳定发布顺序
+
+以后不再把版本标签当作第一次远端测试。固定执行：
+
+1. 运行 `scripts/release-preflight.ps1` 完成本地凭据、Git 范围、版本、测试和构建检查。
+2. 只推送已确认的 `main` 提交。
+3. 手动运行一次 `Release Windows`，在 GitHub 的干净 Windows 环境完成试打包；此时不创建 Release。
+4. 远端试跑成功后才推送 `v*` 标签，由同一工作流创建正式 Release。
+
+完整清单、失败分类和禁止事项见 `RELEASE_CHECKLIST.md`。如果远端失败，只根据失败步骤日志修复 `main`，不强制移动已经推送的标签。
+
 首个里程碑 `v0.1.0` 已发布：`https://github.com/1dlbbbdbd1/he-research-reader/releases/tag/v0.1.0`。后续发布步骤：
 
 ```powershell

@@ -3,6 +3,7 @@ dist/
 .runtime/
 release/
 release-latest/
+release-offline*/
 .npm-cache/
 .tools/
 *.log
