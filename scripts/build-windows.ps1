@@ -32,10 +32,10 @@ try {
     }
 
     if ($Target -eq 'Pack') {
-        & $builderExecutable --win dir --x64
+        & $builderExecutable --win dir --x64 --publish never
     }
     else {
-        & $builderExecutable --win nsis portable --x64
+        & $builderExecutable --win nsis portable --x64 --publish never
     }
 
     if ($LASTEXITCODE -ne 0) {

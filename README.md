@@ -921,7 +921,7 @@ interface EvidenceEngine {
 - token 只从 Codex 的本机 config 读取并作为进程内认证信息使用；config、`.env`、本地工具、运行时、依赖缓存和构建产物都不进入 Git 历史。
 - 每次发布前必须同步本 README 的“当前进度”、更新 `CHANGELOG.md`，并确认 `npm test`、`npm run build` 通过。
 
-首个里程碑为 `v0.1.0`。后续发布步骤：
+首个里程碑 `v0.1.0` 已发布：`https://github.com/1dlbbbdbd1/he-research-reader/releases/tag/v0.1.0`。后续发布步骤：
 
 ```powershell
 npm test
