@@ -1,0 +1,108 @@
+{
+  "name": "research-agent-workbench",
+  "productName": "科研阅读闭环",
+  "description": "本地优先的科研文献阅读、批注与复查桌面应用",
+  "author": "Research Reader Project",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "node --test tests/mineru.test.cjs tests/translation.test.cjs tests/search.test.cjs tests/workspace.test.cjs tests/bibliography-adapters.test.cjs tests/annotation-anchor.test.cjs tests/review-ai.test.cjs tests/deep-link.test.cjs tests/reader-zoom.test.cjs tests/review-selection.test.cjs",
+    "smoke:mineru": "node scripts/smoke-mineru.cjs",
+    "smoke:translation": "node scripts/smoke-translation.cjs",
+    "preview": "vite preview",
+    "desktop": "npm run build && electron electron/main.cjs",
+    "setup:mineru": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/setup-mineru.ps1",
+    "pack:win": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Target Pack",
+    "dist:win": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Target Dist"
+  },
+  "dependencies": {
+    "@citation-js/core": "^0.8.2",
+    "@citation-js/plugin-bibtex": "^0.8.2",
+    "@citation-js/plugin-ris": "^0.8.2",
+    "docx": "^9.7.1",
+    "fast-xml-parser": "^5.10.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "6.0.4",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "jszip": "^3.10.1",
+    "lucide-react": "1.27.0",
+    "mammoth": "^1.12.0",
+    "pdfjs-dist": "^6.2.108",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "7.0.2",
+    "vite": "8.1.5"
+  },
+  "build": {
+    "appId": "io.researchreader.desktop",
+    "productName": "科研阅读闭环",
+    "electronDist": "node_modules/electron/dist",
+    "asar": true,
+    "protocols": [
+      {
+        "name": "科研阅读引用",
+        "schemes": [
+          "research-reader"
+        ]
+      }
+    ],
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "scripts/setup-mineru.ps1",
+        "to": "scripts/setup-mineru.ps1"
+      },
+      {
+        "from": "scripts/setup-argos.ps1",
+        "to": "scripts/setup-argos.ps1"
+      },
+      {
+        "from": "scripts/argos-bridge.py",
+        "to": "scripts/argos-bridge.py"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "artifactName": "ResearchReader-${version}-${arch}.${ext}",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "ResearchReader-Setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "科研阅读闭环"
+    },
+    "portable": {
+      "artifactName": "ResearchReader-Portable-${version}-${arch}.${ext}"
+    }
+  }
+}
