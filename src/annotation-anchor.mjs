@@ -1,5 +1,5 @@
 export function annotationPage(annotation) {
-  const page = annotation?.anchor?.type === 'pdf' && annotation?.anchor?.state === 'resolved'
+  const page = annotation?.anchor?.state === 'resolved'
     ? annotation.anchor.pageNumber
     : undefined
   if (Number.isInteger(page) && page > 0) return page

@@ -1,21 +1,26 @@
 {
   "name": "research-agent-workbench",
-  "productName": "科研阅读闭环",
+  "productName": "小何的科研阅读助手",
   "description": "本地优先的科研文献阅读、批注与复查桌面应用",
   "author": "Research Reader Project",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "node --test tests/mineru.test.cjs tests/translation.test.cjs tests/search.test.cjs tests/workspace.test.cjs tests/bibliography-adapters.test.cjs tests/annotation-anchor.test.cjs tests/review-ai.test.cjs tests/deep-link.test.cjs tests/reader-zoom.test.cjs tests/review-selection.test.cjs",
+    "test": "node --test tests/mineru.test.cjs tests/translation.test.cjs tests/embedding.test.cjs tests/semantic-index.test.cjs tests/search.test.cjs tests/workspace.test.cjs tests/bibliography-adapters.test.cjs tests/annotation-anchor.test.cjs tests/review-ai.test.cjs tests/deep-link.test.cjs tests/reader-zoom.test.cjs tests/pdf-navigation.test.cjs tests/markdown-anchor.test.cjs tests/review-selection.test.cjs tests/library-papers.test.cjs tests/academic-markdown.test.cjs tests/research-agent.test.cjs tests/paper-reading-card.test.cjs tests/settings-service.test.cjs tests/desktop-shell.test.cjs tests/desktop-runtime.test.cjs",
     "smoke:mineru": "node scripts/smoke-mineru.cjs",
     "smoke:translation": "node scripts/smoke-translation.cjs",
+    "smoke:embedding": "node scripts/smoke-embedding.cjs",
+    "smoke:desktop:seed": "node scripts/seed-desktop-smoke.cjs",
+    "smoke:desktop": "node scripts/run-desktop-test.cjs --smoke",
     "preview": "vite preview",
     "desktop": "npm run build && electron electron/main.cjs",
+    "desktop:test": "node scripts/run-desktop-test.cjs",
     "setup:mineru": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/setup-mineru.ps1",
+    "setup:embedding": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/setup-embedding.ps1",
     "pack:win": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Target Pack",
     "dist:win": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Target Dist"
   },
@@ -24,7 +29,12 @@
     "@citation-js/plugin-bibtex": "^0.8.2",
     "@citation-js/plugin-ris": "^0.8.2",
     "docx": "^9.7.1",
-    "fast-xml-parser": "^5.10.1"
+    "fast-xml-parser": "^5.10.1",
+    "katex": "^0.16.47",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",
@@ -43,12 +53,12 @@
   },
   "build": {
     "appId": "io.researchreader.desktop",
-    "productName": "科研阅读闭环",
+    "productName": "小何的科研阅读助手",
     "electronDist": "node_modules/electron/dist",
     "asar": true,
     "protocols": [
       {
-        "name": "科研阅读引用",
+        "name": "小何的科研阅读引用",
         "schemes": [
           "research-reader"
         ]
@@ -68,16 +78,29 @@
         "from": "scripts/setup-argos.ps1",
         "to": "scripts/setup-argos.ps1"
       },
-      {
-        "from": "scripts/argos-bridge.py",
-        "to": "scripts/argos-bridge.py"
-      }
+        {
+          "from": "scripts/argos-bridge.py",
+          "to": "scripts/argos-bridge.py"
+        },
+        {
+          "from": "scripts/setup-embedding.ps1",
+          "to": "scripts/setup-embedding.ps1"
+        },
+        {
+          "from": "scripts/embedding-bridge.py",
+          "to": "scripts/embedding-bridge.py"
+        },
+        {
+          "from": "build/icon.ico",
+          "to": "brand/icon.ico"
+        }
     ],
     "directories": {
       "output": "release"
     },
-    "artifactName": "ResearchReader-${version}-${arch}.${ext}",
+    "artifactName": "XiaoHeResearchReader-${version}-${arch}.${ext}",
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -94,15 +117,16 @@
       ]
     },
     "nsis": {
-      "artifactName": "ResearchReader-Setup-${version}-${arch}.${ext}",
+      "artifactName": "XiaoHeResearchReader-Setup-${version}-${arch}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh",
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "科研阅读闭环"
+      "shortcutName": "小何的科研阅读助手"
     },
     "portable": {
-      "artifactName": "ResearchReader-Portable-${version}-${arch}.${ext}"
+      "artifactName": "XiaoHeResearchReader-Portable-${version}-${arch}.${ext}"
     }
   }
 }

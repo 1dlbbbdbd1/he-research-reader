@@ -89,6 +89,32 @@ export async function renderPdfPageWithTextLayer(
   return { width: viewport.width, height: viewport.height }
 }
 
+export async function renderPdfThumbnail(
+  document: LocalPdfDocument,
+  canvas: HTMLCanvasElement,
+  pageNumber: number,
+  maxWidth = 168,
+) {
+  const page = await document.getPage(Math.max(1, Math.min(pageNumber, document.numPages)))
+  const baseViewport = page.getViewport({ scale: 1 })
+  const scale = Math.max(.08, maxWidth / baseViewport.width)
+  const viewport = page.getViewport({ scale })
+  const pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1))
+  canvas.width = Math.ceil(viewport.width * pixelRatio)
+  canvas.height = Math.ceil(viewport.height * pixelRatio)
+  canvas.style.width = `${viewport.width}px`
+  canvas.style.height = `${viewport.height}px`
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('浏览器未提供缩略图画布。')
+  await page.render({
+    canvas,
+    canvasContext: context,
+    viewport,
+    transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+  }).promise
+  return { width: viewport.width, height: viewport.height }
+}
+
 async function parsePdfText(file: File) {
   const document = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise
   const limit = Math.min(document.numPages, 30)

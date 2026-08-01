@@ -9,6 +9,9 @@ test('批注优先使用已解析 PDF 页码，旧页码只作为兼容回退', 
   }), 7)
   assert.equal(annotationPage({ page: '第 4 页' }), 4)
   assert.equal(annotationPage({ page: '未标注位置' }), undefined)
+  assert.equal(annotationPage({
+    anchor: { type: 'markdown', state: 'resolved', pageNumber: 9 },
+  }), 9)
 })
 
 test('高亮矩形会裁剪到页面范围并拒绝无效坐标', async () => {
@@ -34,6 +37,7 @@ test('页面高亮只返回对应页且拥有有效矩形的批注', async () =>
     { id: 'a1', anchor: { type: 'pdf', state: 'resolved', pageNumber: 3, rects: [{ x: .1, y: .2, width: .3, height: .04 }] } },
     { id: 'a2', anchor: { type: 'pdf', state: 'resolved', pageNumber: 4, rects: [{ x: .1, y: .2, width: .3, height: .04 }] } },
     { id: 'a3', anchor: { type: 'pdf', state: 'resolved', pageNumber: 3, rects: [] } },
+    { id: 'a4', anchor: { type: 'markdown', state: 'resolved', pageNumber: 3, rects: [{ x: .2, y: .3, width: .4, height: .05 }] } },
   ], 3)
-  assert.deepEqual(result.map(item => item.id), ['a1'])
+  assert.deepEqual(result.map(item => item.id), ['a1', 'a4'])
 })

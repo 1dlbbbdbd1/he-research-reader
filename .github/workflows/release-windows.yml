@@ -49,7 +49,7 @@ jobs:
         shell: pwsh
         run: |
           $artifacts = Get-ChildItem -LiteralPath release -File |
-            Where-Object { $_.Name -match '^ResearchReader-(Setup|Portable)-.+-x64\.exe$' }
+            Where-Object { $_.Name -match '^XiaoHeResearchReader-(Setup|Portable)-.+-x64\.exe$' }
           if ($artifacts.Count -ne 2) {
             throw "Expected one setup installer and one portable executable, found $($artifacts.Count)."
           }
@@ -67,12 +67,12 @@ jobs:
         run: |
           $assets = Get-ChildItem -LiteralPath release -File |
             Where-Object {
-              $_.Name -match '^ResearchReader-(Setup|Portable)-.+-x64\.exe$' -or
+              $_.Name -match '^XiaoHeResearchReader-(Setup|Portable)-.+-x64\.exe$' -or
               $_.Name -eq 'SHA256SUMS.txt'
             } |
             ForEach-Object { $_.FullName }
           gh release create "$env:GITHUB_REF_NAME" @assets `
             --repo "$env:GITHUB_REPOSITORY" `
-            --title "科研阅读闭环 $env:GITHUB_REF_NAME" `
+            --title "小何的科研阅读助手 $env:GITHUB_REF_NAME" `
             --generate-notes `
             --verify-tag

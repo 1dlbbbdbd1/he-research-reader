@@ -1,0 +1,1093 @@
+/* Desktop visual system. Loaded last to retire the prototype's micro-copy. */
+:root {
+  --desktop-caption: 12px;
+  --desktop-body: 14px;
+  --desktop-body-line: 20px;
+  --desktop-title: 28px;
+  --desktop-toolbar-height: 52px;
+  --desktop-sidebar-width: 232px;
+  --desktop-border: #d8d8d4;
+  --desktop-border-soft: #e7e7e3;
+  --desktop-text: #252523;
+  --desktop-muted: #6e6e69;
+  --desktop-faint: #858580;
+  font-family: "Segoe UI Variable", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  color: var(--desktop-text);
+  background: var(--ui-page, #f5f5f3);
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  min-width: 0;
+  font-size: var(--desktop-body);
+  line-height: var(--desktop-body-line);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea,
+select {
+  line-height: 1.35;
+}
+
+.app-shell {
+  height: calc(100dvh / var(--ui-scale, 1));
+  min-height: 0 !important;
+  overflow: hidden;
+}
+
+.app-shell:not(.reader-active) {
+  grid-template-columns: var(--desktop-sidebar-width) minmax(0, 1fr);
+}
+
+.app-shell:not(.reader-active) > main {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: var(--desktop-toolbar-height) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.app-shell:not(.reader-active) .sidebar {
+  width: var(--desktop-sidebar-width);
+  min-height: 0;
+  height: 100%;
+  overflow: visible;
+}
+
+.app-shell:not(.reader-active) .topbar {
+  height: var(--desktop-toolbar-height);
+}
+
+.app-shell:not(.reader-active) .brand {
+  font-size: 15px;
+}
+
+.app-shell:not(.reader-active) .project-switch {
+  min-height: 50px;
+}
+
+.app-shell:not(.reader-active) .project-switch small,
+.app-shell:not(.reader-active) .sidebar small,
+.app-shell:not(.reader-active) .workspace-menu p,
+.app-shell:not(.reader-active) .workspace-migrate small,
+.workspace-recent > small,
+.workspace-create > small {
+  font-size: var(--desktop-caption);
+  line-height: 16px;
+}
+
+.app-shell:not(.reader-active) .project-switch strong,
+.workspace-menu-title strong,
+.workspace-recent button,
+.workspace-create input,
+.workspace-primary,
+.workspace-secondary,
+.workspace-migrate,
+.app-shell:not(.reader-active) .nav-item,
+.app-shell:not(.reader-active) .local-note,
+.crumb,
+.agent-button,
+.primary-button,
+.outline-button {
+  font-size: 13px;
+}
+
+.app-shell:not(.reader-active) .nav-item {
+  min-height: 38px;
+}
+
+.app-shell:not(.reader-active) .nav-item em {
+  min-width: 20px;
+  padding: 1px 6px;
+  text-align: center;
+  font-size: var(--desktop-caption);
+}
+
+.eyebrow,
+.section-kicker,
+.action-type {
+  margin-bottom: 6px;
+  color: var(--desktop-faint);
+  font-family: inherit;
+  font-size: var(--desktop-caption);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.page {
+  width: 100%;
+  max-width: 1440px;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 28px 32px 36px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.library-page {
+  max-width: 1440px;
+  padding-top: 26px;
+}
+
+.library-page .page-title {
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.library-page .page-title h1 {
+  margin-bottom: 5px;
+  font-size: var(--desktop-title);
+  line-height: 34px;
+  letter-spacing: -.6px;
+}
+
+.library-page .page-title p:not(.eyebrow) {
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.library-page .source-toolbar {
+  height: 48px;
+}
+
+.library-search {
+  height: 36px;
+}
+
+.library-search input {
+  font-size: 13px;
+}
+
+/* Library captions remain readable while rows stay compact. */
+.library-filter-heading,
+.library-filter-heading button,
+.library-filters label > span,
+.library-filters select,
+.paper-library-overview span,
+.paper-library-overview > p,
+.paper-library-table > header,
+.paper-library-title small,
+.paper-library-title em,
+.paper-reading-badge,
+.paper-state-cell small,
+.paper-progress-cell small,
+.paper-annotation-count small,
+.paper-purpose-cell span,
+.paper-purpose-cell small,
+.paper-purpose-cell em,
+.paper-library-actions .compact-button,
+.paper-open-button,
+.paper-no-attachment,
+.paper-parse-state,
+.paper-parse-state .pill,
+.paper-library-empty span,
+.unbound-sources > summary small,
+.search-origin,
+.search-result-copy > small,
+.bibliographic-only > header small,
+.bibliographic-only > header > span,
+.bibliographic-copy small {
+  font-size: var(--desktop-caption);
+  line-height: 16px;
+}
+
+.library-filter-heading,
+.library-filters label > span,
+.paper-library-table > header {
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.library-filters {
+  grid-template-columns: 82px repeat(6, minmax(118px, 1fr));
+  gap: 8px;
+}
+
+.library-filter-heading {
+  min-height: 52px;
+}
+
+.library-filters select {
+  height: 34px;
+}
+
+.paper-library-overview {
+  min-height: 56px;
+}
+
+.paper-library-overview > div {
+  min-width: 104px;
+}
+
+.paper-library-overview strong {
+  font-size: 20px;
+}
+
+.paper-library-table > header,
+.paper-library-row {
+  grid-template-columns: minmax(330px, 2.2fr) 126px 154px 58px minmax(128px, .9fr) 190px;
+}
+
+.paper-library-table > header {
+  min-height: 40px;
+  font-family: inherit;
+}
+
+.paper-library-row {
+  min-height: 92px;
+}
+
+.paper-library-title strong,
+.bibliographic-copy strong,
+.bibliographic-only > header strong,
+.unbound-sources > summary strong {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.paper-reading-badge,
+.paper-purpose-cell span,
+.paper-parse-state .pill {
+  padding: 3px 7px;
+  border-radius: 999px;
+}
+
+.paper-open-button,
+.paper-library-actions .compact-button {
+  min-height: 30px;
+  padding: 5px 8px;
+}
+
+.paper-library-empty {
+  min-height: 190px;
+}
+
+.unbound-sources > summary {
+  min-height: 52px;
+}
+
+.library-page .table-head {
+  height: 38px;
+  font-family: inherit;
+  font-size: var(--desktop-caption);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.library-page .table-row {
+  min-height: 68px;
+  font-size: 13px;
+}
+
+.library-page .source-name strong,
+.library-page .source-name small,
+.library-page .compact-button,
+.library-page .pill {
+  font-size: var(--desktop-caption);
+}
+
+.file-icon {
+  font-size: var(--desktop-caption);
+}
+
+.unbound-sources > summary em,
+.annotation-head span,
+.empty-note {
+  font-size: var(--desktop-caption);
+  line-height: 16px;
+}
+
+.library-page .source-toolbar > span {
+  white-space: nowrap;
+  font-size: var(--desktop-caption);
+}
+
+/* Review uses independent pane scrolling instead of a long web page. */
+.review-workspace {
+  height: 100%;
+  grid-template-columns: 380px minmax(0, 1fr);
+}
+
+.review-builder {
+  padding: 20px 18px 24px;
+  scrollbar-gutter: stable;
+}
+
+.review-builder > header > span,
+.review-document-header span,
+.review-builder > header p,
+.review-title-input,
+.review-selection-heading span,
+.review-selection-heading button,
+.review-choice-list > button small,
+.review-choice-list > button .review-paper-status,
+.review-empty-copy,
+.review-generate-note,
+.review-history small,
+.review-document-header p,
+.review-document-header button,
+.review-origin-legend span,
+.review-block-label,
+.unsupported-note,
+.review-citations button,
+.review-document-empty span {
+  font-size: var(--desktop-caption);
+  line-height: 16px;
+}
+
+.review-selection-heading > strong,
+.review-generate-button,
+.review-history > strong,
+.review-history span,
+.review-choice-list > button strong {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.review-builder > header > span,
+.review-document-header span {
+  letter-spacing: 0;
+}
+
+.review-builder > header h1 {
+  font-size: 22px;
+  line-height: 28px;
+}
+
+.review-title-input input {
+  height: 36px;
+  font-size: 13px;
+}
+
+.review-selection-heading button {
+  min-height: 28px;
+}
+
+.review-choice-list {
+  max-height: 238px;
+}
+
+.review-choice-list.notes {
+  max-height: 208px;
+}
+
+.review-choice-list > button {
+  min-height: 62px;
+  padding: 9px;
+}
+
+.review-generate-button {
+  min-height: 38px;
+}
+
+.review-document-header {
+  min-height: 76px;
+}
+
+.review-document-header h2 {
+  font-size: 19px;
+  line-height: 24px;
+}
+
+.review-document-header button {
+  height: 32px;
+}
+
+.review-document-content {
+  width: min(880px, calc(100% - 48px));
+  padding: 38px 48px 64px;
+}
+
+.review-block p {
+  font-size: 15px;
+  line-height: 1.72;
+}
+
+.review-origin-legend span,
+.review-block-label,
+.review-citations button {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Reader chrome stays compact but never uses micro-copy. */
+.reader-active > main {
+  height: calc(100dvh / var(--ui-scale, 1));
+}
+
+.research-reader {
+  --reader-library-width: 304px;
+  --reader-inspector-width: 376px;
+}
+
+.research-reader.agent-inspector-open {
+  --reader-inspector-width: 440px;
+}
+
+.reader-title strong {
+  font-size: 14px;
+}
+
+.reader-title span,
+.reader-view-switch button,
+.reader-zoom span,
+.reader-pane-heading span,
+.reader-inspector-head span,
+.reader-inspector-tabs button,
+.reader-library-tabs button,
+.reader-navigation-state,
+.reader-outline-list > button,
+.reader-outline-list > button small,
+.reader-thumbnail-canvas small,
+.reader-thumbnail > strong,
+.reader-pdf-search input,
+.reader-pdf-search-submit,
+.reader-pdf-search-results strong,
+.reader-pdf-search-results small,
+.reader-pdf-search-results p,
+.reader-paper-list small,
+.reader-file-type,
+.annotation-capture-banner small,
+.annotation-capture-banner button,
+.pdf-page-number,
+.structured-reader-header > div:first-child span,
+.structured-mode-switch button,
+.academic-ai-button,
+.paper-metadata-origin,
+.paper-metadata-card > div span,
+.academic-ai-confirm p,
+.academic-ai-confirm button,
+.academic-layout-notice button,
+.academic-layout-notice,
+.markdown-image-missing,
+.paper-state-grid label,
+.paper-decision-note,
+.reading-outcome-row > span,
+.paper-purpose > span,
+.reading-outcome-row button,
+.paper-purpose button,
+.paper-ai-card-head small,
+.paper-ai-card-head > button,
+.paper-ai-card-accept,
+.paper-ai-card-confirm,
+.paper-ai-card-notice,
+.paper-ai-card-confirm button,
+.paper-ai-card-notice button,
+.paper-ai-card-section > div:first-child strong,
+.paper-ai-card-section > p,
+.paper-ai-card-citations button,
+.paper-ai-card-citations span,
+.reader-ai-result > span,
+.note-origin,
+.annotation-actions button,
+.reader-annotations .annotation-paper-title,
+.reader-annotations .annotation-source-locator,
+.reader-annotations .annotation small,
+.reader-privacy-note strong,
+.reader-privacy-note small,
+.selection-response span,
+.selection-response small,
+.selection-response .selection-install-button,
+.selection-response .selection-api-button {
+  font-size: var(--desktop-caption);
+  line-height: 16px;
+}
+
+.reader-pane-heading strong,
+.reader-inspector-head strong,
+.reader-paper-list strong,
+.annotation-capture-banner strong,
+.paper-metadata-card p,
+.academic-ai-confirm strong,
+.paper-ai-card-head strong {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.reader-inspector-tabs button,
+.reader-library-tabs button,
+.structured-mode-switch button,
+.academic-ai-button,
+.reading-outcome-row button,
+.paper-purpose button {
+  min-height: 28px;
+}
+
+.reader-paper-list > button {
+  min-height: 64px;
+}
+
+.reader-file-type {
+  width: 32px;
+  height: 38px;
+}
+
+.reader-outline-list > button {
+  min-height: 36px;
+}
+
+.reader-pdf-search > form {
+  height: 38px;
+}
+
+.annotation-capture-banner {
+  min-height: 56px;
+}
+
+/* Agent, settings and provenance dialogs share the same control scale. */
+.agent-question,
+.agent-notice,
+.paper-results strong,
+.paper-results small,
+.settings-note,
+.annotation-source,
+.annotation-provenance strong,
+.annotation-provenance span,
+.annotation-storage-note,
+.toast button,
+.workspace-create-copy small,
+.mineru-runtime-status strong,
+.mineru-runtime-status small,
+.text-assistant textarea,
+.text-assistant small,
+.agent-scope-switch button,
+.agent-paper-picker > div button,
+.agent-paper-picker > div span,
+.agent-paper-picker small,
+.agent-evidence-list > h3 span,
+.traceable-agent-answer > section button,
+.agent-evidence-list > button > span,
+.agent-evidence-list > button > small,
+.settings-tabs button,
+.settings-intro p,
+.local-component-copy small,
+.local-component-card p,
+.local-component-card em,
+.local-component-card > button,
+.local-component-actions button,
+.settings-panel label,
+.credential-state strong,
+.credential-state small,
+.visual-choice-group legend,
+.visual-choice-group button,
+.range-setting b,
+.reading-settings-preview > span,
+.settings-save-error {
+  font-size: var(--desktop-caption);
+  line-height: 16px;
+}
+
+.agent-paper-picker strong,
+.agent-evidence-list > button > strong,
+.agent-evidence-list > button > p,
+.traceable-agent-answer > section > p,
+.settings-intro strong,
+.local-component-copy strong,
+.settings-panel input:not([type="checkbox"]):not([type="range"]),
+.settings-panel select {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.traceable-agent-answer > section > p,
+.agent-evidence-list > button > p {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.agent-paper-picker label {
+  min-height: 60px;
+}
+
+.agent-evidence-list > button {
+  padding: 10px 11px;
+}
+
+.settings-modal {
+  max-height: min(820px, calc(100dvh - 32px));
+  overflow: hidden;
+}
+
+.settings-center {
+  width: min(740px, 100%);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+}
+
+.settings-tabs {
+  padding-top: 6px;
+}
+
+.settings-tabs button {
+  min-height: 38px;
+}
+
+.settings-content {
+  min-height: 0;
+  max-height: none;
+  scrollbar-gutter: stable;
+}
+
+.settings-panel input:not([type="checkbox"]):not([type="range"]),
+.settings-panel select {
+  min-height: 38px;
+}
+
+.visual-choice-group button {
+  min-height: 52px;
+}
+
+.modal-backdrop {
+  padding: 16px;
+}
+
+/* Compact desktop: reduce columns before sacrificing typography. */
+@media (max-width: 1320px) {
+  :root { --desktop-sidebar-width: 208px; }
+  .page { padding-right: 24px; padding-left: 24px; }
+  .library-filters { grid-template-columns: 76px repeat(3, minmax(128px, 1fr)); }
+  .paper-library-table > header,
+  .paper-library-row { grid-template-columns: minmax(280px, 1.8fr) 116px 136px 52px 164px; }
+  .paper-library-table > header > span:nth-child(5),
+  .paper-purpose-cell { display: none; }
+  .paper-parse-state { grid-column: 1 / -1; }
+  .research-reader { --reader-library-width: 272px; --reader-inspector-width: 340px; }
+  .research-reader.agent-inspector-open { --reader-inspector-width: 410px; }
+}
+
+@media (max-width: 1080px) {
+  :root { --desktop-sidebar-width: 192px; }
+  .page { padding: 22px 20px 30px; }
+  .library-page .page-title { align-items: flex-start; }
+  .paper-library-overview > div { min-width: 0; flex: 1; padding-right: 8px; padding-left: 8px; }
+  .paper-library-table > header,
+  .paper-library-row { grid-template-columns: minmax(250px, 1.7fr) 106px 118px 138px; }
+  .paper-library-table > header > span:nth-child(4),
+  .paper-annotation-count { display: none; }
+  .review-workspace { grid-template-columns: 342px minmax(0, 1fr); }
+  .review-document-content { width: calc(100% - 28px); padding: 30px 32px 52px; }
+  .research-reader { --reader-library-width: 244px; --reader-inspector-width: 320px; }
+  .research-reader.agent-inspector-open { --reader-library-width: 0px; --reader-inspector-width: 390px; }
+  .research-reader-toolbar { grid-template-columns: minmax(180px, 1fr) auto minmax(150px, 1fr); }
+}
+
+@media (max-width: 920px) {
+  :root { --desktop-sidebar-width: 64px; }
+  .app-shell:not(.reader-active) .sidebar { display: flex; padding: 10px 8px; }
+  .app-shell:not(.reader-active) .brand { justify-content: center; padding: 2px 0 14px; }
+  .app-shell:not(.reader-active) .brand > span,
+  .app-shell:not(.reader-active) .project-switch > div,
+  .app-shell:not(.reader-active) .nav-item > span,
+  .app-shell:not(.reader-active) .nav-item > em,
+  .app-shell:not(.reader-active) .local-note { display: none; }
+  .app-shell:not(.reader-active) .project-switch { width: 40px; min-height: 38px; margin: 0 auto 12px; padding: 0; justify-content: center; }
+  .app-shell:not(.reader-active) .nav-item { width: 40px; min-height: 40px; margin: 3px auto; padding: 0; justify-content: center; }
+  .app-shell:not(.reader-active) .sidebar-bottom { padding-top: 6px; }
+  .mobile-menu { display: none; }
+  .workspace-menu { left: 48px; }
+  .review-workspace { grid-template-columns: 320px minmax(0, 1fr); }
+  .research-reader { --reader-library-width: 0px; --reader-inspector-width: 306px; }
+  .research-reader-toolbar { grid-template-columns: minmax(170px, 1fr) auto minmax(120px, 1fr); }
+  .reader-view-switch button { padding: 0 7px; }
+}
+
+@media (max-height: 760px) {
+  .page { padding-top: 20px; }
+  .library-page .page-title { margin-bottom: 8px; }
+  .library-page .source-toolbar { height: 44px; }
+  .paper-library-empty { min-height: 150px; }
+  .review-choice-list { max-height: 180px; }
+  .review-choice-list.notes { max-height: 150px; }
+}
+
+/* Quiet desktop chrome: the paper and its evidence stay visually dominant. */
+.app-shell:not(.reader-active) .sidebar {
+  border-right: 1px solid #d9dadd;
+  color: #34363a;
+  background: #eeeFf0;
+}
+
+.app-shell:not(.reader-active) .brand {
+  color: #202226;
+  letter-spacing: -.2px;
+}
+
+.app-shell:not(.reader-active) .brand-mark {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  overflow: visible;
+  color: inherit;
+  background: transparent;
+}
+
+.app-shell:not(.reader-active) .brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.app-shell:not(.reader-active) .project-switch {
+  border-color: #d5d7da;
+  background: #e5e7e8;
+}
+
+.app-shell:not(.reader-active) .project-switch strong,
+.app-shell:not(.reader-active) .workspace-menu-title strong {
+  color: #292c31;
+}
+
+.app-shell:not(.reader-active) .project-switch small,
+.app-shell:not(.reader-active) .sidebar small,
+.app-shell:not(.reader-active) .nav-item {
+  color: #686c72;
+}
+
+.app-shell:not(.reader-active) .nav-item:hover,
+.app-shell:not(.reader-active) .nav-item.active {
+  color: #202327;
+  background: #fafafa;
+  box-shadow: inset 0 0 0 1px #dedfe1;
+}
+
+.app-shell:not(.reader-active) .nav-item em {
+  color: #5e6268;
+  background: #dfe1e3;
+}
+
+.app-shell:not(.reader-active) .local-note {
+  border-top-color: #d7d9dc;
+  color: #666a70;
+}
+
+.reader-inspector {
+  background: #f7f7f6;
+}
+
+.reader-inspector-head,
+.research-reader-toolbar {
+  background: #fafaf9;
+}
+
+.research-agent-modal.embedded {
+  min-height: 100%;
+  color: #2b2e32;
+}
+
+.research-agent-modal.embedded .agent-context {
+  padding: 10px 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  border-bottom: 1px solid #e1e2e3;
+  color: #656a70;
+  background: #f0f1f2;
+}
+
+.research-agent-modal.embedded .agent-context span {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.research-agent-modal.embedded .agent-context span:first-child {
+  grid-column: 1 / -1;
+  color: #30343a;
+}
+
+.agent-pinned-selection {
+  margin: 10px 14px 0;
+  padding: 10px 11px;
+  border: 1px solid #d9dde2;
+  border-left: 3px solid #627c9b;
+  border-radius: 7px;
+  color: #34383d;
+  background: #f8f9fa;
+}
+
+.agent-pinned-selection > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-pinned-selection span,
+.agent-pinned-selection small {
+  color: #69717a;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.agent-pinned-selection button {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: #70767d;
+}
+
+.agent-pinned-selection button:hover {
+  color: #252a30;
+  background: #e9ecef;
+}
+
+.agent-pinned-selection p {
+  margin: 5px 0 3px;
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 19px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.research-agent-modal.embedded .agent-answer {
+  padding: 14px 14px 22px;
+}
+
+.agent-scope-switch {
+  width: 100%;
+  margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  border-color: #d9dbde;
+  border-radius: 8px;
+  background: #eaebed;
+}
+
+.agent-scope-switch button {
+  min-height: 30px;
+  padding: 5px 8px;
+  color: #62666c;
+  font-size: 12px;
+}
+
+.agent-scope-switch button.active {
+  color: #22262b;
+  box-shadow: 0 1px 2px rgba(18, 22, 27, .08), inset 0 0 0 1px #d7d9dc;
+}
+
+.agent-starter-questions {
+  margin: 3px 0 14px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.agent-starter-questions button {
+  min-height: 34px;
+  padding: 7px 8px;
+  border: 1px solid #dfe1e3;
+  border-radius: 7px;
+  color: #4d535a;
+  background: #fff;
+  font-size: 12px;
+}
+
+.agent-starter-questions button:hover {
+  border-color: #bfc4c9;
+  color: #22262b;
+  background: #f9fafa;
+}
+
+.agent-question {
+  margin: 0;
+  color: #33373c;
+  font-size: 13px;
+}
+
+.agent-question textarea {
+  min-height: 84px;
+  padding: 10px 11px;
+  border-color: #ced1d5;
+  border-radius: 8px;
+  color: #25282d;
+  background: #fff;
+  font-size: 14px;
+  line-height: 20px;
+  box-shadow: 0 1px 2px rgba(20, 24, 28, .04);
+}
+
+.agent-question textarea:focus {
+  border-color: #8796a6;
+  outline: 2px solid rgba(93, 119, 146, .16);
+  outline-offset: 0;
+}
+
+.agent-actions {
+  margin: 9px 0 12px;
+}
+
+.agent-actions .primary-button,
+.research-agent-modal footer .primary-button {
+  color: #fff;
+  background: #3d4650;
+}
+
+.agent-notice {
+  margin: 8px 0 0;
+  border: 1px solid #dce2df;
+  color: #4e5e57;
+  background: #f1f5f3;
+  font-size: 12px !important;
+  line-height: 18px;
+}
+
+.agent-conversation {
+  margin: 6px 0 14px;
+  display: grid;
+  gap: 14px;
+}
+
+.agent-turn {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-user-message {
+  padding: 9px 11px;
+  border: 1px solid #dedfe1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.agent-user-message span {
+  display: block;
+  margin-bottom: 3px;
+  color: #747980;
+  font: 11px/16px "Cascadia Code", "SFMono-Regular", monospace;
+}
+
+.agent-user-message p {
+  margin: 0;
+  color: #26292e;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.agent-turn .traceable-agent-answer {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 2px solid #6f879f;
+}
+
+.traceable-agent-answer > section {
+  margin: 0 0 7px;
+  padding: 9px 10px;
+  border-left: 0;
+  border-radius: 0 7px 7px 0;
+  background: #eef2f5;
+}
+
+.traceable-agent-answer > section > p {
+  color: #31363b;
+}
+
+.traceable-agent-answer > section button {
+  min-height: 26px;
+  color: #435e76;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px #d4dde4;
+}
+
+.agent-evidence-list {
+  margin-top: 14px;
+  display: block;
+  border-top: 1px solid #e0e2e4;
+}
+
+.agent-evidence-list summary {
+  padding: 10px 0;
+  color: #4a5057;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.agent-evidence-list summary span,
+.agent-action-proposals h3 span {
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #656b72;
+  background: #e5e7e9;
+  font-size: 11px;
+}
+
+.agent-evidence-list > div {
+  display: grid;
+  gap: 7px;
+}
+
+.agent-evidence-list > div > button {
+  width: 100%;
+  padding: 10px 11px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dfe1e3;
+  border-radius: 7px;
+  text-align: left;
+  background: #fff;
+}
+
+.agent-evidence-list > div > button:hover {
+  border-color: #c7cbd0;
+  background: #fafafa;
+}
+
+.agent-evidence-list > div > button > span,
+.agent-evidence-list > div > button > small {
+  color: #70767d;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.agent-evidence-list > div > button > strong {
+  color: #2e3237;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.agent-evidence-list > div > button > p {
+  margin: 0;
+  color: #555b62;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.research-agent-modal.embedded footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  border-top-color: #dedfe1;
+  background: rgba(250, 250, 249, .97);
+}
+
+.research-agent-modal.embedded footer p {
+  color: #676c72;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+@media (max-width: 1080px) {
+  .agent-starter-questions { grid-template-columns: 1fr; }
+  .research-agent-modal.embedded .agent-context { grid-template-columns: 1fr; }
+  .research-agent-modal.embedded .agent-context span:first-child { grid-column: auto; }
+}

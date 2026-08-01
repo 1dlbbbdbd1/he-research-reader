@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">小何的科研阅读助手 Logo</title>
+  <desc id="desc">深海军蓝大写 H，紫色研究轨道从右上轴承节点绕行并收进左立柱。</desc>
+  <defs>
+    <linearGradient id="orbit" x1="72" y1="364" x2="438" y2="150" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4B2CFF"/>
+      <stop offset="0.58" stop-color="#6A3CFF"/>
+      <stop offset="1" stop-color="#875BFF"/>
+    </linearGradient>
+  </defs>
+  <path d="M364 156C414 156 448 180 438 223C414 325 286 387 151 374C93 368 62 343 71 309C79 281 101 259 143 239"
+        fill="none" stroke="url(#orbit)" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#101A4B">
+    <rect x="122" y="64" width="88" height="384" rx="22"/>
+    <rect x="302" y="64" width="88" height="384" rx="22"/>
+    <rect x="181" y="225" width="150" height="62" rx="31"/>
+  </g>
+  <circle cx="364" cy="156" r="27" fill="#FBFAF7" stroke="url(#orbit)" stroke-width="14"/>
+</svg>

@@ -1,9 +1,12 @@
 node_modules/
 dist/
 .runtime/
+.reader-cache/
 release/
 release-latest/
 release-offline*/
+release-current*/
+design/logo-explorations/
 .npm-cache/
 .tools/
 *.log

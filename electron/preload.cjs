@@ -28,6 +28,16 @@ contextBridge.exposeInMainWorld('readerDesktop', {
     ipcRenderer.on('translation:progress', listener)
     return () => ipcRenderer.removeListener('translation:progress', listener)
   },
+  getLocalEmbeddingStatus: () => ipcRenderer.invoke('embedding:status'),
+  installLocalEmbedding: input => ipcRenderer.invoke('embedding:install', input),
+  embedLocally: input => ipcRenderer.invoke('embedding:embed', input),
+  onLocalEmbeddingProgress: callback => {
+    const listener = (_event, progress) => callback(progress)
+    ipcRenderer.on('embedding:progress', listener)
+    return () => ipcRenderer.removeListener('embedding:progress', listener)
+  },
+  loadAppSettings: () => ipcRenderer.invoke('settings:load'),
+  saveAppSettings: input => ipcRenderer.invoke('settings:save', input),
   listRecentWorkspaces: () => ipcRenderer.invoke('workspace:list-recent'),
   getCurrentWorkspace: () => ipcRenderer.invoke('workspace:get-current'),
   createWorkspace: input => ipcRenderer.invoke('workspace:create', input),
@@ -36,13 +46,36 @@ contextBridge.exposeInMainWorld('readerDesktop', {
   switchWorkspace: input => ipcRenderer.invoke('workspace:switch', input),
   loadWorkspaceLibrary: () => ipcRenderer.invoke('workspace:load-library'),
   searchWorkspaceLibrary: input => ipcRenderer.invoke('workspace:search-library', input),
+  getWorkspaceSemanticStatus: () => ipcRenderer.invoke('workspace:semantic-status'),
+  rebuildWorkspaceSemanticIndex: input => ipcRenderer.invoke('workspace:semantic-rebuild', input),
+  searchWorkspaceHybrid: input => ipcRenderer.invoke('workspace:hybrid-search', input),
+  onWorkspaceSemanticProgress: callback => {
+    const listener = (_event, progress) => callback(progress)
+    ipcRenderer.on('semantic:progress', listener)
+    return () => ipcRenderer.removeListener('semantic:progress', listener)
+  },
   importLegacyWorkspaceData: input => ipcRenderer.invoke('workspace:import-legacy', input),
   syncWorkspaceLibrary: input => ipcRenderer.invoke('workspace:sync-library', input),
   updateReadingState: input => ipcRenderer.invoke('workspace:update-reading-state', input),
+  reviseAnnotation: input => ipcRenderer.invoke('annotation:revise', input),
+  archiveAnnotation: input => ipcRenderer.invoke('annotation:archive', input),
+  restoreAnnotation: input => ipcRenderer.invoke('annotation:restore', input),
+  exportAnnotations: input => ipcRenderer.invoke('annotation:export', input),
+  getPaperReadingCard: input => ipcRenderer.invoke('reading-card:get', input),
+  savePaperReadingCardDraft: input => ipcRenderer.invoke('reading-card:save-draft', input),
+  acceptPaperReadingCard: input => ipcRenderer.invoke('reading-card:accept', input),
   getReviewInputs: input => ipcRenderer.invoke('review:get-inputs', input),
   createReviewDocument: input => ipcRenderer.invoke('review:create', input),
   listReviewDocuments: () => ipcRenderer.invoke('review:list'),
   getReviewDocument: input => ipcRenderer.invoke('review:get', input),
+  getEvidenceGraph: input => ipcRenderer.invoke('evidence-graph:get', input),
+  createEvidenceRelation: input => ipcRenderer.invoke('evidence-relation:create', input),
+  reviewEvidenceRelation: input => ipcRenderer.invoke('evidence-relation:review', input),
+  createActionPack: input => ipcRenderer.invoke('action-pack:create', input),
+  listActionPacks: () => ipcRenderer.invoke('action-pack:list'),
+  getActionPack: input => ipcRenderer.invoke('action-pack:get', input),
+  reviewActionItem: input => ipcRenderer.invoke('action-pack:review-item', input),
+  completeActionItem: input => ipcRenderer.invoke('action-pack:complete-item', input),
   exportReviewDocument: input => ipcRenderer.invoke('review:export', input),
   showReviewExport: input => ipcRenderer.invoke('review:show-export', input),
   resolveDeepLink: input => ipcRenderer.invoke('app:resolve-deep-link', input),
@@ -53,5 +86,6 @@ contextBridge.exposeInMainWorld('readerDesktop', {
   },
   importWorkspaceSourceFile: input => ipcRenderer.invoke('workspace:import-source-file', input),
   readWorkspaceSourceFile: input => ipcRenderer.invoke('workspace:read-source-file', input),
+  loadMineruAssets: input => ipcRenderer.invoke('workspace:load-mineru-assets', input),
   importBibliography: () => ipcRenderer.invoke('workspace:import-bibliography'),
 })

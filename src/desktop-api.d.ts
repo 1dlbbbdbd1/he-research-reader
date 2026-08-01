@@ -30,6 +30,19 @@ type MineruParseResult = {
   outputDirectory: string
   backend: 'pipeline'
   localOnly: true
+  revision: string
+  assetRootRelative: string
+  markdownSha256: string
+  generatedAt: string
+  manifest: {
+    version: 1
+    sourceId: string
+    backend: 'pipeline'
+    generatedAt: string
+    markdownPath: string
+    markdownSha256: string
+    files: Array<{ path: string; size: number; sha256: string }>
+  }
 }
 
 type MineruInstallResult = {
@@ -80,6 +93,35 @@ type LocalTranslationProgress = {
   text: string
 }
 
+type LocalEmbeddingStatus = {
+  available: boolean
+  provider: 'fastembed-local'
+  model: string
+  dimension?: number
+  fastembedVersion?: string
+  libraryLicense?: string
+  modelLicense?: string
+  localOnly: true
+  message: string
+}
+
+type LocalEmbeddingInstallResult = {
+  installed: boolean
+  runtimeRoot: string
+  model: string
+  provider: 'fastembed-local'
+  localOnly: true
+}
+
+type LocalEmbeddingResult = {
+  provider: 'fastembed-local'
+  model: string
+  dimension: 512
+  kind: 'query' | 'passage'
+  vectors: number[][]
+  localOnly: true
+}
+
 type WorkspaceSummary = {
   id: string
   projectId?: string
@@ -106,7 +148,30 @@ type WorkspaceLibraryState = {
   bibliographicItems: Array<Record<string, unknown>>
 }
 
+type DesktopUISettings = {
+  uiScale: number
+  density: 'compact' | 'comfortable'
+  surfaceTone: 'neutral' | 'warm' | 'cool'
+  accentColor: 'slate' | 'blue' | 'green' | 'plum'
+  readerFontSize: number
+  readerLineHeight: number
+  readerWidth: number
+}
+
+type DesktopAppSettings = {
+  ai: {
+    baseUrl: string
+    model: string
+    apiKey: string
+    allowFullDocument: boolean
+    translationProvider: 'local' | 'ai'
+  }
+  ui: DesktopUISettings
+  credentialState?: 'empty' | 'encrypted' | 'unavailable'
+}
+
 type DesktopLibrarySearchFilters = {
+  itemIds?: string[]
   readingStatuses?: Array<'unread' | 'title_only' | 'skimming' | 'reading' | 'finished'>
   relevances?: Array<'undecided' | 'core' | 'relevant' | 'supplemental' | 'mismatched'>
   ideaStates?: Array<'undecided' | 'has_ideas' | 'no_new_ideas'>
@@ -145,6 +210,73 @@ type DesktopLibrarySearchResponse = {
     questionStates: Record<string, number>
     purposeTags: Record<string, number>
     annotations: { withAnnotations: number; withoutAnnotations: number }
+  }
+}
+
+type DesktopSemanticIndexStatus = LocalEmbeddingStatus & {
+  ready: boolean
+  stale: boolean
+  dimension?: number
+  chunkCount: number
+  indexedAt?: string
+  sourceIndexedAt?: string
+}
+
+type DesktopSemanticProgress = {
+  taskId?: string
+  phase: 'preparing' | 'embedding' | 'complete'
+  completed: number
+  total: number
+  text: string
+}
+
+type DesktopHybridSearchResponse = Omit<DesktopLibrarySearchResponse, 'results'> & {
+  results: Array<DesktopLibrarySearchResult & {
+    channels: Array<'exact' | 'semantic'>
+    fusionScore?: number
+    semanticScore?: number
+  }>
+  mode: 'exact' | 'hybrid'
+  semantic: DesktopSemanticIndexStatus
+}
+
+type DesktopPaperReadingCardContext = {
+  contextId: string
+  origin: 'bibliography' | 'user_state' | 'source_evidence' | 'user' | 'document'
+  label: string
+  content: string
+  sourceId?: string
+  fragmentId?: string
+  pageNumber?: number
+  anchor?: DesktopFragmentAnchor
+}
+
+type DesktopPaperReadingCardSnapshot = {
+  paper: Record<string, unknown>
+  contexts: DesktopPaperReadingCardContext[]
+  card?: {
+    generationRunId: string
+    status: 'draft' | 'accepted'
+    model?: string
+    provider?: string
+    generatedAt: string
+    acceptedAt?: string
+    sections: Array<{
+      id: string
+      key: string
+      title: string
+      content: string
+      contentSha256: string
+      citations: Array<{
+        fragmentId: string
+        origin: 'source_evidence' | 'user'
+        sourceId?: string
+        sourceName?: string
+        pageNumber?: number
+        anchor?: DesktopFragmentAnchor
+        excerpt: string
+      }>
+    }>
   }
 }
 
@@ -191,17 +323,158 @@ type ReviewDocumentView = {
   }>
 }
 
+type ActionEvidenceInput = {
+  evidenceType: 'fragment' | 'review' | 'source' | 'bibliography'
+  entityId: string
+  sourceId?: string
+  itemId?: string
+  reviewDocumentId?: string
+  label: string
+  excerpt: string
+  pageNumber?: number
+  anchor?: DesktopFragmentAnchor
+}
+
+type ActionPackSummary = {
+  id: string
+  title: string
+  objective: string
+  status: 'draft' | 'confirmed' | 'dismissed' | 'completed'
+  createdBy: 'user' | 'ai' | 'system'
+  createdAt: string
+  updatedAt: string
+  itemCount: number
+  proposedCount: number
+  confirmedCount: number
+  completedCount: number
+}
+
+type ActionPackView = {
+  id: string
+  title: string
+  objective: string
+  scope: { kind: 'current' | 'selected' | 'library'; label: string; itemIds: string[] }
+  status: 'draft' | 'confirmed' | 'dismissed' | 'completed'
+  createdBy: 'user' | 'ai' | 'system'
+  provider?: string
+  model?: string
+  generationRunId?: string
+  createdAt: string
+  updatedAt: string
+  confirmedAt?: string
+  completedAt?: string
+  items: Array<{
+    id: string
+    position: number
+    actionType: 'read' | 'compare' | 'verify' | 'experiment' | 'review' | 'note'
+    title: string
+    rationale: string
+    status: 'proposed' | 'confirmed' | 'dismissed' | 'completed'
+    createdAt: string
+    updatedAt: string
+    evidence: Array<{
+      id: string
+      evidenceType: 'fragment' | 'review' | 'source' | 'bibliography'
+      entityId: string
+      fragmentId?: string
+      reviewBlockId?: string
+      reviewDocumentId?: string
+      sourceId?: string
+      itemId?: string
+      label: string
+      excerpt: string
+      pageNumber?: number
+      anchor?: DesktopFragmentAnchor
+    }>
+  }>
+  events: Array<{
+    id: string
+    itemId?: string
+    eventType: 'created' | 'item_confirmed' | 'item_dismissed' | 'item_reopened' | 'item_completed' | 'pack_status_changed' | 'migrated'
+    actor: 'user' | 'ai' | 'system'
+    note: string
+    createdAt: string
+  }>
+}
+
+type EvidenceGraphNode = {
+  id: string
+  entityId: string
+  entityType: 'fragment' | 'review_block'
+  layer: 'evidence' | 'interpretation' | 'synthesis'
+  origin: 'source_evidence' | 'user' | 'ai' | 'review'
+  trust: 'source' | 'user' | 'ai_draft' | 'ai_accepted' | 'unsupported'
+  title: string
+  excerpt: string
+  kindLabel: string
+  locationLabel: string
+  itemId?: string
+  itemTitle?: string
+  sourceId?: string
+  sourceName?: string
+  documentId?: string
+  documentTitle?: string
+  pageNumber?: number
+  anchor?: DesktopFragmentAnchor
+}
+
+type EvidenceGraphEdge = {
+  id: string
+  fromNodeId: string
+  toNodeId: string
+  relation: 'derived_from' | 'comments_on' | 'supports' | 'refutes' | 'mentions' | 'cites'
+  label: string
+  provenance: 'user_confirmed' | 'ai_proposed' | 'ai_accepted' | 'system'
+  relationId?: string
+  status?: 'proposed' | 'confirmed' | 'rejected'
+  createdBy?: 'user' | 'ai' | 'system'
+  rationale?: string
+  createdAt?: string
+  reviewedAt?: string
+  canAccept?: boolean
+  canReject?: boolean
+}
+
+type EvidenceGraphView = {
+  nodes: EvidenceGraphNode[]
+  edges: EvidenceGraphEdge[]
+  unlinkedNodeIds: string[]
+  limited: boolean
+  scope: {
+    documentId?: string
+    itemIds: string[]
+  }
+  summary: {
+    evidence: number
+    userNotes: number
+    aiDrafts: number
+    aiAccepted: number
+    reviewConclusions: number
+    unsupported: number
+    relations: number
+  }
+}
+
 interface Window {
   readerDesktop?: {
     isDesktop: true
     getMineruStatus(): Promise<MineruStatus>
     installMineru(input: { taskId: string }): Promise<MineruInstallResult>
-    parseWithMineru(input: { taskId: string; fileName: string; bytes: ArrayBuffer }): Promise<MineruParseResult>
+    parseWithMineru(input: { taskId: string; sourceId: string; fileName: string; bytes: ArrayBuffer }): Promise<MineruParseResult>
     onMineruProgress(callback: (progress: MineruProgress) => void): () => void
     getLocalTranslationStatus(input?: { from?: string; to?: string }): Promise<LocalTranslationStatus>
     installLocalTranslation(input: { taskId: string; from: string; to: string }): Promise<LocalTranslationInstallResult>
     translateLocally(input: { taskId: string; text: string; from: string; to: string }): Promise<LocalTranslationResult>
     onLocalTranslationProgress(callback: (progress: LocalTranslationProgress) => void): () => void
+    getLocalEmbeddingStatus(): Promise<LocalEmbeddingStatus>
+    installLocalEmbedding(input: { taskId: string }): Promise<LocalEmbeddingInstallResult>
+    embedLocally(input: { texts: string[]; kind: 'query' | 'passage' }): Promise<LocalEmbeddingResult>
+    onLocalEmbeddingProgress(callback: (progress: LocalTranslationProgress) => void): () => void
+    loadAppSettings(): Promise<DesktopAppSettings>
+    saveAppSettings(input: {
+      ai: DesktopAppSettings['ai']
+      ui: DesktopUISettings
+    }): Promise<DesktopAppSettings>
     listRecentWorkspaces(): Promise<WorkspaceSummary[]>
     getCurrentWorkspace(): Promise<WorkspaceSummary | undefined>
     createWorkspace(input: { name: string }): Promise<WorkspaceDialogResult>
@@ -214,6 +487,16 @@ interface Window {
       filters?: DesktopLibrarySearchFilters
       limit?: number
     }): Promise<DesktopLibrarySearchResponse>
+    getWorkspaceSemanticStatus(): Promise<DesktopSemanticIndexStatus>
+    rebuildWorkspaceSemanticIndex(input: { taskId: string }): Promise<DesktopSemanticIndexStatus>
+    searchWorkspaceHybrid(input: {
+      taskId?: string
+      query?: string
+      filters?: DesktopLibrarySearchFilters
+      limit?: number
+      rebuildIfNeeded?: boolean
+    }): Promise<DesktopHybridSearchResponse>
+    onWorkspaceSemanticProgress(callback: (progress: DesktopSemanticProgress) => void): () => void
     importLegacyWorkspaceData(input: {
       sources: Array<Record<string, unknown>>
       annotations: Array<Record<string, unknown>>
@@ -243,6 +526,36 @@ interface Window {
       lastPage?: number
       totalPages?: number
     }>
+    reviseAnnotation(input: {
+      annotationId: string
+      category: string
+      note: string
+    }): Promise<Record<string, unknown>>
+    archiveAnnotation(input: { annotationId: string }): Promise<{
+      annotationId: string
+      archivedAt: string
+      alreadyArchived: boolean
+    }>
+    restoreAnnotation(input: { annotationId: string }): Promise<Record<string, unknown>>
+    exportAnnotations(input: { sourceId: string }): Promise<{
+      filePath: string
+      fileSha256: string
+      format: 'markdown'
+      annotationCount: number
+      exportedAt: string
+    }>
+    getPaperReadingCard(input: { itemId: string }): Promise<DesktopPaperReadingCardSnapshot>
+    savePaperReadingCardDraft(input: {
+      itemId: string
+      provider: string
+      model: string
+      promptFingerprint?: string
+      sections: Array<{ key: string; content: string; citationIds: string[] }>
+    }): Promise<DesktopPaperReadingCardSnapshot>
+    acceptPaperReadingCard(input: {
+      itemId: string
+      generationRunId: string
+    }): Promise<DesktopPaperReadingCardSnapshot>
     getReviewInputs(input: { itemIds: string[]; annotationIds: string[] }): Promise<{
       items: Array<{ id: string; title: string; itemType: string; authors: DesktopPersonName[]; issued?: string }>
       fragments: ReviewInputFragment[]
@@ -264,6 +577,47 @@ interface Window {
       blockCount: number
     }>>
     getReviewDocument(input: { documentId: string }): Promise<ReviewDocumentView>
+    getEvidenceGraph(input?: { itemIds?: string[]; documentId?: string }): Promise<EvidenceGraphView>
+    createEvidenceRelation(input: {
+      fromFragmentId: string
+      toFragmentId: string
+      relation: 'supports' | 'refutes' | 'mentions'
+      rationale: string
+    }): Promise<{
+      relationId: string
+      relation: 'supports' | 'refutes' | 'mentions'
+      status: 'confirmed'
+      change: 'created' | 'reopened' | 'confirmed' | 'unchanged'
+    }>
+    reviewEvidenceRelation(input: {
+      relationId: string
+      decision: 'accept' | 'reject'
+      rationale?: string
+    }): Promise<{
+      relationId: string
+      relation: 'supports' | 'refutes' | 'mentions'
+      status: 'confirmed' | 'rejected'
+      changed: boolean
+    }>
+    createActionPack(input: {
+      title: string
+      objective: string
+      scope: { kind: 'current' | 'selected' | 'library'; label: string; itemIds: string[] }
+      createdBy: 'user' | 'ai' | 'system'
+      provider?: string
+      model?: string
+      generationRunId?: string
+      actions: Array<{
+        actionType: 'read' | 'compare' | 'verify' | 'experiment' | 'review' | 'note'
+        title: string
+        rationale: string
+        evidence: ActionEvidenceInput[]
+      }>
+    }): Promise<ActionPackView>
+    listActionPacks(): Promise<ActionPackSummary[]>
+    getActionPack(input: { packId: string }): Promise<ActionPackView>
+    reviewActionItem(input: { itemId: string; decision: 'confirm' | 'dismiss'; note?: string }): Promise<ActionPackView>
+    completeActionItem(input: { itemId: string; note?: string }): Promise<ActionPackView>
     exportReviewDocument(input: { documentId: string; format: 'markdown' | 'docx' }): Promise<{
       filePath: string
       fileSha256: string
@@ -295,6 +649,19 @@ interface Window {
       bytes: ArrayBuffer
     }): Promise<{ sourceId: string; fileName: string; contentSha256: string; pathRelative: string }>
     readWorkspaceSourceFile(input: { sourceId: string }): Promise<{ fileName: string; bytes: Uint8Array }>
+    loadMineruAssets(input: { sourceId: string }): Promise<{
+      revision?: string
+      markdownSha256?: string
+      assets: Record<string, string>
+      layoutSource?: string
+        layoutBlocks: Array<{
+          id: string
+          type: string
+          text: string
+          pageNumber: number
+          bbox?: [number, number, number, number]
+        }>
+    }>
     importBibliography(): Promise<{
       canceled: boolean
       result?: {

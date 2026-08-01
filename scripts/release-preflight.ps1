@@ -67,7 +67,7 @@ try {
     }
 
     if (-not $SkipTagAvailability) {
-        $existingTag = (& git tag --list $tag).Trim()
+        $existingTag = ((@(& git tag --list $tag)) -join "`n").Trim()
         if ($LASTEXITCODE -ne 0) {
             throw "无法检查本地标签 $tag。"
         }

@@ -24,13 +24,13 @@ function findPythonExecutable(options) {
   return candidatePythonExecutables(options).find(candidate => fs.existsSync(candidate))
 }
 
-function translationEnvironment(runtimeRoot) {
-  const profileRoot = path.join(runtimeRoot, 'profile')
+function translationEnvironment(runtimeRoot, stateRoot = runtimeRoot) {
+  const profileRoot = path.join(stateRoot, 'profile')
   return {
     ARGOS_PACKAGES_DIR: path.join(runtimeRoot, 'packages'),
-    XDG_DATA_HOME: path.join(runtimeRoot, 'data'),
-    XDG_CONFIG_HOME: path.join(runtimeRoot, 'config'),
-    XDG_CACHE_HOME: path.join(runtimeRoot, 'cache'),
+    XDG_DATA_HOME: path.join(stateRoot, 'data'),
+    XDG_CONFIG_HOME: path.join(stateRoot, 'config'),
+    XDG_CACHE_HOME: path.join(stateRoot, 'cache'),
     LOCALAPPDATA: path.join(profileRoot, 'LocalAppData'),
     APPDATA: path.join(profileRoot, 'AppData'),
     PYTHONUTF8: '1',
@@ -49,7 +49,7 @@ function parseBridgeResult(output) {
   return payload.result
 }
 
-function runBridge({ pythonExecutable, bridgeScript, runtimeRoot, command, from, to, text, onProgress }) {
+function runBridge({ pythonExecutable, bridgeScript, runtimeRoot, stateRoot, command, from, to, text, onProgress }) {
   return new Promise((resolve, reject) => {
     const child = spawn(pythonExecutable, [
       bridgeScript,
@@ -64,7 +64,7 @@ function runBridge({ pythonExecutable, bridgeScript, runtimeRoot, command, from,
       shell: false,
       env: {
         ...process.env,
-        ...translationEnvironment(runtimeRoot),
+        ...translationEnvironment(runtimeRoot, stateRoot),
       },
     })
     let output = ''
@@ -109,6 +109,7 @@ async function localTranslationStatus(options) {
       pythonExecutable,
       bridgeScript: options.bridgeScript,
       runtimeRoot: options.runtimeRoot,
+      stateRoot: options.stateRoot,
       command: 'status',
       from,
       to,
@@ -146,6 +147,7 @@ async function translateLocally(options) {
     pythonExecutable,
     bridgeScript: options.bridgeScript,
     runtimeRoot: options.runtimeRoot,
+    stateRoot: options.stateRoot,
     command: 'translate',
     from,
     to,

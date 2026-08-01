@@ -64,6 +64,17 @@ test('translation environment keeps packages and profile under the chosen runtim
   assert.equal(MAX_TRANSLATION_CHARACTERS, 50000)
 })
 
+test('bundled translation keeps model read-only and writes caches into user data', () => {
+  const runtimeRoot = 'C:\\Program Files\\ResearchReader\\resources\\translation-runtime'
+  const stateRoot = 'C:\\Users\\researcher\\AppData\\Roaming\\小何的科研阅读助手\\translation-state'
+  const environment = translationEnvironment(runtimeRoot, stateRoot)
+  assert.equal(environment.ARGOS_PACKAGES_DIR, path.join(runtimeRoot, 'packages'))
+  assert.equal(environment.XDG_DATA_HOME, path.join(stateRoot, 'data'))
+  assert.equal(environment.XDG_CONFIG_HOME, path.join(stateRoot, 'config'))
+  assert.equal(environment.XDG_CACHE_HOME, path.join(stateRoot, 'cache'))
+  assert.equal(environment.APPDATA, path.join(stateRoot, 'profile', 'AppData'))
+})
+
 test('Argos setup and bridge use explicit runtime and stdin translation', () => {
   const setup = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'setup-argos.ps1'), 'utf8')
   const bridge = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'argos-bridge.py'), 'utf8')
@@ -73,4 +84,14 @@ test('Argos setup and bridge use explicit runtime and stdin translation', () => 
   assert.match(bridge, /sys\.stdin\.read/)
   assert.match(bridge, /update_package_index/)
   assert.match(bridge, /install_from_path/)
+})
+
+test('Windows installer exposes an optional bundled translation page', () => {
+  const installer = fs.readFileSync(path.join(__dirname, '..', 'build', 'installer.nsh'), 'utf8')
+  assert.match(installer, /customPageAfterChangeDir/)
+  assert.match(installer, /InstallLocalTranslation/)
+  assert.match(installer, /translation-runtime/)
+  assert.match(installer, /pyvenv\.cfg/)
+  assert.match(installer, /customUnInstall/)
+  assert.match(installer, /RMDir \/r "\$INSTDIR\\resources\\translation-runtime"/)
 })
