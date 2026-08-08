@@ -42,6 +42,28 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Prepare bundled local translation
+        shell: pwsh
+        run: |
+          $runtimeRoot = Join-Path $PWD '.runtime\translation'
+          & ./scripts/setup-argos.ps1 -RuntimeRoot $runtimeRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "Local translation runtime setup failed with exit code $LASTEXITCODE."
+          }
+
+          $requiredFiles = @(
+            (Join-Path $runtimeRoot 'argos\.venv\Scripts\python.exe')
+            (Join-Path $runtimeRoot 'packages')
+            (Join-Path $runtimeRoot 'python')
+          )
+          $missingFiles = $requiredFiles | Where-Object { -not (Test-Path -LiteralPath $_) }
+          if ($missingFiles) {
+            throw "Bundled local translation runtime is incomplete: $($missingFiles -join ', ')"
+          }
+
+      - name: Verify bundled local translation
+        run: npm run smoke:translation
+
       - name: Build Windows installers
         run: npm run dist:win
 
