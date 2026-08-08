@@ -1118,6 +1118,7 @@ interface ResearchAgentCoordinator {
 - `npm run pack:win`：使用项目内缓存完成 x64 Windows 解包版构建。
 - `scripts/build-windows.ps1 -Target Dist -OutputDirectory .reader-cache/release-0.2.0-final-local`：0.2.0 安装版和便携版均从当前源码重新生成，安装器包含可选 Argos 本地翻译组件。
 - GitHub `Release Windows` 流程会在云端打包前显式准备并实译验证 Argos 1.11.0 + 英→中模型；运行时不完整会直接阻止发布，避免生成缺少本地翻译组件的正式安装包。
+- 云端 NSIS 打包从短映射盘符运行，规避 GitHub checkout 前缀叠加 Torch 许可证目录后的 Windows 路径长度限制；许可证文件保持完整，不以删文件方式换取构建通过。
 - 打包后的 `app.asar` 已读回核对：产品名“小何的科研阅读助手”、版本 0.2.0、显式 CSP、“添加到对话”和固定选区证据均在包内；Windows 可执行文件元数据与 H 图标资源一致。
 - 当前安装版 430,164,736 字节，SHA-256 `4D55D5581F8CBAA9CF5282A4A92ED37CFFC845D4A8437342E64FDECE202E62AE`；便携版 104,479,429 字节，SHA-256 `F2CDF143A3AD6A7CB3A9DB777E7A1B482D833CCA2B03BF189290265BB98AB9EF`。
 - 同一 Windows 用户 `hdiam\\11443` 下已完成安装 → Argos 英译中 → 启动 → 正常退出 → 卸载：译文为“证据状况需要固定参数基线。”，卸载后安装目录不存在，残留文件/字节、注册项、桌面快捷方式和开始菜单快捷方式均为 0。

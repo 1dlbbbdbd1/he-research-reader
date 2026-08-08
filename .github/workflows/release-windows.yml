@@ -65,7 +65,26 @@ jobs:
         run: npm run smoke:translation
 
       - name: Build Windows installers
-        run: npm run dist:win
+        shell: pwsh
+        run: |
+          # NSIS cannot open some deeply nested Torch license paths under the
+          # long GitHub Actions checkout prefix. Build from a short mapped
+          # drive so the complete licensed runtime stays in the installer.
+          $buildDrive = 'R:'
+          & subst.exe $buildDrive $PWD
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to map the short build drive $buildDrive."
+          }
+          try {
+            Push-Location "$buildDrive\"
+            npm run dist:win
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows installer build failed with exit code $LASTEXITCODE."
+            }
+          } finally {
+            Pop-Location
+            & subst.exe $buildDrive /D
+          }
 
       - name: Create checksums
         shell: pwsh
