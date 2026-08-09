@@ -11,9 +11,9 @@ const {
 } = require('../electron/local-translation.cjs')
 
 test('translation runtime resolves development and packaged Python paths', () => {
-  const development = candidatePythonExecutables({ projectRoot: 'E:\\codex\\reader' })
+  const development = candidatePythonExecutables({ projectRoot: 'C:\\projects\\research-reader' })
   assert.ok(development.includes(path.join(
-    'E:\\codex\\reader',
+    'C:\\projects\\research-reader',
     '.runtime',
     'translation',
     'argos',
@@ -66,7 +66,7 @@ test('translation environment keeps packages and profile under the chosen runtim
 
 test('bundled translation keeps model read-only and writes caches into user data', () => {
   const runtimeRoot = 'C:\\Program Files\\ResearchReader\\resources\\translation-runtime'
-  const stateRoot = 'C:\\Users\\researcher\\AppData\\Roaming\\小何的科研阅读助手\\translation-state'
+  const stateRoot = 'C:\\Users\\researcher\\AppData\\Roaming\\H’s 科研助手\\translation-state'
   const environment = translationEnvironment(runtimeRoot, stateRoot)
   assert.equal(environment.ARGOS_PACKAGES_DIR, path.join(runtimeRoot, 'packages'))
   assert.equal(environment.XDG_DATA_HOME, path.join(stateRoot, 'data'))

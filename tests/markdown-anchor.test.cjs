@@ -70,3 +70,29 @@ test('真实 MinerU content_list 的文字和 page_idx 可保守映射 Markdown 
   )
   assert.equal(locateQuoteInMarkdown(markdown, 'Page 2: Traceability', layout).pageNumber, 2)
 })
+
+test('双栏阅读重排后引文锚点仍跟随原始块编号和页框', async () => {
+  const { markdownReadingBlocks, locateQuoteInMarkdown, markdownSelectionAnchor } = await import('../src/markdown-anchor.mjs')
+  const markdown = 'Left top.\n\nRight top.\n\nLeft bottom.\n\nRight bottom.'
+  const layout = [
+    { id: 'lt', type: 'text', text: 'Left top.', pageNumber: 4, bbox: [0.08, 0.1, 0.45, 0.2] },
+    { id: 'lb', type: 'text', text: 'Left bottom.', pageNumber: 4, bbox: [0.08, 0.3, 0.45, 0.4] },
+    { id: 'rt', type: 'text', text: 'Right top.', pageNumber: 4, bbox: [0.55, 0.1, 0.92, 0.2] },
+    { id: 'rb', type: 'text', text: 'Right bottom.', pageNumber: 4, bbox: [0.55, 0.3, 0.92, 0.4] },
+  ]
+  const reading = markdownReadingBlocks(markdown, layout)
+  assert.equal(reading.readingOrderChanged, true)
+  assert.deepEqual(reading.blocks.map(block => block.id), [
+    'block-0001', 'block-0003', 'block-0002', 'block-0004',
+  ])
+  assert.equal(reading.diagnostics[0].layout, 'two-column')
+  assert.equal(locateQuoteInMarkdown(markdown, 'Left bottom.', layout).markdownBlockId, 'block-0003')
+  assert.deepEqual(markdownSelectionAnchor(markdown, 'block-0003', 'Left bottom.', layout), {
+    type: 'markdown',
+    state: 'resolved',
+    markdownBlockId: 'block-0003',
+    pageNumber: 4,
+    rects: [{ x: 0.08, y: 0.3, width: 0.37, height: 0.10000000000000003 }],
+    quote: { exact: 'Left bottom.' },
+  })
+})

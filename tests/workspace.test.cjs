@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict')
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -19,6 +20,16 @@ function withService() {
   }
 }
 
+function bilingualSourceHash(value) {
+  const normalized = String(value).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
+  let hash = 2166136261
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash ^= normalized.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, '0')}-${normalized.length}`
+}
+
 test('研究库会创建固定目录、清单和当前数据模型', () => {
   const fixture = withService()
   try {
@@ -31,8 +42,8 @@ test('研究库会创建固定目录、清单和当前数据模型', () => {
     assert.ok(fs.existsSync(path.join(vault.path, '.reader-cache')))
 
     const schema = fixture.service.inspectSchema()
-    assert.equal(schema.schemaVersion, 7)
-    for (const table of ['bibliographic_items', 'note_fragments', 'fragment_relation_events', 'review_documents', 'review_blocks', 'review_citations', 'action_packs', 'action_items', 'action_item_evidence', 'action_pack_events', 'migration_runs', 'migration_map', 'bibliographic_reading_states', 'reading_state_events', 'search_index_state', 'library_search_fts', 'annotation_events', 'annotation_exports', 'semantic_index_state', 'semantic_chunks']) {
+    assert.equal(schema.schemaVersion, 16)
+    for (const table of ['bibliographic_items', 'bibliographic_external_refs', 'bibliographic_sync_runs', 'portable_markdown_exports', 'note_fragments', 'fragment_relation_events', 'review_documents', 'review_blocks', 'review_citations', 'action_packs', 'action_items', 'action_item_evidence', 'action_item_research_evidence', 'action_pack_events', 'migration_runs', 'migration_map', 'bibliographic_reading_states', 'reading_state_events', 'search_index_state', 'library_search_fts', 'annotation_events', 'annotation_exports', 'semantic_index_state', 'semantic_chunks', 'research_records', 'research_project_history', 'research_milestones', 'research_run_templates', 'research_runs', 'research_artifacts', 'reading_translation_segments', 'reading_translation_overrides', 'reading_translation_terms', 'research_reports', 'research_report_revisions', 'research_report_exports', 'research_claims', 'research_claim_revisions', 'structured_reading_documents', 'structured_reading_versions', 'research_resume_state', 'research_resume_events', 'research_tasks', 'research_task_events']) {
       assert.ok(schema.tables.includes(table), `missing ${table}`)
     }
   } finally {
@@ -58,7 +69,28 @@ test('普通文件夹可原地创建研究库且不删除已有资料', () => {
   }
 })
 
-test('已发布的 v1 研究库会事务升级到 v7，并同步清单版本', () => {
+test('普通文件夹里的现有 PDF 可按用户确认一键复制纳入研究库', () => {
+  const fixture = withService()
+  try {
+    const selectedFolder = path.join(fixture.root, '已有论文')
+    fs.mkdirSync(path.join(selectedFolder, '子目录'), { recursive: true })
+    const original = path.join(selectedFolder, '子目录', 'paper.pdf')
+    fs.writeFileSync(original, Buffer.from('%PDF-1.4 existing paper'))
+    fixture.service.createAt(selectedFolder, '已有论文研究')
+    const result = fixture.service.importExistingPdfFiles([original, original])
+    assert.equal(result.imported.length, 1)
+    assert.equal(result.skipped.length, 1)
+    assert.equal(fs.readFileSync(original, 'utf8'), '%PDF-1.4 existing paper')
+    const library = fixture.service.loadLibraryState()
+    assert.equal(library.sources.length, 1)
+    assert.equal(library.sources[0].name, 'paper.pdf')
+    assert.ok(fs.existsSync(path.join(selectedFolder, 'papers', library.sources[0].id, 'original', 'paper.pdf')))
+  } finally {
+    fixture.close()
+  }
+})
+
+test('已发布的 v1 研究库会事务升级到 v16，并同步清单版本', () => {
   const fixture = withService()
   try {
     const vault = fixture.service.create(fixture.root, '升级测试')
@@ -70,6 +102,27 @@ test('已发布的 v1 研究库会事务升级到 v7，并同步清单版本', (
         WHERE type = 'trigger' AND name LIKE 'search_%_dirty'
       `).all()) database.exec(`DROP TRIGGER ${row.name}`)
       database.exec(`
+        DROP TABLE research_task_events;
+        DROP TABLE research_tasks;
+        DROP TABLE research_resume_events;
+        DROP TABLE research_resume_state;
+        DROP TABLE research_report_exports;
+        DROP TABLE research_report_revisions;
+        DROP TABLE research_reports;
+        DROP TABLE research_claim_revisions;
+        DROP TABLE research_claims;
+        DROP TABLE action_item_research_evidence;
+        DROP TABLE portable_markdown_exports;
+        DROP TABLE bibliographic_sync_runs;
+        DROP TABLE bibliographic_external_refs;
+        DROP TABLE reading_translation_terms;
+        DROP TABLE reading_translation_overrides;
+        DROP TABLE reading_translation_segments;
+        DROP TABLE research_artifacts;
+        DROP TABLE research_runs;
+        DROP TABLE research_run_templates;
+        DROP TABLE research_milestones;
+        DROP TABLE research_project_history;
         DROP TABLE action_item_evidence;
         DROP TABLE action_pack_events;
         DROP TABLE action_items;
@@ -83,6 +136,7 @@ test('已发布的 v1 研究库会事务升级到 v7，并同步清单版本', (
         DROP TABLE semantic_chunks;
         DROP TABLE semantic_index_state;
         DROP TABLE fragment_relation_events;
+        DROP TABLE research_records;
         DROP INDEX idx_annotations_project_active;
         ALTER TABLE annotations DROP COLUMN current_note_fragment_id;
         ALTER TABLE annotations DROP COLUMN updated_at;
@@ -91,7 +145,14 @@ test('已发布的 v1 研究库会事务升级到 v7，并同步清单版本', (
         ALTER TABLE fragment_relations DROP COLUMN rationale;
         ALTER TABLE fragment_relations DROP COLUMN status;
         ALTER TABLE fragment_relations DROP COLUMN created_by;
-        DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7);
+        ALTER TABLE projects DROP COLUMN research_question;
+        ALTER TABLE projects DROP COLUMN current_hypothesis;
+        ALTER TABLE projects DROP COLUMN stage;
+        ALTER TABLE projects DROP COLUMN mode;
+        ALTER TABLE bibliographic_items DROP COLUMN accessed;
+        ALTER TABLE bibliographic_items DROP COLUMN publisher;
+        ALTER TABLE bibliographic_items DROP COLUMN publisher_place;
+        DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16);
         PRAGMA user_version = 1;
       `)
     } finally {
@@ -104,7 +165,7 @@ test('已发布的 v1 研究库会事务升级到 v7，并同步清单版本', (
 
     fixture.service.open(vault.path)
     const schema = fixture.service.inspectSchema()
-    assert.equal(schema.schemaVersion, 7)
+    assert.equal(schema.schemaVersion, 16)
     assert.ok(schema.tables.includes('bibliographic_reading_states'))
     assert.ok(schema.tables.includes('reading_state_events'))
     assert.ok(schema.tables.includes('library_search_fts'))
@@ -117,7 +178,24 @@ test('已发布的 v1 研究库会事务升级到 v7，并同步清单版本', (
     assert.ok(schema.tables.includes('action_packs'))
     assert.ok(schema.tables.includes('action_item_evidence'))
     assert.ok(schema.tables.includes('action_pack_events'))
-    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 7)
+    assert.ok(schema.tables.includes('research_records'))
+    assert.ok(schema.tables.includes('research_runs'))
+    assert.ok(schema.tables.includes('research_artifacts'))
+    assert.ok(schema.tables.includes('reading_translation_segments'))
+    assert.ok(schema.tables.includes('reading_translation_overrides'))
+    assert.ok(schema.tables.includes('reading_translation_terms'))
+    assert.ok(schema.tables.includes('research_reports'))
+    assert.ok(schema.tables.includes('research_claims'))
+    assert.ok(schema.tables.includes('research_resume_state'))
+    assert.ok(schema.tables.includes('research_resume_events'))
+    assert.ok(schema.tables.includes('research_tasks'))
+    assert.ok(schema.tables.includes('research_task_events'))
+    const projectColumns = fixture.service.database.prepare('PRAGMA table_info(projects)').all().map(row => row.name)
+    assert.ok(projectColumns.includes('research_question'))
+    assert.ok(projectColumns.includes('current_hypothesis'))
+    assert.ok(projectColumns.includes('stage'))
+    assert.ok(projectColumns.includes('mode'))
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
   } finally {
     fixture.close()
   }
@@ -132,6 +210,1098 @@ test('研究库最近列表和切换指向各自数据库', () => {
     assert.equal(fixture.service.listRecent().length, 2)
     assert.equal(fixture.service.switch(first.id).id, first.id)
     assert.equal(fixture.service.listRecent().find(item => item.id === first.id).isCurrent, true)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('课题中心会本地保存课题资料和五类科研记录', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, '机器人装配课题')
+    const initial = fixture.service.getResearchWorkspace()
+    assert.deepEqual(initial.project, {
+      id: vault.projectId,
+      name: '机器人装配课题',
+      researchQuestion: '',
+      currentHypothesis: '',
+      stage: '探索中',
+      mode: 'exploration',
+      updatedAt: initial.project.updatedAt,
+    })
+    assert.deepEqual(initial.records, [])
+
+    const updated = fixture.service.saveResearchWorkspace({
+      projectId: vault.projectId,
+      name: '柔顺装配课题',
+      researchQuestion: '如何降低插接过程中的卡滞率？',
+      currentHypothesis: '力位混合控制可以降低接触峰值。',
+      stage: '实验验证',
+    })
+    assert.equal(updated.project.name, '柔顺装配课题')
+    assert.equal(updated.project.stage, '实验验证')
+    assert.equal(JSON.parse(fs.readFileSync(path.join(vault.path, 'vault.json'), 'utf8')).name, '柔顺装配课题')
+    assert.equal(fixture.service.saveResearchProject({ stage: '实验验证' }).project.stage, '实验验证')
+
+    const sourceTimestamp = new Date().toISOString()
+    fixture.service.database.prepare(`
+      INSERT INTO sources(id, project_id, name, kind, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('research-source-1', vault.projectId, '控制论文.pdf', 'PDF', '已解析', sourceTimestamp, sourceTimestamp)
+
+    const types = ['log', 'experiment', 'dataset', 'decision', 'milestone']
+    for (const [index, recordType] of types.entries()) {
+      fixture.service.saveResearchRecord({
+        projectId: vault.projectId,
+        recordType,
+        title: `${recordType} 记录`,
+        content: `第 ${index + 1} 条研究过程`,
+        status: index === 0 ? 'planned' : 'active',
+        occurredAt: `2026-08-0${index + 1}T08:00:00+08:00`,
+        filePath: recordType === 'dataset' ? 'data/run-01.csv' : undefined,
+        sourceIds: ['research-source-1'],
+        tags: ['装配', recordType, '装配'],
+      })
+    }
+    const workspace = fixture.service.getResearchWorkspace()
+    assert.deepEqual(new Set(workspace.records.map(record => record.recordType)), new Set(types))
+    assert.equal(workspace.records[0].recordType, 'milestone')
+    assert.deepEqual(workspace.records.find(record => record.recordType === 'dataset').tags, ['装配', 'dataset'])
+    assert.equal(workspace.records.find(record => record.recordType === 'dataset').filePath, 'data/run-01.csv')
+
+    const experiment = workspace.records.find(record => record.recordType === 'experiment')
+    fixture.service.saveResearchRecord({
+      ...experiment,
+      title: '实验记录（已完成）',
+      status: 'completed',
+    })
+    assert.equal(
+      fixture.service.getResearchWorkspace().records.find(record => record.id === experiment.id).status,
+      'completed',
+    )
+    fixture.service.saveResearchRecord({ ...experiment, status: 'archived' })
+    assert.equal(fixture.service.getResearchWorkspace().records.some(record => record.id === experiment.id), false)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('科研记录校验输入并阻止跨课题覆盖和关联', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, '隔离测试')
+    const timestamp = new Date().toISOString()
+    fixture.service.database.prepare(
+      'INSERT INTO projects(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
+    ).run('other-project', '另一个课题', timestamp, timestamp)
+    fixture.service.database.prepare(`
+      INSERT INTO sources(id, project_id, name, kind, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('other-source', 'other-project', '其他课题论文.pdf', 'PDF', '已解析', timestamp, timestamp)
+    fixture.service.database.prepare(`
+      INSERT INTO research_records(
+        id, project_id, record_type, title, content, status, occurred_at,
+        source_ids_json, tags_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('other-record', 'other-project', 'log', '其他课题日志', '', 'active', timestamp, '[]', '[]', timestamp, timestamp)
+
+    assert.throws(
+      () => fixture.service.saveResearchWorkspace({ projectId: 'other-project', stage: '完成' }),
+      /课题已切换/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchRecord({ id: 'other-record', recordType: 'log', title: '越权覆盖' }),
+      /不属于当前课题/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchRecord({ recordType: 'dataset', title: '越权关联', sourceIds: ['other-source'] }),
+      /不存在或不属于当前课题/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchRecord({ recordType: 'unknown', title: '错误类型' }),
+      /类型无效/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchRecord({ recordType: 'log', title: '错误时间', occurredAt: 'not-a-date' }),
+      /时间无效/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchRecord({ recordType: 'log', title: '', tags: '不是列表' }),
+      /标题不能为空/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchWorkspace({ projectId: vault.projectId, researchQuestion: 42 }),
+      /必须是文本/,
+    )
+    assert.equal(fixture.service.getResearchWorkspace().records.length, 0)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('已发布的 v8 研究库会原位升级到 v16 并获得通用工科数据表和内置模板', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, 'v8 升级测试')
+    fixture.service.close()
+    const database = new DatabaseSync(path.join(vault.path, 'library.sqlite'))
+    try {
+      database.exec(`
+        DROP TABLE research_task_events;
+        DROP TABLE research_tasks;
+        DROP TABLE research_resume_events;
+        DROP TABLE research_resume_state;
+        DROP TABLE research_report_exports;
+        DROP TABLE research_report_revisions;
+        DROP TABLE research_reports;
+        DROP TABLE research_claim_revisions;
+        DROP TABLE research_claims;
+        DROP TABLE action_item_research_evidence;
+        DROP TABLE portable_markdown_exports;
+        DROP TABLE bibliographic_sync_runs;
+        DROP TABLE bibliographic_external_refs;
+        DROP TABLE reading_translation_terms;
+        DROP TABLE reading_translation_overrides;
+        DROP TABLE reading_translation_segments;
+        DROP TABLE research_artifacts;
+        DROP TABLE research_runs;
+        DROP TABLE research_run_templates;
+        DROP TABLE research_milestones;
+        DROP TABLE research_project_history;
+        ALTER TABLE projects DROP COLUMN mode;
+        ALTER TABLE bibliographic_items DROP COLUMN accessed;
+        ALTER TABLE bibliographic_items DROP COLUMN publisher;
+        ALTER TABLE bibliographic_items DROP COLUMN publisher_place;
+        DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16);
+        PRAGMA user_version = 8;
+      `)
+    } finally {
+      database.close()
+    }
+    const manifestPath = path.join(vault.path, 'vault.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.schemaVersion = 8
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+
+    fixture.service.open(vault.path)
+    const workspace = fixture.service.getResearchWorkspace()
+    assert.equal(fixture.service.inspectSchema().schemaVersion, 16)
+    assert.equal(workspace.project.mode, 'exploration')
+    assert.deepEqual(
+      new Set(workspace.runTemplates.filter(template => template.builtIn).map(template => template.category)),
+      new Set(['general', 'ros', 'python', 'data-analysis', 'simulation', 'physical']),
+    )
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('已发布的 v9 研究库会事务升级到 v16 并获得报告、论文论断、引用、结构化阅读、现场恢复、统一任务与翻译状态模型', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, 'v9 升级测试')
+    fixture.service.close()
+    const database = new DatabaseSync(path.join(vault.path, 'library.sqlite'))
+    try {
+      database.exec(`
+        DROP TABLE portable_markdown_exports;
+        DROP TABLE bibliographic_sync_runs;
+        DROP TABLE bibliographic_external_refs;
+        DROP TABLE reading_translation_terms;
+        DROP TABLE reading_translation_overrides;
+        DROP TABLE research_task_events;
+        DROP TABLE research_tasks;
+        DROP TABLE research_resume_events;
+        DROP TABLE research_resume_state;
+        DROP TABLE research_report_exports;
+        DROP TABLE research_report_revisions;
+        DROP TABLE research_reports;
+        DROP TABLE research_claim_revisions;
+        DROP TABLE research_claims;
+        ALTER TABLE bibliographic_items DROP COLUMN accessed;
+        ALTER TABLE bibliographic_items DROP COLUMN publisher;
+        ALTER TABLE bibliographic_items DROP COLUMN publisher_place;
+        DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16);
+        PRAGMA user_version = 9;
+      `)
+    } finally {
+      database.close()
+    }
+    const manifestPath = path.join(vault.path, 'vault.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.schemaVersion = 9
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+
+    fixture.service.open(vault.path)
+    const schema = fixture.service.inspectSchema()
+    assert.equal(schema.schemaVersion, 16)
+    assert.ok(schema.tables.includes('research_reports'))
+    assert.ok(schema.tables.includes('research_report_revisions'))
+    assert.ok(schema.tables.includes('research_report_exports'))
+    assert.ok(schema.tables.includes('research_claims'))
+    assert.ok(schema.tables.includes('research_claim_revisions'))
+    const workspace = fixture.service.getResearchWorkspace()
+    assert.deepEqual(workspace.reports, [])
+    assert.deepEqual(workspace.claims, [])
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('schema v10 研究库原位升级到 v16 后获得引用出版项且不改写既有题录', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, 'v10 引用迁移测试')
+    const timestamp = new Date().toISOString()
+    fixture.service.database.prepare(`
+      INSERT INTO bibliographic_items(
+        id, project_id, item_type, title, authors_json, issued, keywords_json, identifiers_json,
+        needs_metadata_review, import_format, import_batch_id, record_ordinal, raw_payload,
+        raw_fields_json, parser_name, parser_version, imported_at, created_at, updated_at
+      ) VALUES (?, ?, 'book', '迁移前题名', '[]', '2024', '[]', '{}', 1, 'manual', 'v10', 1, '', '{}', 'test', '1', ?, ?, ?)
+    `).run('v10-item', vault.projectId, timestamp, timestamp, timestamp)
+    fixture.service.close()
+    const database = new DatabaseSync(path.join(vault.path, 'library.sqlite'))
+    try {
+      database.exec(`
+        DROP TABLE portable_markdown_exports;
+        DROP TABLE bibliographic_sync_runs;
+        DROP TABLE bibliographic_external_refs;
+        DROP TABLE reading_translation_terms;
+        DROP TABLE reading_translation_overrides;
+        DROP TABLE research_task_events;
+        DROP TABLE research_tasks;
+        DROP TABLE research_resume_events;
+        DROP TABLE research_resume_state;
+        ALTER TABLE bibliographic_items DROP COLUMN accessed;
+        ALTER TABLE bibliographic_items DROP COLUMN publisher;
+        ALTER TABLE bibliographic_items DROP COLUMN publisher_place;
+        DELETE FROM schema_migrations WHERE version IN (11, 12, 13, 14, 15, 16);
+        PRAGMA user_version = 10;
+      `)
+    } finally {
+      database.close()
+    }
+    const manifestPath = path.join(vault.path, 'vault.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.schemaVersion = 10
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+
+    fixture.service.open(vault.path)
+    assert.equal(fixture.service.inspectSchema().schemaVersion, 16)
+    const columns = fixture.service.database.prepare('PRAGMA table_info(bibliographic_items)').all().map(row => row.name)
+    assert.ok(columns.includes('accessed'))
+    assert.ok(columns.includes('publisher'))
+    assert.ok(columns.includes('publisher_place'))
+    assert.equal(fixture.service.database.prepare('SELECT title FROM bibliographic_items WHERE id = ?').get('v10-item').title, '迁移前题名')
+  } finally {
+    fixture.close()
+  }
+})
+
+test('schema v11 研究库事务升级到 v16 并创建结构化阅读、现场恢复、统一任务与翻译状态表', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, 'v11 结构化阅读迁移测试')
+    fixture.service.close()
+    const database = new DatabaseSync(path.join(vault.path, 'library.sqlite'))
+    try {
+      database.exec(`
+        DROP TABLE portable_markdown_exports;
+        DROP TABLE bibliographic_sync_runs;
+        DROP TABLE bibliographic_external_refs;
+        DROP TABLE reading_translation_terms;
+        DROP TABLE reading_translation_overrides;
+        DROP TABLE research_task_events;
+        DROP TABLE research_tasks;
+        DROP TABLE research_resume_events;
+        DROP TABLE research_resume_state;
+        DROP TABLE structured_reading_versions;
+        DROP TABLE structured_reading_documents;
+        DELETE FROM schema_migrations WHERE version IN (12, 13, 14, 15, 16);
+        PRAGMA user_version = 11;
+      `)
+    } finally {
+      database.close()
+    }
+    const manifestPath = path.join(vault.path, 'vault.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.schemaVersion = 11
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+
+    fixture.service.open(vault.path)
+    const schema = fixture.service.inspectSchema()
+    assert.equal(schema.schemaVersion, 16)
+    assert.ok(schema.tables.includes('structured_reading_documents'))
+    assert.ok(schema.tables.includes('structured_reading_versions'))
+    assert.ok(schema.tables.includes('research_resume_state'))
+    assert.ok(schema.tables.includes('research_resume_events'))
+    assert.ok(schema.tables.includes('research_tasks'))
+  } finally {
+    fixture.close()
+  }
+})
+
+test('schema v12 研究库事务升级到 v16 并创建只追加现场、任务事件与翻译状态', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, 'v12 现场恢复迁移测试')
+    fixture.service.close()
+    const database = new DatabaseSync(path.join(vault.path, 'library.sqlite'))
+    try {
+      database.exec(`
+        DROP TABLE portable_markdown_exports;
+        DROP TABLE bibliographic_sync_runs;
+        DROP TABLE bibliographic_external_refs;
+        DROP TABLE reading_translation_terms;
+        DROP TABLE reading_translation_overrides;
+        DROP TABLE research_task_events;
+        DROP TABLE research_tasks;
+        DROP TABLE research_resume_events;
+        DROP TABLE research_resume_state;
+        DELETE FROM schema_migrations WHERE version IN (13, 14, 15, 16);
+        PRAGMA user_version = 12;
+      `)
+    } finally {
+      database.close()
+    }
+    const manifestPath = path.join(vault.path, 'vault.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.schemaVersion = 12
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+
+    fixture.service.open(vault.path)
+    const schema = fixture.service.inspectSchema()
+    assert.equal(schema.schemaVersion, 16)
+    assert.ok(schema.tables.includes('research_resume_state'))
+    assert.ok(schema.tables.includes('research_resume_events'))
+    assert.ok(schema.tables.includes('research_tasks'))
+    assert.ok(schema.tables.includes('research_task_events'))
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('schema v13 研究库事务升级到 v16 并保留现场状态', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, 'v13 统一任务迁移测试')
+    fixture.service.beginResearchSession()
+    fixture.service.saveResearchResume({ activeView: 'research-workspace' })
+    fixture.service.close()
+    const database = new DatabaseSync(path.join(vault.path, 'library.sqlite'))
+    try {
+      database.exec(`
+        DROP TABLE portable_markdown_exports;
+        DROP TABLE bibliographic_sync_runs;
+        DROP TABLE bibliographic_external_refs;
+        DROP TABLE reading_translation_terms;
+        DROP TABLE reading_translation_overrides;
+        DROP TABLE research_task_events;
+        DROP TABLE research_tasks;
+        DELETE FROM schema_migrations WHERE version IN (14, 15, 16);
+        PRAGMA user_version = 13;
+      `)
+    } finally {
+      database.close()
+    }
+    const manifestPath = path.join(vault.path, 'vault.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.schemaVersion = 13
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+
+    fixture.service.open(vault.path)
+    assert.equal(fixture.service.inspectSchema().schemaVersion, 16)
+    assert.equal(fixture.service.getResearchResume().activeView, 'research-workspace')
+    assert.ok(fixture.service.inspectSchema().tables.includes('research_tasks'))
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('schema v14 研究库原位升级到 v16 并保留既有翻译缓存', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, 'v14 翻译状态迁移测试')
+    const timestamp = new Date().toISOString()
+    fixture.service.database.prepare(`
+      INSERT INTO sources(id, project_id, name, kind, status, created_at, updated_at)
+      VALUES (?, ?, 'migration.pdf', 'PDF', '已解析', ?, ?)
+    `).run('v14-translation-source', vault.projectId, timestamp, timestamp)
+    const text = 'Existing translation cache remains readable.'
+    const hash = bilingualSourceHash(text)
+    fixture.service.saveReadingTranslationSegment({
+      sourceId: 'v14-translation-source', segmentId: 'segment-1', sourceHash: hash,
+      sourceText: text, translatedText: '既有翻译缓存仍可读取。', provider: 'local', status: 'translated',
+    })
+    fixture.service.close()
+    const database = new DatabaseSync(path.join(vault.path, 'library.sqlite'))
+    try {
+      database.exec(`
+        DROP TABLE portable_markdown_exports;
+        DROP TABLE bibliographic_sync_runs;
+        DROP TABLE bibliographic_external_refs;
+        DROP TABLE reading_translation_terms;
+        DROP TABLE reading_translation_overrides;
+        DELETE FROM schema_migrations WHERE version IN (15, 16);
+        PRAGMA user_version = 14;
+      `)
+    } finally {
+      database.close()
+    }
+    const manifestPath = path.join(vault.path, 'vault.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.schemaVersion = 14
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+
+    fixture.service.open(vault.path)
+    assert.equal(fixture.service.inspectSchema().schemaVersion, 16)
+    assert.ok(fixture.service.inspectSchema().tables.includes('reading_translation_overrides'))
+    assert.ok(fixture.service.inspectSchema().tables.includes('reading_translation_terms'))
+    const restored = fixture.service.getReadingTranslationSegments({
+      sourceId: 'v14-translation-source', segments: [{ segmentId: 'segment-1', sourceHash: hash }],
+    })
+    assert.equal(restored.segments[0].translatedText, '既有翻译缓存仍可读取。')
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('schema v15 研究库原位升级到 v16 并增加 Zotero 边界与可迁移导出记录', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, 'v15 兼容接口迁移测试')
+    fixture.service.close()
+    const database = new DatabaseSync(path.join(vault.path, 'library.sqlite'))
+    try {
+      database.exec(`
+        DROP TABLE portable_markdown_exports;
+        DROP TABLE bibliographic_sync_runs;
+        DROP TABLE bibliographic_external_refs;
+        DELETE FROM schema_migrations WHERE version = 16;
+        PRAGMA user_version = 15;
+      `)
+    } finally {
+      database.close()
+    }
+    const manifestPath = path.join(vault.path, 'vault.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.schemaVersion = 15
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+
+    fixture.service.open(vault.path)
+    const schema = fixture.service.inspectSchema()
+    assert.equal(schema.schemaVersion, 16)
+    assert.ok(schema.tables.includes('bibliographic_external_refs'))
+    assert.ok(schema.tables.includes('bibliographic_sync_runs'))
+    assert.ok(schema.tables.includes('portable_markdown_exports'))
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('统一科研任务兼容 ActionPack、里程碑、Run、论文和批注，并把完成状态回写来源', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, '统一任务测试')
+    fixture.service.importSourceFile({
+      id: 'task-source', fileName: 'task-paper.pdf', kind: 'PDF', bytes: Buffer.from('%PDF-task-source'),
+    })
+    fixture.service.syncLibraryState({
+      workspaceId: vault.id,
+      sources: [{ id: 'task-source', fileId: 'task-source', name: 'task-paper.pdf', kind: 'PDF', version: 1, status: '已解析' }],
+      annotations: [{
+        id: 'task-annotation', sourceId: 'task-source', text: '需要复核的原文', note: '把这条批注转为任务',
+        category: '待核实', anchor: { type: 'pdf', state: 'resolved', pageNumber: 3 }, page: '第 3 页',
+      }],
+    })
+    const item = fixture.service.loadLibraryState().bibliographicItems.find(entry => entry.sourceId === 'task-source')
+    fixture.service.updateReadingState({ itemId: item.id, readingStatus: 'reading', lastPage: 3, totalPages: 10 })
+    const milestone = fixture.service.saveResearchMilestone({ title: '完成基线验证', status: 'active' }).milestones[0]
+    const run = fixture.service.saveResearchRun({
+      title: '基线 Run', outcome: 'running', anomaly: '日志存在时间戳跳变', nextStep: '固定随机种子后再运行',
+    }).runs[0]
+    const pack = fixture.service.createActionPack({
+      title: 'AI 待确认建议', objective: '补齐证据', createdBy: 'ai',
+      scope: { kind: 'current', label: '当前论文', itemIds: [item.id] },
+      actions: [{
+        actionType: 'verify', title: '核对实验工况', rationale: '论文与 Run 的工况可能不同。',
+        evidence: [{ evidenceType: 'source', entityId: 'task-source', sourceId: 'task-source', itemId: item.id, label: item.title, excerpt: 'source evidence' }],
+      }],
+    })
+
+    let listed = fixture.service.listResearchTasks()
+    const aiTask = listed.tasks.find(task => task.sourceType === 'ai_suggestion')
+    const milestoneTask = listed.tasks.find(task => task.sourceType === 'milestone' && task.sourceId === milestone.id)
+    const runTask = listed.tasks.find(task => task.sourceType === 'run' && task.sourceId === run.id)
+    const anomalyTask = listed.tasks.find(task => task.sourceType === 'anomaly' && task.sourceId === run.id)
+    const paperTask = listed.tasks.find(task => task.sourceType === 'paper' && task.sourceId === item.id)
+    assert.equal(aiTask.approvalStatus, 'proposed')
+    assert.equal(aiTask.isFormal, false)
+    assert.equal(milestoneTask.status, 'today')
+    assert.equal(runTask.title, '固定随机种子后再运行')
+    assert.equal(anomalyTask.status, 'waiting')
+    assert.equal(paperTask.returnTarget.pageNumber, 3)
+    assert.throws(() => fixture.service.updateResearchTask({ taskId: aiTask.id, status: 'today' }), /必须人工确认/)
+
+    listed = fixture.service.updateResearchTask({ taskId: aiTask.id, decision: 'confirm' })
+    assert.equal(listed.tasks.find(task => task.id === aiTask.id).isFormal, true)
+    listed = fixture.service.updateResearchTask({ taskId: aiTask.id, status: 'completed' })
+    assert.equal(fixture.service.getActionPack(pack.id).items[0].status, 'completed')
+
+    assert.throws(() => fixture.service.updateResearchTask({ taskId: milestoneTask.id, status: 'waiting' }), /等待条件/)
+    fixture.service.updateResearchTask({ taskId: milestoneTask.id, status: 'waiting', waitCondition: '等待传感器返修' })
+    assert.equal(fixture.service.getResearchWorkspace().milestones.find(entry => entry.id === milestone.id).status, 'blocked')
+    fixture.service.updateResearchTask({ taskId: milestoneTask.id, status: 'completed' })
+    assert.equal(fixture.service.getResearchWorkspace().milestones.find(entry => entry.id === milestone.id).status, 'completed')
+
+    fixture.service.updateResearchTask({ taskId: paperTask.id, status: 'completed' })
+    assert.equal(fixture.service.loadLibraryState().bibliographicItems.find(entry => entry.id === item.id).readingState.readingStatus, 'finished')
+    fixture.service.updateResearchTask({ taskId: runTask.id, status: 'completed' })
+    assert.equal(fixture.service.listResearchTasks().tasks.find(task => task.id === runTask.id).status, 'completed')
+
+    const converted = fixture.service.createResearchTask({
+      sourceType: 'annotation', sourceId: 'task-annotation', title: '复核批注中的实验条件', status: 'today',
+    })
+    assert.equal(converted.task.returnTarget.pageNumber, 3)
+    assert.equal(fixture.service.createResearchTask({ sourceType: 'annotation', sourceId: 'task-annotation' }).alreadyExists, true)
+    const manual = fixture.service.createResearchTask({ title: '整理今天的运行日志', status: 'inbox' })
+    assert.equal(manual.task.sourceType, 'manual')
+    assert.throws(() => fixture.service.updateResearchTask({ taskId: manual.task.id, status: 'deferred' }), /恢复时间/)
+    listed = fixture.service.updateResearchTask({ taskId: manual.task.id, status: 'deferred', deferredUntil: '2026-08-15T09:00:00+08:00' })
+    assert.equal(listed.tasks.find(task => task.id === manual.task.id).status, 'deferred')
+
+    const event = fixture.service.database.prepare('SELECT id FROM research_task_events ORDER BY rowid DESC LIMIT 1').get()
+    assert.throws(() => fixture.service.database.prepare("UPDATE research_task_events SET note = '覆盖' WHERE id = ?").run(event.id), /append-only/)
+    assert.throws(() => fixture.service.database.prepare('DELETE FROM research_task_events WHERE id = ?').run(event.id), /cannot be deleted/)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('科研现场保存阅读位置、模式和当前 Run，重开后可恢复且事件不可覆盖', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, '今日科研恢复测试')
+    const firstSession = fixture.service.beginResearchSession()
+    assert.equal(firstSession.firstVisit, true)
+    assert.equal(firstSession.activeView, 'today')
+
+    fixture.service.importSourceFile({
+      id: 'resume-source',
+      fileName: 'half-read.pdf',
+      kind: 'PDF',
+      bytes: Buffer.from('%PDF-1.4 resume state'),
+    })
+    fixture.service.syncLibraryState({
+      workspaceId: vault.id,
+      sources: [{
+        id: 'resume-source', fileId: 'resume-source', name: 'half-read.pdf', kind: 'PDF', version: 1,
+        status: '已解析', readerState: { viewMode: 'markdown', zoom: 1.1 },
+      }],
+      annotations: [],
+    })
+    const workspace = fixture.service.saveResearchRun({
+      title: '进行中的装配复测',
+      outcome: 'running',
+      nextStep: '只改变接触刚度后复测',
+    })
+    const run = workspace.runs.find(item => item.title === '进行中的装配复测')
+    const saved = fixture.service.saveResearchResume({
+      projectId: vault.projectId,
+      activeView: 'reader',
+      sourceId: 'resume-source',
+      pageNumber: 17,
+      readerMode: 'markdown',
+      activeRunId: run.id,
+    })
+    assert.equal(saved.sourceId, 'resume-source')
+    assert.equal(saved.pageNumber, 17)
+    assert.equal(saved.readerMode, 'markdown')
+    assert.equal(saved.activeRunId, run.id)
+    assert.throws(() => fixture.service.saveResearchResume({ sourceId: 'other-source' }), /不存在或不属于/)
+    assert.throws(() => fixture.service.saveResearchResume({ activeRunId: 'other-run' }), /不存在或不属于/)
+
+    fixture.service.close()
+    fixture.service.open(vault.path)
+    const returned = fixture.service.beginResearchSession()
+    assert.equal(returned.firstVisit, false)
+    assert.ok(returned.previousActiveAt)
+    assert.equal(returned.activeView, 'reader')
+    assert.equal(returned.sourceId, 'resume-source')
+    assert.equal(returned.pageNumber, 17)
+    assert.equal(returned.readerMode, 'markdown')
+    assert.equal(returned.activeRunId, run.id)
+    const event = fixture.service.database.prepare(
+      'SELECT id FROM research_resume_events WHERE project_id = ? ORDER BY occurred_at DESC LIMIT 1',
+    ).get(vault.projectId)
+    assert.throws(
+      () => fixture.service.database.prepare("UPDATE research_resume_events SET event_type = 'closed' WHERE id = ?").run(event.id),
+      /append-only/,
+    )
+    assert.throws(
+      () => fixture.service.database.prepare('DELETE FROM research_resume_events WHERE id = ?').run(event.id),
+      /cannot be deleted/,
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
+test('周报先保存草稿再确认，并可带来源追溯导出 Markdown', () => {
+  const fixture = withService()
+  try {
+    fixture.service.create(fixture.root, '报告工作台')
+    fixture.service.importSourceFile({
+      id: 'source-weekly-evidence',
+      fileName: 'navigation-paper.pdf',
+      kind: 'PDF',
+      bytes: Buffer.from('%PDF-1.4 weekly evidence'),
+    })
+    const draft = fixture.service.saveResearchReport({
+      title: '第 3 周科研周报',
+      type: 'weekly',
+      period: '2026-08-03 至 2026-08-09',
+      markdown: '## 本周进展\n\n完成 ROS 导航基线阅读。',
+      sourceRefs: [{ type: 'source', id: 'source-weekly-evidence' }],
+    })
+    assert.equal(draft.status, 'draft')
+    assert.equal(draft.sourceRefs[0].label, 'navigation-paper.pdf')
+    assert.equal(fixture.service.getResearchWorkspace().reports[0].id, draft.id)
+
+    const confirmed = fixture.service.confirmResearchReport({ id: draft.id })
+    assert.equal(confirmed.status, 'confirmed')
+    assert.ok(confirmed.confirmedAt)
+    const exported = fixture.service.exportResearchReport({ id: draft.id })
+    assert.equal(exported.format, 'markdown')
+    assert.ok(fs.existsSync(exported.filePath))
+    const markdown = fs.readFileSync(exported.filePath, 'utf8')
+    assert.match(markdown, /第 3 周科研周报/)
+    assert.match(markdown, /来源追溯/)
+    assert.match(markdown, /source-weekly-evidence/)
+    assert.equal(crypto.createHash('sha256').update(markdown).digest('hex'), exported.fileSha256)
+    const portableDirectory = path.join(fixture.root, 'portable-notes')
+    fs.mkdirSync(portableDirectory)
+    const portable = fixture.service.exportPortableMarkdown({ kind: 'research_report', id: draft.id, directory: portableDirectory })
+    const portableAgain = fixture.service.exportPortableMarkdown({ kind: 'research_report', id: draft.id, directory: portableDirectory })
+    assert.equal(portable.filePath, portableAgain.filePath)
+    assert.equal(portableAgain.overwritten, true)
+    const portableText = fs.readFileSync(portable.filePath, 'utf8')
+    assert.match(portableText, /source_of_truth: "H's 科研助手 SQLite"/)
+    assert.match(portableText, /export_direction: "one-way-snapshot"/)
+    assert.match(portableText, /source-weekly-evidence/)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('科研论断允许无证据草稿但拒绝无证据确认，并保留已确认内容的修订历史', () => {
+  const fixture = withService()
+  try {
+    fixture.service.create(fixture.root, '论文论断工作台')
+    fixture.service.importSourceFile({
+      id: 'source-claim-evidence',
+      fileName: 'controller.pdf',
+      kind: 'PDF',
+      bytes: Buffer.from('%PDF-1.4 claim evidence'),
+    })
+    const draft = fixture.service.saveResearchClaim({
+      section: '结果 / 稳定性',
+      text: '提高速度后稳定性下降。',
+      status: 'draft',
+      requiredEvidence: ['run', 'figure'],
+    })
+    assert.equal(draft.status, 'draft')
+    assert.deepEqual(draft.requiredEvidence, ['run', 'figure'])
+    assert.throws(
+      () => fixture.service.saveResearchClaim({ id: draft.id, status: 'confirmed' }),
+      /没有已验证证据.*不能确认/,
+    )
+
+    const confirmed = fixture.service.saveResearchClaim({
+      id: draft.id,
+      status: 'confirmed',
+      evidenceRefs: [{ type: 'source', id: 'source-claim-evidence' }],
+    })
+    assert.equal(confirmed.status, 'confirmed')
+    assert.equal(confirmed.revisionNumber, 2)
+    assert.equal(confirmed.revisions.length, 1)
+    assert.equal(confirmed.evidenceRefs[0].label, 'controller.pdf')
+
+    const revised = fixture.service.saveResearchClaim({
+      id: draft.id,
+      text: '在当前参数范围内，提高速度后稳定裕量下降。',
+    })
+    assert.equal(revised.status, 'draft')
+    assert.equal(revised.revisionNumber, 3)
+    assert.equal(revised.revisions.length, 2)
+    assert.equal(revised.revisions[0].snapshot.text, '提高速度后稳定性下降。')
+    assert.equal(revised.revisions[0].snapshot.status, 'confirmed')
+
+    const reconfirmed = fixture.service.saveResearchClaim({ id: draft.id, status: 'confirmed' })
+    assert.equal(reconfirmed.status, 'confirmed')
+    assert.equal(reconfirmed.revisionNumber, 4)
+    assert.equal(reconfirmed.revisions[0].snapshot.status, 'draft')
+
+    const archived = fixture.service.archiveResearchClaim({ id: draft.id })
+    assert.equal(archived.alreadyArchived, false)
+    assert.equal(fixture.service.listResearchClaims().length, 0)
+    assert.equal(fixture.service.listResearchClaims({ includeArchived: true })[0].id, draft.id)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('报告和论断拒绝引用另一个研究库的文献、测试与成果', () => {
+  const fixture = withService()
+  try {
+    fixture.service.create(fixture.root, '第一课题')
+    fixture.service.importSourceFile({
+      id: 'source-foreign',
+      fileName: 'foreign.pdf',
+      kind: 'PDF',
+      bytes: Buffer.from('%PDF-1.4 foreign'),
+    })
+    const firstWorkspace = fixture.service.getResearchWorkspace()
+    fixture.service.saveResearchMilestone({ title: '第一课题里程碑' })
+    const firstMilestoneId = fixture.service.getResearchWorkspace().milestones[0].id
+    fixture.service.create(fixture.root, '第二课题')
+
+    assert.throws(() => fixture.service.saveResearchReport({
+      title: '错误周报',
+      type: 'weekly',
+      markdown: '不应写入。',
+      sourceRefs: [{ type: 'source', id: 'source-foreign' }],
+    }), /不存在或不属于当前课题/)
+    assert.throws(() => fixture.service.saveResearchClaim({
+      section: '结果',
+      text: '错误论断',
+      status: 'confirmed',
+      evidenceRefs: [{ type: 'milestone', id: firstMilestoneId }],
+    }), /不存在或不属于当前课题/)
+    assert.ok(firstWorkspace.project.id)
+    assert.equal(fixture.service.getResearchWorkspace().reports.length, 0)
+    assert.equal(fixture.service.getResearchWorkspace().claims.length, 0)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('科研项目支持探索和执行模式、里程碑、内置及当前研究库自定义测试模板', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, '通用工科项目')
+    const initial = fixture.service.getResearchWorkspace()
+    assert.equal(initial.runTemplates.filter(template => template.builtIn).length, 6)
+    assert.ok(initial.runTemplates.some(template => template.id === 'builtin-ros-parameter'))
+
+    const project = fixture.service.saveResearchProject({
+      projectId: vault.projectId,
+      mode: 'execution',
+      stage: '基线验证',
+      createdBy: 'user',
+    })
+    assert.equal(project.project.mode, 'execution')
+    assert.deepEqual(new Set(project.history[0].changedFields), new Set(['stage', 'mode']))
+
+    const withMilestone = fixture.service.saveResearchMilestone({
+      projectId: vault.projectId,
+      title: '完成导航算法基线',
+      description: '形成可重复的仿真基准。',
+      status: 'active',
+      acceptanceCriteria: ['完成默认参数测试', '轨迹图可追溯到原始数据'],
+    })
+    assert.equal(withMilestone.milestones[0].status, 'active')
+    assert.equal(withMilestone.milestones[0].acceptanceCriteria.length, 2)
+
+    const customized = fixture.service.saveResearchRunTemplate({
+      projectId: vault.projectId,
+      name: '我的 Gazebo 重复性测试',
+      category: 'custom-ros',
+      description: '固定地图与种子，重复运行三次。',
+      defaults: {
+        environment: 'ROS 2 Jazzy / Gazebo',
+        command: 'ros2 launch demo baseline.launch.py',
+        changedVariables: [{ name: 'random_seed', currentValue: '42' }],
+      },
+    })
+    const custom = customized.runTemplates.find(template => !template.builtIn)
+    assert.equal(custom.projectId, vault.projectId)
+    assert.equal(custom.defaults.changedVariables[0].name, 'random_seed')
+    assert.throws(
+      () => fixture.service.saveResearchRunTemplate({ id: 'builtin-ros-parameter', name: '篡改内置模板' }),
+      /内置测试模板不可修改/,
+    )
+    assert.throws(() => fixture.service.saveResearchProject({ mode: 'unknown' }), /课题模式无效/)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('一次测试会关联里程碑和模板，并原地登记文件或目录的可验证元数据', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, '机器人测试项目')
+    const milestone = fixture.service.saveResearchMilestone({
+      title: '完成 ROS 导航基线',
+      status: 'active',
+      acceptanceCriteria: ['至少一次有效成功测试'],
+    }).milestones[0]
+    let workspace = fixture.service.saveResearchRun({
+      milestoneId: milestone.id,
+      templateId: 'builtin-ros-parameter',
+      title: '调整最大线速度',
+      purpose: '观察速度变化对轨迹跟踪的影响。',
+      hypothesis: '更高速度会增大转弯误差。',
+      changedVariables: [{ name: 'max_vel_x', previousValue: '0.25', currentValue: '0.35', unit: 'm/s' }],
+      command: 'ros2 launch nav2_bringup tb3_simulation_launch.py',
+      outcome: 'failure',
+      observations: '直线速度提高。',
+      anomaly: '转弯出现振荡。',
+      nextStep: '保持线速度不变，仅降低角速度限制。',
+      startedAt: '2026-08-08T10:00:00+08:00',
+      endedAt: '2026-08-08T10:05:00+08:00',
+    })
+    const run = workspace.runs[0]
+    assert.equal(run.milestoneId, milestone.id)
+    assert.equal(run.templateId, 'builtin-ros-parameter')
+    assert.equal(run.changedVariables[0].currentValue, '0.35')
+    assert.match(run.environment, /ROS/)
+
+    const resultFile = path.join(fixture.root, 'run-001.csv')
+    fs.writeFileSync(resultFile, 't,x,y\n0,0,0\n1,1,2\n')
+    const resultDirectory = path.join(fixture.root, 'rosbag-run-001')
+    fs.mkdirSync(resultDirectory)
+    fs.writeFileSync(path.join(resultDirectory, 'metadata.yaml'), 'version: 9')
+    workspace = fixture.service.saveResearchArtifact({
+      runId: run.id,
+      label: '轨迹原始数据',
+      role: 'raw_data',
+      filePath: resultFile,
+    })
+    workspace = fixture.service.saveResearchArtifact({
+      runId: run.id,
+      label: 'ROS bag 目录',
+      role: 'directory',
+      filePath: resultDirectory,
+    })
+    const fileArtifact = workspace.artifacts.find(artifact => artifact.kind === 'file')
+    const directoryArtifact = workspace.artifacts.find(artifact => artifact.kind === 'directory')
+    assert.equal(fileArtifact.filePath, resultFile)
+    assert.equal(fileArtifact.contentSha256, crypto.createHash('sha256').update(fs.readFileSync(resultFile)).digest('hex'))
+    assert.equal(fileArtifact.sizeBytes, fs.statSync(resultFile).size)
+    assert.equal(directoryArtifact.metadata.entryCount, 1)
+    assert.equal(fs.readFileSync(resultFile, 'utf8'), 't,x,y\n0,0,0\n1,1,2\n')
+    assert.equal(fs.existsSync(path.join(vault.path, 'papers', path.basename(resultFile))), false)
+    const portable = fixture.service.exportPortableMarkdown({
+      kind: 'experiment_retrospective', id: run.id, directory: fixture.root,
+    })
+    const portableText = fs.readFileSync(portable.filePath, 'utf8')
+    assert.match(portableText, /type: "experiment_retrospective"/)
+    assert.match(portableText, /max_vel_x: 0\.25 → 0\.35 m\/s/)
+    assert.match(portableText, /原始文件：`.*run-001\.csv`/)
+    assert.match(portableText, /Run：调整最大线速度/)
+
+    const timestamp = new Date().toISOString()
+    fixture.service.database.prepare(
+      'INSERT INTO projects(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
+    ).run('other-engineering-project', '其他工科项目', timestamp, timestamp)
+    fixture.service.database.prepare(`
+      INSERT INTO research_runs(id, project_id, title, started_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('other-run', 'other-engineering-project', '其他测试', timestamp, timestamp, timestamp)
+    fixture.service.database.prepare(`
+      INSERT INTO research_milestones(id, project_id, title, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run('other-milestone', 'other-engineering-project', '其他里程碑', timestamp, timestamp)
+    fixture.service.database.prepare(`
+      INSERT INTO research_run_templates(id, project_id, name, category, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('other-template', 'other-engineering-project', '其他模板', 'custom', timestamp, timestamp)
+    assert.throws(
+      () => fixture.service.saveResearchArtifact({ runId: 'other-run', filePath: resultFile }),
+      /不存在或不属于当前课题/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchArtifact({ runId: run.id, filePath: 'relative.csv' }),
+      /必须是绝对路径/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchArtifact({ runId: run.id, filePath: path.join(fixture.root, 'missing.csv') }),
+      /不存在/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchRun({ title: '越权里程碑', milestoneId: 'other-milestone' }),
+      /里程碑不存在或不属于当前课题/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchRun({ title: '越权模板', templateId: 'other-template' }),
+      /测试模板不存在或不属于当前课题/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchMilestone({ id: 'other-milestone', title: '越权修改' }),
+      /里程碑不属于当前课题/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchRunTemplate({ id: 'other-template', name: '越权修改' }),
+      /测试模板不属于当前课题/,
+    )
+    assert.throws(
+      () => fixture.service.saveResearchRun({ title: '错误变量', changedVariables: [{ name: 'max_vel_x' }] }),
+      /变量当前值不能为空/,
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
+test('英文对照阅读缓存按当前课题、来源、分段和原文哈希精确命中', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, '英文阅读项目')
+    const timestamp = new Date().toISOString()
+    fixture.service.database.prepare(`
+      INSERT INTO sources(id, project_id, name, kind, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('english-source', vault.projectId, 'paper.pdf', 'PDF', '已解析', timestamp, timestamp)
+    fixture.service.database.prepare(
+      'INSERT INTO projects(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
+    ).run('other-translation-project', '其他阅读项目', timestamp, timestamp)
+    fixture.service.database.prepare(`
+      INSERT INTO sources(id, project_id, name, kind, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('other-english-source', 'other-translation-project', 'other.pdf', 'PDF', '已解析', timestamp, timestamp)
+
+    const sourceText = 'The controller remains stable under bounded disturbances.'
+    const sourceHash = crypto.createHash('sha256').update(sourceText, 'utf8').digest('hex')
+    const saved = fixture.service.saveReadingTranslationSegment({
+      sourceId: 'english-source',
+      segmentId: 'page-1-paragraph-3',
+      sourceHash,
+      sourceText,
+      translatedText: '在有界扰动下，该控制器保持稳定。',
+      provider: 'argos',
+      model: 'en_zh',
+      status: 'translated',
+    })
+    assert.equal(saved.translatedText, '在有界扰动下，该控制器保持稳定。')
+    assert.equal(saved.status, 'translated')
+    const uiHash = bilingualSourceHash('A second paragraph for the side-by-side reader.')
+    assert.equal(fixture.service.saveReadingTranslationSegment({
+      sourceId: 'english-source',
+      segmentId: 'segment-ui-hash-1',
+      sourceHash: uiHash,
+      sourceText: 'A second paragraph for the side-by-side reader.',
+      translatedText: '用于对照阅读的第二个段落。',
+      provider: 'local',
+      status: 'translated',
+      attempts: 1,
+    }).attempts, 1)
+    const exact = fixture.service.getReadingTranslationSegments({
+      sourceId: 'english-source',
+      segments: [{ segmentId: 'page-1-paragraph-3', sourceHash }],
+    })
+    assert.equal(exact.segments.length, 1)
+    assert.equal(exact.misses.length, 0)
+    const changedHash = crypto.createHash('sha256').update(`${sourceText} changed`, 'utf8').digest('hex')
+    const stale = fixture.service.getReadingTranslationSegments({
+      sourceId: 'english-source',
+      segments: [{ segmentId: 'page-1-paragraph-3', sourceHash: changedHash }],
+    })
+    assert.equal(stale.segments.length, 0)
+    assert.deepEqual(stale.misses, [{ segmentId: 'page-1-paragraph-3', sourceHash: changedHash }])
+    const extractedText = 'The controIler remains stable.'
+    const baseSourceHash = bilingualSourceHash(extractedText)
+    const correctedText = 'The controller remains stable.'
+    const correctedHash = bilingualSourceHash(correctedText)
+    const corrected = fixture.service.saveReadingTranslationSegment({
+      sourceId: 'english-source', segmentId: 'corrected-segment', baseSourceHash,
+      sourceHash: correctedHash, sourceText: correctedText, translatedText: '控制器保持稳定。',
+      provider: 'local', status: 'translated', attempts: 1, locked: true,
+    })
+    assert.equal(corrected.baseSourceHash, baseSourceHash)
+    assert.equal(corrected.sourceHash, correctedHash)
+    assert.equal(corrected.sourceText, correctedText)
+    assert.equal(corrected.locked, true)
+    assert.equal(fixture.service.getReadingTranslationSegments({
+      sourceId: 'english-source', segments: [{ segmentId: 'corrected-segment', sourceHash: baseSourceHash }],
+    }).segments[0].translatedText, '控制器保持稳定。')
+    assert.throws(() => fixture.service.saveReadingTranslationSegment({
+      sourceId: 'english-source', segmentId: 'corrected-segment', baseSourceHash,
+      sourceHash: correctedHash, sourceText: correctedText, translatedText: '试图覆盖锁定译文。',
+      provider: 'ai', status: 'translated', attempts: 2,
+    }), /已锁定/)
+    const unlocked = fixture.service.saveReadingTranslationSegment({
+      sourceId: 'english-source', segmentId: 'corrected-segment', baseSourceHash,
+      sourceHash: correctedHash, sourceText: correctedText, translatedText: '控制器保持稳定。',
+      provider: 'local', status: 'translated', attempts: 1, locked: false, unlock: true,
+    })
+    assert.equal(unlocked.locked, false)
+
+    let glossary = fixture.service.saveReadingTranslationTerm({
+      sourceId: 'english-source', sourceTerm: 'bounded disturbances', targetTerm: '有界扰动', note: '控制领域',
+    })
+    assert.equal(glossary.length, 1)
+    glossary = fixture.service.saveReadingTranslationTerm({
+      sourceId: 'english-source', sourceTerm: 'bounded disturbances', targetTerm: '有界干扰', note: '用户修订',
+    })
+    assert.equal(glossary.length, 1)
+    assert.equal(glossary[0].targetTerm, '有界干扰')
+    assert.equal(fixture.service.deleteReadingTranslationTerm({ sourceId: 'english-source', termId: glossary[0].id }).length, 0)
+    assert.throws(
+      () => fixture.service.saveReadingTranslationSegment({
+        sourceId: 'english-source', segmentId: 'bad', sourceHash, sourceText: '不同原文', provider: 'argos', status: 'pending',
+      }),
+      /哈希与原文不一致/,
+    )
+    assert.throws(
+      () => fixture.service.getReadingTranslationSegments({ sourceId: 'other-english-source', segments: [] }),
+      /不属于当前研究库/,
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
+test('行动建议可以直接引用当前课题的里程碑和测试证据', () => {
+  const fixture = withService()
+  try {
+    fixture.service.create(fixture.root, '研究行动闭环')
+    const milestone = fixture.service.saveResearchMilestone({
+      title: '完成算法基线',
+      description: '获得可重复的基线指标。',
+      status: 'active',
+    }).milestones[0]
+    const run = fixture.service.saveResearchRun({
+      milestoneId: milestone.id,
+      title: '基线测试 01',
+      purpose: '测量默认参数的基准误差。',
+      outcome: 'success',
+      observations: '平均误差为 2.1 cm。',
+    }).runs[0]
+    const pack = fixture.service.createActionPack({
+      title: '下一步实验建议',
+      objective: '降低轨迹误差',
+      scope: { kind: 'library', label: '当前课题', itemIds: [] },
+      createdBy: 'ai',
+      actions: [{
+        actionType: 'experiment',
+        title: '只调整角速度限制',
+        rationale: '基线已形成，下一次应只改变一个变量。',
+        evidence: [
+          { evidenceType: 'milestone', entityId: milestone.id, label: '', excerpt: '' },
+          { evidenceType: 'run', entityId: run.id, label: '', excerpt: '' },
+        ],
+      }],
+    })
+    assert.deepEqual(new Set(pack.items[0].evidence.map(item => item.evidenceType)), new Set(['milestone', 'run']))
+    assert.equal(pack.items[0].evidence.find(item => item.evidenceType === 'run').runId, run.id)
   } finally {
     fixture.close()
   }
@@ -461,7 +1631,7 @@ test('MinerU Markdown、图片和清单按论文版本保存，并可在重开�
 test('RIS 题录导入保留原编号和附件原路径，并复制可读 PDF', () => {
   const fixture = withService()
   try {
-    fixture.service.create(fixture.root, '题录导入测试')
+    const vault = fixture.service.create(fixture.root, '题录导入测试')
     const importDirectory = path.join(fixture.root, 'incoming')
     fs.mkdirSync(importDirectory)
     fs.writeFileSync(path.join(importDirectory, 'paper.pdf'), '%PDF-bibliography-test')
@@ -471,6 +1641,13 @@ test('RIS 题录导入保留原编号和附件原路径，并复制可读 PDF', 
       'ID  - ORIGINAL-88',
       'AU  - Doe, Jane',
       'TI  - Imported with attachment',
+      'JO  - Journal of Import Tests',
+      'PY  - 2025',
+      'VL  - 4',
+      'IS  - 2',
+      'SP  - 10',
+      'EP  - 20',
+      'DO  - 10.1234/imported',
       'L1  - paper.pdf',
       'ER  - ',
       '',
@@ -481,6 +1658,7 @@ test('RIS 题录导入保留原编号和附件原路径，并复制可读 PDF', 
     assert.equal(first.itemCount, 1)
     assert.equal(first.copiedSourceCount, 1)
     assert.equal(second.alreadyImported, true)
+    assert.deepEqual(second.itemIds, first.itemIds)
     const item = fixture.service.database.prepare(`
       SELECT raw_record_id, raw_record_id_field, raw_payload, raw_fields_json
       FROM bibliographic_items
@@ -497,7 +1675,105 @@ test('RIS 题录导入保留原编号和附件原路径，并复制可读 PDF', 
     assert.equal(attachment.path_resolved, path.join(importDirectory, 'paper.pdf'))
     assert.equal(attachment.exists_state, 'found')
     assert.ok(attachment.source_id)
-    assert.equal(fixture.service.loadLibraryState().sources.length, 1)
+    const library = fixture.service.loadLibraryState()
+    assert.equal(library.sources.length, 1)
+    assert.equal(
+      library.bibliographicItems[0].citation.text,
+      'DOE J. Imported with attachment[J]. Journal of Import Tests, 2025, 4(2): 10-20. DOI:10.1234/imported.',
+    )
+    assert.equal(library.bibliographicItems[0].citation.incomplete, false)
+    const capabilities = fixture.service.getZoteroSyncCapabilities()
+    assert.equal(capabilities.writesZoteroDatabase, false)
+    const metadataRecord = {
+      itemKey: 'ZOTERO88', libraryId: 'personal', rawRecordId: 'ORIGINAL-88',
+      rawRecordIdField: 'ID', importFormat: 'ris', version: 4,
+      collections: ['核心论文', '装配'], attachmentKeys: ['ATTACH-PDF-1'],
+    }
+    const preview = fixture.service.previewZoteroMetadataSync({ records: [metadataRecord] })
+    assert.equal(preview.counts.added, 1)
+    assert.equal(preview.added[0].localItemId, first.itemIds[0])
+    const applied = fixture.service.applyZoteroMetadataSync({ records: [metadataRecord] })
+    assert.equal(applied.counts.added, 1)
+    assert.equal(fixture.service.previewZoteroMetadataSync({ records: [metadataRecord] }).counts.unchanged, 1)
+    assert.equal(fixture.service.previewZoteroMetadataSync({ records: [{ ...metadataRecord, collections: ['核心论文'] }] }).counts.updated, 1)
+    const external = fixture.service.database.prepare(`
+      SELECT external_item_key, collections_json, attachment_keys_json
+      FROM bibliographic_external_refs
+    `).get()
+    assert.equal(external.external_item_key, 'ZOTERO88')
+    assert.deepEqual(JSON.parse(external.collections_json), ['核心论文', '装配'])
+    assert.deepEqual(JSON.parse(external.attachment_keys_json), ['ATTACH-PDF-1'])
+    assert.equal(fixture.service.database.prepare('SELECT count(*) AS count FROM bibliographic_sync_runs').get().count, 1)
+    assert.throws(() => fixture.service.applyZoteroMetadataSync({ records: [metadataRecord, metadataRecord] }), /未执行.*冲突/)
+    fixture.service.close()
+    fixture.service.open(vault.path)
+    assert.equal(fixture.service.previewZoteroMetadataSync({ records: [metadataRecord] }).counts.unchanged, 1)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('结构化阅读稿独立版本化、可手调和恢复，重启后仍不覆盖 MinerU 原始 Markdown', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, '结构化阅读版本测试')
+    fixture.service.importSourceFile({
+      id: 'structured-source',
+      fileName: 'structured.pdf',
+      kind: 'PDF',
+      bytes: Buffer.from('%PDF-structured-reading'),
+    })
+    const rawMarkdown = 'Abstract\n\nFirst evidence paragraph.\n\nSecond evidence paragraph.'
+    fixture.service.database.prepare(`
+      UPDATE sources SET derived_markdown = ?, updated_at = ? WHERE id = ?
+    `).run(rawMarkdown, new Date().toISOString(), 'structured-source')
+
+    const generated = fixture.service.generateStructuredReading({ sourceId: 'structured-source' })
+    assert.equal(generated.currentVersion.versionNumber, 1)
+    assert.equal(generated.currentVersion.createdBy, 'rules')
+    assert.equal(generated.currentVersion.blocks[0].kind, 'heading')
+    const originalIds = generated.currentVersion.blocks.map(block => block.id)
+
+    const adjusted = fixture.service.saveStructuredReadingAdjustment({
+      sourceId: 'structured-source',
+      baseVersionId: generated.currentVersion.id,
+      orderedBlockIds: [originalIds[0], originalIds[2], originalIds[1]],
+      headingLevels: { [originalIds[2]]: 2 },
+      note: '把第二段提升为方法标题并调整位置。',
+    })
+    assert.equal(adjusted.currentVersion.versionNumber, 2)
+    assert.equal(adjusted.currentVersion.createdBy, 'user')
+    assert.deepEqual(adjusted.currentVersion.blocks.map(block => block.id), [originalIds[0], originalIds[2], originalIds[1]])
+    assert.equal(adjusted.currentVersion.blocks[1].content, 'Second evidence paragraph.')
+    assert.equal(adjusted.currentVersion.blocks[1].headingLevel, 2)
+    assert.equal(fixture.service.database.prepare('SELECT derived_markdown FROM sources WHERE id = ?').get('structured-source').derived_markdown, rawMarkdown)
+    assert.throws(
+      () => fixture.service.database.prepare("UPDATE structured_reading_versions SET note = '覆盖历史' WHERE id = ?").run(generated.currentVersion.id),
+      /immutable/,
+    )
+
+    fixture.service.close()
+    fixture.service.open(vault.path)
+    const restoredAfterRestart = fixture.service.getStructuredReading({ sourceId: 'structured-source' })
+    assert.equal(restoredAfterRestart.currentVersion.versionNumber, 2)
+    assert.equal(restoredAfterRestart.versions.length, 2)
+    const rolledBack = fixture.service.restoreStructuredReadingVersion({
+      sourceId: 'structured-source',
+      versionId: generated.currentVersion.id,
+    })
+    assert.equal(rolledBack.currentVersion.versionNumber, 3)
+    assert.equal(rolledBack.currentVersion.createdBy, 'restore')
+    assert.equal(rolledBack.currentVersion.restoredFromVersionId, generated.currentVersion.id)
+    assert.deepEqual(rolledBack.currentVersion.blocks.map(block => block.id), originalIds)
+    assert.equal(fixture.service.database.prepare('SELECT derived_markdown FROM sources WHERE id = ?').get('structured-source').derived_markdown, rawMarkdown)
+
+    fixture.service.database.prepare('UPDATE sources SET derived_markdown = ?, updated_at = ? WHERE id = ?')
+      .run(`${rawMarkdown}\n\nNew MinerU revision.`, new Date().toISOString(), 'structured-source')
+    assert.equal(fixture.service.getStructuredReading({ sourceId: 'structured-source' }).stale, true)
+    assert.throws(
+      () => fixture.service.restoreStructuredReadingVersion({ sourceId: 'structured-source', versionId: generated.currentVersion.id }),
+      /不同的 MinerU 原始 Markdown/,
+    )
   } finally {
     fixture.close()
   }
@@ -691,6 +1967,13 @@ test('单篇 AI 阅读卡复用 NoteFragment 保存草稿、来源关系和用�
       SELECT count(*) AS count FROM fragment_relation_events
       WHERE event_type = 'confirmed' AND actor = 'user'
     `).get().count >= 2)
+    const portableDirectory = path.join(fixture.root, 'reading-card-notes')
+    fs.mkdirSync(portableDirectory)
+    const portable = fixture.service.exportPortableMarkdown({ kind: 'reading_card', id: itemId, directory: portableDirectory })
+    const portableText = fs.readFileSync(portable.filePath, 'utf8')
+    assert.match(portableText, /type: "reading_card"/)
+    assert.match(portableText, /第 3 页/)
+    assert.match(portableText, /research-reader:\/\/open\?sourceId=/)
   } finally {
     fixture.close()
   }
@@ -1157,10 +2440,24 @@ test('复查文档严格分离证据、用户笔记和 AI 整理，并导出可�
     assert.match(markdownText, /\[用户笔记\]/)
     assert.match(markdownText, /\[AI 整理\]/)
     assert.match(markdownText, /research-reader:\/\/open\?sourceId=/)
+    assert.match(markdownText, /## 参考文献/)
+    assert.match(markdownText, /\[1\].+\[J\]/)
     assert.doesNotMatch(markdownText, /没有证据的推断/)
     const word = await fixture.service.exportReviewDocument({ documentId: document.id, format: 'docx' })
     assert.equal(fs.readFileSync(word.filePath).subarray(0, 2).toString(), 'PK')
     assert.equal(fixture.service.database.prepare('SELECT count(*) AS count FROM export_records').get().count, 2)
+    assert.throws(
+      () => fixture.service.exportPortableMarkdown({ kind: 'review_document', id: document.id, directory: fixture.root }),
+      /必须先由用户确认/,
+    )
+    const confirmedDocument = fixture.service.confirmReviewDocument({ documentId: document.id })
+    assert.equal(confirmedDocument.status, 'reviewed')
+    const portable = fixture.service.exportPortableMarkdown({ kind: 'review_document', id: document.id, directory: fixture.root })
+    const portableText = fs.readFileSync(portable.filePath, 'utf8')
+    assert.match(portableText, /type: "review_document"/)
+    assert.match(portableText, /\[\[reading-card--/)
+    assert.match(portableText, /research-reader:\/\/open\?sourceId=/)
+    assert.doesNotMatch(portableText, /没有证据的推断/)
   } finally {
     fixture.close()
   }

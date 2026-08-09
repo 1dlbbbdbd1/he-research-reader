@@ -11,10 +11,10 @@ test('safeFileName removes path traversal and Windows-invalid characters', () =>
 
 test('development runtime is resolved inside the project', () => {
   const candidates = candidateExecutables({
-    projectRoot: 'E:\\codex\\reader',
+    projectRoot: 'C:\\projects\\research-reader',
     resourcesPath: 'E:\\app\\resources',
   })
-  assert.ok(candidates.includes(path.join('E:\\codex\\reader', '.runtime', 'mineru', '.venv', 'Scripts', 'mineru.exe')))
+  assert.ok(candidates.includes(path.join('C:\\projects\\research-reader', '.runtime', 'mineru', '.venv', 'Scripts', 'mineru.exe')))
 })
 
 test('packaged runtime is resolved from the writable user data directory', () => {

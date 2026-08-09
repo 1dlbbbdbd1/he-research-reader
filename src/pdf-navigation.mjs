@@ -93,7 +93,7 @@ export async function loadPdfOutline(document) {
 }
 
 export function normalizeReaderSourceState(value, hasStructuredText = true) {
-  const allowedModes = new Set(['original', 'markdown', 'parallel'])
+  const allowedModes = new Set(['original', 'markdown', 'parallel', 'bilingual'])
   let viewMode = allowedModes.has(value?.viewMode) ? value.viewMode : 'original'
   if (!hasStructuredText && viewMode !== 'original') viewMode = 'original'
   const numericZoom = Number(value?.zoom)

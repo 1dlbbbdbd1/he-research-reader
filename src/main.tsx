@@ -6,11 +6,11 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import xiaoheLogoMark from '../brand/xiaohe-logo-mark.svg'
 import {
-  AlertTriangle, ArrowLeft, ArrowRight, BookOpen, Check, ChevronRight, ClipboardCheck,
-  CircleDot, Columns2, Download, Expand, ExternalLink, FileText, GitBranch, Languages, Link2,
+  AlertTriangle, ArrowLeft, ArrowRight, BookOpen, Bug, Check, ChevronRight, ClipboardCheck, Cloud,
+  CircleDot, Columns2, Download, Expand, ExternalLink, FileText, GitBranch, HardDrive, Languages, Link2,
   FilePlus2, Files, FlaskConical, Globe2, Highlighter,
   LayoutDashboard, Menu, MessageSquareText, Minus, MoreHorizontal, PanelLeft,
-  PanelRight, Pencil, Plus, RotateCcw, Search, Settings2, Sparkles, Trash2, Upload, X
+  Mail, PanelRight, Pencil, Plus, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, Trash2, Upload, X
 } from 'lucide-react'
 import './styles.css'
 import './functional.css'
@@ -20,6 +20,11 @@ import './evidence.css'
 import './action-pack.css'
 import './reader.css'
 import './desktop-ui.css'
+import './research-review.css'
+import './citation.css'
+import './structured-reading.css'
+import './today-research.css'
+import './research-tasks.css'
 import 'katex/dist/katex.min.css'
 import {
   fileHash,
@@ -74,11 +79,30 @@ import {
   parseResearchAgentAnswer,
   parseResearchAgentActions,
   readerContextEvidence,
+  researchWorkspaceEvidence,
 } from './research-agent.mjs'
 import {
   buildPaperReadingCardRequest,
   parsePaperReadingCardAnswer,
 } from './paper-reading-card.mjs'
+import BilingualDocument from './BilingualDocument'
+import { prepareTranslationSelection } from './bilingual-reading.mjs'
+import ResearchCommandCenter from './ResearchCommandCenter'
+import ResearchReviewWorkspace from './ResearchReviewWorkspace'
+import TodayResearch, { ResearchReturnGreeting } from './TodayResearch'
+import ResearchTasks from './ResearchTasks'
+import VersionedStructuredReading from './features/reader/VersionedStructuredReading'
+import {
+  CitationButton,
+  CitationDialog,
+  CitationImportPanel,
+  type CitationItemView,
+  type CitationView,
+} from './features/citations/CitationControls'
+import { useDialogKeyboard } from './use-dialog-keyboard'
+
+const feedbackIssueUrl = 'https://github.com/1dlbbbdbd1/he-research-reader/issues/new/choose'
+const feedbackEmailUrl = 'mailto:hzh1144@163.com?subject=H%E2%80%99s%20%E7%A7%91%E7%A0%94%E5%8A%A9%E6%89%8B%E9%97%AE%E9%A2%98%E5%8F%8D%E9%A6%88'
 
 type SourceKind = ImportedKind
 type EvidenceStatus = '事实' | '推断' | '假设'
@@ -122,8 +146,53 @@ type Annotation = {
   sourceName?: string
   paperTitle?: string
   anchor?: FragmentAnchor
+  taskStatus?: DesktopResearchTaskStatus
 }
 type Action = { id: string; title: string; type: '阅读' | '实验' | '确认'; reason: string; done: boolean }
+type ResearchRecordType = 'log' | 'experiment' | 'dataset' | 'decision' | 'milestone'
+type ResearchRecordStatus = 'planned' | 'active' | 'completed' | 'blocked' | 'archived'
+type ResearchRecord = {
+  id: string
+  recordType: ResearchRecordType
+  title: string
+  content: string
+  status: ResearchRecordStatus
+  occurredAt: string
+  filePath?: string
+  sourceIds: string[]
+  tags: string[]
+  createdAt: string
+  updatedAt: string
+}
+type ResearchWorkspace = {
+  project: {
+    id: string
+    name: string
+    researchQuestion: string
+    currentHypothesis: string
+    stage: string
+    mode: DesktopResearchProjectMode
+    updatedAt: string
+  }
+  records: ResearchRecord[]
+  milestones: DesktopResearchMilestone[]
+  runs: DesktopResearchRun[]
+  artifacts: DesktopResearchArtifact[]
+  runTemplates: DesktopResearchRunTemplate[]
+  reports: DesktopResearchReport[]
+  claims: DesktopResearchClaim[]
+  history: DesktopResearchProjectHistoryEntry[]
+}
+type ResearchDesktopBridge = {
+  getResearchWorkspace?: () => Promise<ResearchWorkspace>
+  saveResearchProject?: (input: Pick<ResearchWorkspace['project'], 'name' | 'researchQuestion' | 'currentHypothesis' | 'stage' | 'mode'>) => Promise<ResearchWorkspace>
+  saveResearchRecord?: (input: Partial<ResearchRecord> & Pick<ResearchRecord, 'recordType' | 'title' | 'status'>) => Promise<ResearchWorkspace>
+  saveResearchMilestone?: (input: DesktopResearchMilestoneInput) => Promise<ResearchWorkspace>
+  saveResearchRun?: (input: DesktopResearchRunInput) => Promise<ResearchWorkspace>
+  saveResearchRunTemplate?: (input: DesktopResearchRunTemplateInput) => Promise<ResearchWorkspace>
+  saveResearchArtifact?: (input: DesktopResearchArtifactInput) => Promise<ResearchWorkspace>
+  selectResearchArtifactPath?: (input?: { kind?: 'file' | 'directory' }) => Promise<{ canceled: boolean; filePath?: string }>
+}
 type AISettings = {
   baseUrl: string
   model: string
@@ -151,7 +220,14 @@ type BibliographicSummary = {
   itemType: string
   authors: Array<{ family?: string; given?: string; literal?: string }>
   issued?: string
+  accessed?: string
   containerTitle?: string
+  publisher?: string
+  publisherPlace?: string
+  volume?: string
+  issue?: string
+  pages?: string
+  language?: string
   abstract?: string
   keywords: string[]
   identifiers: Record<string, string[]>
@@ -161,6 +237,7 @@ type BibliographicSummary = {
   sourceId?: string
   annotationCount: number
   readingState: PaperReadingState
+  citation: CitationView
 }
 type PaperReadingState = {
   readingStatus: 'unread' | 'title_only' | 'skimming' | 'reading' | 'finished'
@@ -275,19 +352,26 @@ function App() {
   const [aiSettings, setAISettings] = useStored<AISettings>('ra.ai-settings', defaultAISettings, browserStorage)
   const [uiSettings, setUISettings] = useStored<UISettings>('ra.ui-settings', defaultUISettings, browserStorage)
   const [credentialState, setCredentialState] = useState<'empty' | 'encrypted' | 'unavailable'>('empty')
-  const [active, setActive] = useState<'dashboard' | 'sources' | 'reader' | 'evidence' | 'actions'>(() => sources.some(source => source.fileId) ? 'reader' : 'sources')
+  const [settingsLoaded, setSettingsLoaded] = useState(!window.readerDesktop)
+  const [aiOnboardingRequired, setAIOnboardingRequired] = useState(false)
+  const [active, setActive] = useState<DesktopResearchResumeView>('today')
   const [selectedSource, setSelectedSource] = useState(sources[0]?.id ?? '')
   const [agentOpen, setAgentOpen] = useState(false)
   const [annotationDraft, setAnnotationDraft] = useState<AnnotationDraft | null>(null)
   const [editingAnnotation, setEditingAnnotation] = useState<Annotation>()
   const [archivedAnnotation, setArchivedAnnotation] = useState<Annotation>()
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [mineruTarget, setMineruTarget] = useState<Source | undefined>()
   const [mineruInstalling, setMineruInstalling] = useState(false)
   const [mineruInstallProgress, setMineruInstallProgress] = useState('')
   const [readerJumpTarget, setReaderJumpTarget] = useState<ReaderJumpTarget>()
   const [librarySearchRequest, setLibrarySearchRequest] = useState(0)
   const [workspace, setWorkspace] = useState<WorkspaceSummary>()
+  const [researchWorkspace, setResearchWorkspace] = useStored<ResearchWorkspace | undefined>('ra.research-workspace', undefined, browserStorage)
+  const [researchResume, setResearchResume] = useState<DesktopResearchResumeState>()
+  const [returnGreetingOpen, setReturnGreetingOpen] = useState(false)
+  const [researchResumeReady, setResearchResumeReady] = useState(false)
   const [recentWorkspaces, setRecentWorkspaces] = useState<WorkspaceSummary[]>([])
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
   const [workspaceName, setWorkspaceName] = useState('我的研究库')
@@ -296,6 +380,8 @@ function App() {
     creationRequestId: string
     directory: string
     suggestedName: string
+    existingPaperCount: number
+    existingPaperNames: string[]
   }>()
   const [legacySnapshot] = useState<LegacyWorkspaceSnapshot>(() => ({
     sources,
@@ -307,7 +393,13 @@ function App() {
   const [evidenceScope, setEvidenceScope] = useState<EvidenceScope>({ kind: 'all' })
   const [evidenceGraphBusy, setEvidenceGraphBusy] = useState(false)
   const [actionPacks, setActionPacks] = useState<ActionPackSummary[]>([])
+  const [researchTasks, setResearchTasks] = useState<DesktopResearchTaskList>()
+  const [researchTaskBusy, setResearchTaskBusy] = useState(false)
+  const [researchTaskError, setResearchTaskError] = useState('')
+  const [taskSourcePackOpen, setTaskSourcePackOpen] = useState(false)
   const [activeActionPack, setActiveActionPack] = useState<ActionPackView>()
+  const [citationDialog, setCitationDialog] = useState<{ item: CitationItemView; reason?: string }>()
+  const [bibliographyImportResult, setBibliographyImportResult] = useState<{ itemIds: string[]; alreadyImported: boolean }>()
   const [toast, setToast] = useState('')
   const toastTimer = useRef<number | undefined>(undefined)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -326,8 +418,15 @@ function App() {
         setAISettings({ ...defaultAISettings, ...settings.ai })
         setUISettings({ ...defaultUISettings, ...settings.ui })
         setCredentialState(settings.credentialState ?? 'empty')
+        const missingAI = !settings.ai.model?.trim() || !settings.ai.apiKey?.trim() || !settings.ai.baseUrl?.trim()
+        setAIOnboardingRequired(missingAI)
+        setSettingsLoaded(true)
       })
-      .catch(error => notify(error instanceof Error ? error.message : '桌面设置读取失败。'))
+      .catch(error => {
+        setSettingsLoaded(true)
+        setAIOnboardingRequired(true)
+        notify(error instanceof Error ? error.message : '桌面设置读取失败。')
+      })
     return () => { disposed = true }
   }, [])
 
@@ -351,25 +450,191 @@ function App() {
           setWorkspaceMenuOpen(true)
           setReviewDocuments([])
           setActionPacks([])
+          setResearchTasks(undefined)
           setActiveReview(undefined)
           setActiveActionPack(undefined)
+          setResearchWorkspace(undefined)
           return
         }
         const library = await desktop.loadWorkspaceLibrary()
-        const [reviews, packs] = await Promise.all([desktop.listReviewDocuments(), desktop.listActionPacks()])
+        const [reviews, packs, resume, tasks] = await Promise.all([
+          desktop.listReviewDocuments(),
+          desktop.listActionPacks(),
+          desktop.beginResearchSession(),
+          desktop.listResearchTasks(),
+        ])
         if (disposed) return
         setWorkspace(current)
         setSources(library.sources as Source[])
         setAnnotations(library.annotations as Annotation[])
         setBibliographicItems(library.bibliographicItems as BibliographicSummary[])
+        setResearchWorkspace((library as WorkspaceLibraryState & { researchWorkspace?: ResearchWorkspace }).researchWorkspace)
         setReviewDocuments(reviews)
         setActionPacks(packs)
-        setSelectedSource((library.sources[0] as Source | undefined)?.id ?? '')
-        if (!library.sources.length) setActive('sources')
+        setResearchTasks(tasks)
+        setResearchResume(resume)
+        setResearchResumeReady(true)
+        setReturnGreetingOpen(true)
+        const restoredSource = (library.sources as Source[]).find(source => source.id === resume.sourceId)
+        setSelectedSource(restoredSource?.id ?? (library.sources[0] as Source | undefined)?.id ?? '')
+        setActive('today')
       })
       .catch(error => notify(error instanceof Error ? error.message : '研究库初始化失败。'))
     return () => { disposed = true }
   }, [])
+
+  async function saveResearchProject(project: Pick<ResearchWorkspace['project'], 'name' | 'researchQuestion' | 'currentHypothesis' | 'stage' | 'mode'>) {
+    const bridge = window.readerDesktop as (typeof window.readerDesktop & ResearchDesktopBridge) | undefined
+    if (bridge?.saveResearchProject) {
+      const saved = await bridge.saveResearchProject(project)
+      setResearchWorkspace(saved)
+      setWorkspace(current => current ? { ...current, name: saved.project.name, updatedAt: saved.project.updatedAt } : current)
+      notify('课题定位已保存到当前研究库。')
+      return
+    }
+    if (!window.readerDesktop) {
+      const timestamp = new Date().toISOString()
+      setResearchWorkspace(current => ({
+        project: { id: current?.project.id ?? 'browser-research-project', ...project, updatedAt: timestamp },
+        records: current?.records ?? [],
+        milestones: current?.milestones ?? [], runs: current?.runs ?? [], artifacts: current?.artifacts ?? [],
+        runTemplates: current?.runTemplates ?? [], reports: current?.reports ?? [], claims: current?.claims ?? [], history: current?.history ?? [],
+      }))
+      notify('课题定位已保存到浏览器预览。')
+      return
+    }
+    throw new Error('桌面保存接口尚未接通。当前内容没有写入研究库。')
+  }
+
+  async function saveResearchRecord(record: Partial<ResearchRecord> & Pick<ResearchRecord, 'recordType' | 'title' | 'status'>) {
+    const bridge = window.readerDesktop as (typeof window.readerDesktop & ResearchDesktopBridge) | undefined
+    if (bridge?.saveResearchRecord) {
+      const saved = await bridge.saveResearchRecord(record)
+      setResearchWorkspace(saved)
+      notify('科研记录已写入当前研究库。')
+      return
+    }
+    if (!window.readerDesktop) {
+      const timestamp = new Date().toISOString()
+      const nextRecord: ResearchRecord = {
+        id: record.id ?? crypto.randomUUID(), recordType: record.recordType, title: record.title,
+        content: record.content ?? '', status: record.status, occurredAt: record.occurredAt ?? timestamp,
+        filePath: record.filePath, sourceIds: record.sourceIds ?? [], tags: record.tags ?? [],
+        createdAt: record.createdAt ?? timestamp, updatedAt: timestamp,
+      }
+      setResearchWorkspace(current => ({
+        project: current?.project ?? { id: 'browser-research-project', name: '我的研究课题', researchQuestion: '', currentHypothesis: '', stage: '探索中', mode: 'exploration', updatedAt: timestamp },
+        records: [nextRecord, ...(current?.records ?? []).filter(item => item.id !== nextRecord.id)],
+        milestones: current?.milestones ?? [], runs: current?.runs ?? [], artifacts: current?.artifacts ?? [],
+        runTemplates: current?.runTemplates ?? [], reports: current?.reports ?? [], claims: current?.claims ?? [], history: current?.history ?? [],
+      }))
+      notify('科研记录已保存到浏览器预览。')
+      return
+    }
+    throw new Error('桌面保存接口尚未接通。当前记录没有写入研究库。')
+  }
+
+  async function saveResearchMilestone(input: DesktopResearchMilestoneInput) {
+    const bridge = window.readerDesktop as (typeof window.readerDesktop & ResearchDesktopBridge) | undefined
+    if (bridge?.saveResearchMilestone) {
+      const saved = await bridge.saveResearchMilestone(input)
+      setResearchWorkspace(saved)
+      notify('里程碑已保存；验收条件仍由你确认。')
+      return
+    }
+    throw new Error('里程碑需要在桌面研究库中保存。')
+  }
+
+  async function saveResearchRun(input: DesktopResearchRunInput) {
+    const bridge = window.readerDesktop as (typeof window.readerDesktop & ResearchDesktopBridge) | undefined
+    if (bridge?.saveResearchRun) {
+      const saved = await bridge.saveResearchRun(input)
+      setResearchWorkspace(saved)
+      if (window.readerDesktop) setResearchResume(await window.readerDesktop.getResearchResume())
+      notify('本次测试已保存，并保留参数、异常和下一步。')
+      return saved
+    }
+    throw new Error('测试记录需要在桌面研究库中保存。')
+  }
+
+  async function saveResearchRunTemplate(input: DesktopResearchRunTemplateInput) {
+    const bridge = window.readerDesktop as (typeof window.readerDesktop & ResearchDesktopBridge) | undefined
+    if (bridge?.saveResearchRunTemplate) {
+      const saved = await bridge.saveResearchRunTemplate(input)
+      setResearchWorkspace(saved)
+      notify('自定义测试模板已保存到当前研究库。')
+      return
+    }
+    throw new Error('自定义模板需要在桌面研究库中保存。')
+  }
+
+  async function registerResearchArtifact(runId: string, kind: 'file' | 'directory') {
+    const bridge = window.readerDesktop as (typeof window.readerDesktop & ResearchDesktopBridge) | undefined
+    if (!bridge?.selectResearchArtifactPath || !bridge.saveResearchArtifact) throw new Error('产物登记需要在桌面客户端中运行。')
+    const choice = await bridge.selectResearchArtifactPath({ kind })
+    if (choice.canceled || !choice.filePath) return
+    const pathParts = choice.filePath.split(/[\\/]/).filter(Boolean)
+    const label = pathParts[pathParts.length - 1] || '测试产物'
+    const saved = await bridge.saveResearchArtifact({ runId, filePath: choice.filePath, label, role: kind === 'directory' ? 'directory' : 'other' })
+    setResearchWorkspace(saved)
+    notify('文件只登记在原位置，没有移动或复制。')
+  }
+
+  async function refreshResearchWorkspace() {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    setResearchWorkspace(await desktop.getResearchWorkspace() as ResearchWorkspace)
+  }
+
+  async function saveResearchReport(input: DesktopResearchReportInput) {
+    const desktop = window.readerDesktop
+    if (!desktop) throw new Error('科研报告需要在桌面研究库中保存。')
+    const saved = await desktop.saveResearchReport(input)
+    await refreshResearchWorkspace()
+    notify('报告草稿已保存；尚未成为正式科研记录。')
+    return saved
+  }
+
+  async function confirmResearchReport(id: string) {
+    const desktop = window.readerDesktop
+    if (!desktop) throw new Error('科研报告需要在桌面研究库中确认。')
+    const saved = await desktop.confirmResearchReport({ id })
+    await refreshResearchWorkspace()
+    notify('报告已由你确认，并保留来源与修订版本。')
+    return saved
+  }
+
+  async function exportResearchReport(id: string) {
+    const desktop = window.readerDesktop
+    if (!desktop) throw new Error('报告导出需要在桌面客户端中运行。')
+    const result = await desktop.exportResearchReport({ id, destination: 'save_as' })
+    if (!result.canceled && result.filePath) notify(`报告已导出到 ${result.filePath}`)
+  }
+
+  async function exportPortableMarkdown(kind: 'reading_card' | 'review_document' | 'experiment_retrospective' | 'research_report', id: string) {
+    const desktop = window.readerDesktop
+    if (!desktop) throw new Error('可迁移 Markdown 需要在桌面客户端中导出。')
+    const result = await desktop.exportPortableMarkdown({ kind, id })
+    if (!result.canceled && result.filePath) notify(`可迁移 Markdown 已导出到 ${result.filePath}`)
+  }
+
+  async function saveResearchClaim(input: DesktopResearchClaimInput) {
+    const desktop = window.readerDesktop
+    if (!desktop) throw new Error('论文论断需要在桌面研究库中保存。')
+    const saved = await desktop.saveResearchClaim(input)
+    await refreshResearchWorkspace()
+    notify(saved.status === 'confirmed' ? '正式论断已确认，并锁定当前证据版本。' : '论断草稿已保存；尚未确认为正式结论。')
+    return saved
+  }
+
+  async function archiveResearchClaim(id: string) {
+    if (!window.confirm('确认归档这条论文论断？历史版本仍会保留。')) return
+    const desktop = window.readerDesktop
+    if (!desktop) throw new Error('论文论断需要在桌面研究库中归档。')
+    await desktop.archiveResearchClaim({ id })
+    await refreshResearchWorkspace()
+    notify('论文论断已归档，历史版本仍然保留。')
+  }
 
   useEffect(() => {
     const desktop = window.readerDesktop
@@ -383,6 +648,33 @@ function App() {
     }, 250)
     return () => window.clearTimeout(timer)
   }, [workspace?.id, sources, annotations])
+
+  useEffect(() => {
+    const desktop = window.readerDesktop
+    if (!desktop || !workspace || !researchResumeReady || active === 'today') return
+    const timer = window.setTimeout(() => {
+      const activeRunId = researchResume?.activeRunId
+        ?? researchWorkspace?.runs.find(run => run.outcome === 'running')?.id
+        ?? researchWorkspace?.runs.find(run => run.outcome === 'planned')?.id
+      void desktop.saveResearchResume({
+        projectId: workspace.projectId,
+        activeView: active,
+        sourceId: selected?.id || null,
+        pageNumber: selectedPaper?.readingState.lastPage ?? null,
+        readerMode: selected?.readerState?.viewMode ?? null,
+        activeRunId: activeRunId ?? null,
+      }).then(setResearchResume).catch(error => notify(error instanceof Error ? error.message : '科研现场保存失败。'))
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [
+    workspace?.id,
+    active,
+    selected?.id,
+    selected?.readerState?.viewMode,
+    selectedPaper?.readingState.lastPage,
+    researchResume?.activeRunId,
+    researchResumeReady,
+  ])
 
   useEffect(() => {
     const desktop = window.readerDesktop
@@ -412,19 +704,28 @@ function App() {
     const desktop = window.readerDesktop
     if (!desktop) return
     const library = await desktop.loadWorkspaceLibrary()
-    const [reviews, packs] = await Promise.all([desktop.listReviewDocuments(), desktop.listActionPacks()])
+    const [reviews, packs, resume] = await Promise.all([
+      desktop.listReviewDocuments(),
+      desktop.listActionPacks(),
+      desktop.getResearchResume(),
+    ])
     setWorkspace(next)
     setSources(library.sources as Source[])
     setAnnotations(library.annotations as Annotation[])
     setBibliographicItems(library.bibliographicItems as BibliographicSummary[])
+    setResearchWorkspace((library as WorkspaceLibraryState & { researchWorkspace?: ResearchWorkspace }).researchWorkspace)
     setReviewDocuments(reviews)
     setActionPacks(packs)
+    setResearchTasks(await desktop.listResearchTasks())
+    setResearchResume(resume)
+    setResearchResumeReady(true)
     setActiveReview(undefined)
     setActiveActionPack(undefined)
     setEvidenceGraph(undefined)
     setEvidenceScope({ kind: 'all' })
-    setSelectedSource((library.sources[0] as Source | undefined)?.id ?? '')
-    setActive('sources')
+    const restoredSource = (library.sources as Source[]).find(source => source.id === resume.sourceId)
+    setSelectedSource(restoredSource?.id ?? (library.sources[0] as Source | undefined)?.id ?? '')
+    setActive('today')
     setRecentWorkspaces(await desktop.listRecentWorkspaces())
     setWorkspaceMenuOpen(false)
   }
@@ -469,6 +770,8 @@ function App() {
           creationRequestId: result.creationRequestId,
           directory: result.directory,
           suggestedName: result.suggestedName || '我的研究库',
+          existingPaperCount: result.existingPaperCount ?? 0,
+          existingPaperNames: result.existingPaperNames ?? [],
         })
         setWorkspaceMenuOpen(false)
         return
@@ -483,7 +786,7 @@ function App() {
     }
   }
 
-  async function createWorkspaceInSelectedFolder(name: string) {
+  async function createWorkspaceInSelectedFolder(name: string, manageExistingPapers: boolean) {
     const desktop = window.readerDesktop
     const request = workspaceCreationRequest
     if (!desktop || !request) return
@@ -492,11 +795,14 @@ function App() {
       const result = await desktop.createWorkspaceInSelectedFolder({
         creationRequestId: request.creationRequestId,
         name,
+        manageExistingPapers,
       })
       if (result.canceled || !result.vault) return
       setWorkspaceCreationRequest(undefined)
       await activateWorkspace(result.vault)
-      notify(`已在所选文件夹创建研究库“${result.vault.name}”；原有文件没有被删除。`)
+      notify(result.importedPaperCount
+        ? `已创建研究库，并纳入 ${result.importedPaperCount} 篇现有论文。原文件仍保留。`
+        : `已在所选文件夹创建研究库“${result.vault.name}”；原有文件没有被删除。`)
     } catch (error) {
       notify(error instanceof Error ? error.message : '研究库创建失败。')
     } finally {
@@ -570,6 +876,7 @@ function App() {
       setAnnotations(library.annotations as Annotation[])
       setBibliographicItems(library.bibliographicItems as BibliographicSummary[])
       const result = response.result
+      setBibliographyImportResult({ itemIds: result.itemIds, alreadyImported: result.alreadyImported })
       if (result.alreadyImported) {
         notify(`这份 ${result.format} 已导入过，没有重复建立记录。`)
       } else {
@@ -577,6 +884,24 @@ function App() {
       }
     } catch (error) {
       notify(error instanceof Error ? error.message : '题录导入失败，数据库事务已回滚。')
+    }
+  }
+
+  async function copyCitation(item: CitationItemView) {
+    try {
+      if (window.readerDesktop) {
+        await window.readerDesktop.writeClipboardText({ text: item.citation.text })
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(item.citation.text)
+      } else {
+        throw new Error('当前环境没有可用的剪贴板接口。')
+      }
+      notify('已复制 GB/T 7714—2015 引用')
+    } catch (error) {
+      setCitationDialog({
+        item,
+        reason: error instanceof Error ? error.message : '系统剪贴板写入失败。',
+      })
     }
   }
 
@@ -749,6 +1074,20 @@ function App() {
       notify(error instanceof Error ? error.message : '复查文档导出失败。')
     }
   }
+
+  async function confirmReviewDocument(documentId: string) {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    if (!window.confirm('确认这份复查文档中的来源内容无误？\n\n无证据推断仍会被排除；确认后才能导出正式可迁移 Markdown。')) return
+    try {
+      const confirmed = await desktop.confirmReviewDocument({ documentId })
+      setActiveReview(confirmed)
+      setReviewDocuments(await desktop.listReviewDocuments())
+      notify('复查文档已确认，可以导出可迁移 Markdown。')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : '复查文档确认失败。')
+    }
+  }
   async function addFiles(files: FileList | null) {
     if (!files?.length) return
     if (window.readerDesktop && !workspace) {
@@ -865,6 +1204,7 @@ function App() {
         createdBy: 'ai',
       })
       setActionPacks(await desktop.listActionPacks())
+      setResearchTasks(await desktop.listResearchTasks())
       setActiveActionPack(pack)
       setAgentOpen(false)
       setActive('actions')
@@ -891,6 +1231,7 @@ function App() {
       const pack = await desktop.reviewActionItem({ itemId, decision })
       setActiveActionPack(pack)
       setActionPacks(await desktop.listActionPacks())
+      setResearchTasks(await desktop.listResearchTasks())
       notify(decision === 'confirm' ? '已确认这条行动；尚未自动执行。' : '已拒绝这条建议；原建议和审批记录仍保留。')
     } catch (error) {
       notify(error instanceof Error ? error.message : '行动审批失败。')
@@ -904,10 +1245,71 @@ function App() {
       const pack = await desktop.completeActionItem({ itemId })
       setActiveActionPack(pack)
       setActionPacks(await desktop.listActionPacks())
+      setResearchTasks(await desktop.listResearchTasks())
       notify('已记录行动完成；证据和审批历史没有被改写。')
     } catch (error) {
       notify(error instanceof Error ? error.message : '行动状态更新失败。')
     }
+  }
+
+  async function createUnifiedResearchTask(input: DesktopResearchTaskInput) {
+    const desktop = window.readerDesktop
+    if (!desktop) throw new Error('统一科研任务需要在桌面研究库中保存。')
+    setResearchTaskBusy(true)
+    setResearchTaskError('')
+    try {
+      const result = await desktop.createResearchTask(input)
+      setResearchTasks(await desktop.listResearchTasks())
+      notify(result.alreadyExists ? '这个来源已经有一条科研任务。' : '科研任务已进入统一收件箱。')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '科研任务创建失败。'
+      setResearchTaskError(message)
+      throw new Error(message)
+    } finally {
+      setResearchTaskBusy(false)
+    }
+  }
+
+  async function updateUnifiedResearchTask(input: Parameters<NonNullable<typeof window.readerDesktop>['updateResearchTask']>[0]) {
+    const desktop = window.readerDesktop
+    if (!desktop) throw new Error('统一科研任务需要在桌面研究库中保存。')
+    setResearchTaskBusy(true)
+    setResearchTaskError('')
+    try {
+      setResearchTasks(await desktop.updateResearchTask(input))
+      const [library, packs] = await Promise.all([desktop.loadWorkspaceLibrary(), desktop.listActionPacks()])
+      setSources(library.sources as Source[])
+      setAnnotations(library.annotations as Annotation[])
+      setBibliographicItems(library.bibliographicItems as BibliographicSummary[])
+      setResearchWorkspace((library as WorkspaceLibraryState & { researchWorkspace?: ResearchWorkspace }).researchWorkspace)
+      setActionPacks(packs)
+      notify(input.decision === 'confirm' ? 'AI 建议已由你确认，现已成为正式任务。' : input.decision === 'reject' ? 'AI 建议已拒绝并保留历史。' : '任务状态已保存并回写来源。')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '科研任务更新失败。'
+      setResearchTaskError(message)
+      throw new Error(message)
+    } finally {
+      setResearchTaskBusy(false)
+    }
+  }
+
+  function returnToResearchTaskSource(task: DesktopResearchTask) {
+    const target = task.returnTarget
+    if (target.view === 'reader' && target.sourceId) {
+      openSource(target.sourceId, target.pageNumber)
+      return
+    }
+    if (target.view === 'dashboard' && target.reviewDocumentId) {
+      setActive('dashboard')
+      void openReviewDocument(target.reviewDocumentId)
+      return
+    }
+    if (target.view === 'actions' && target.actionPackId) {
+      setTaskSourcePackOpen(true)
+      void openActionPack(target.actionPackId)
+      return
+    }
+    if (target.view) setActive(target.view)
   }
   async function reanalyze(id: string) {
     const target = sources.find(source => source.id === id)
@@ -1019,6 +1421,30 @@ function App() {
     setActive('reader')
   }
 
+  function continueLastResearch() {
+    setReturnGreetingOpen(false)
+    if (!researchResume || researchResume.activeView === 'today') {
+      setActive('research-workspace')
+      return
+    }
+    if (researchResume.activeView === 'reader') {
+      const source = sources.find(item => item.id === researchResume.sourceId)
+      if (!source) {
+        setActive('sources')
+        notify('上次阅读的资料已不可用，已回到资料库。')
+        return
+      }
+      if (researchResume.readerMode) {
+        setSources(current => current.map(item => item.id === source.id
+          ? { ...item, readerState: { ...(item.readerState ?? { zoom: 1 }), viewMode: researchResume.readerMode! } }
+          : item))
+      }
+      openSource(source.id, researchResume.pageNumber)
+      return
+    }
+    setActive(researchResume.activeView)
+  }
+
   async function saveAppSettings(ai: AISettings, ui: UISettings) {
     const desktop = window.readerDesktop
     try {
@@ -1032,17 +1458,18 @@ function App() {
         setUISettings(ui)
       }
       notify('AI、翻译和阅读界面设置已保存在本机。')
+      if (ai.baseUrl.trim() && ai.model.trim() && ai.apiKey.trim()) setAIOnboardingRequired(false)
     } catch (error) {
       throw new Error(error instanceof Error ? error.message : '本机设置保存失败。')
     }
   }
 
+  const normalizedAccent = uiSettings.accentColor === 'green' ? 'plum' : uiSettings.accentColor
   const accentPalette = {
     slate: { main: '#42474b', soft: '#e9ebec', contrast: '#ffffff' },
     blue: { main: '#476b86', soft: '#e6eef4', contrast: '#ffffff' },
-    green: { main: '#557254', soft: '#e7efe5', contrast: '#ffffff' },
     plum: { main: '#6d5c75', soft: '#eee8f1', contrast: '#ffffff' },
-  }[uiSettings.accentColor]
+  }[normalizedAccent as 'slate' | 'blue' | 'plum'] ?? { main: '#42474b', soft: '#e9ebec', contrast: '#ffffff' }
   const surfacePalette = {
     neutral: { page: '#f5f5f3', sidebar: '#f0f0ee', paper: '#ffffff' },
     warm: { page: '#f7f5f0', sidebar: '#f1eee7', paper: '#fffefb' },
@@ -1070,7 +1497,7 @@ function App() {
     style={appShellStyle}
   >
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><img src={xiaoheLogoMark} alt="" aria-hidden="true"/></div><span>小何的科研阅读助手</span></div>
+      <div className="brand"><div className="brand-mark"><img src={xiaoheLogoMark} alt="" aria-hidden="true"/></div><span>H’s 科研助手</span></div>
       <div className="workspace-control">
         <button className="project-switch" type="button" onClick={() => setWorkspaceMenuOpen(open => !open)}>
           <div><small>当前研究库</small><strong>{workspace?.name ?? (window.readerDesktop ? '尚未选择' : '浏览器临时库')}</strong></div>
@@ -1114,16 +1541,59 @@ function App() {
         </div>}
       </div>
       <nav>
+        <Nav active={active === 'today'} icon={<LayoutDashboard/>} label="今日科研" count={(researchTasks?.summary.today ?? 0) + (researchTasks?.summary.waiting ?? 0)} onClick={() => setActive('today')}/>
+        <Nav active={active === 'research-review'} icon={<ShieldCheck/>} label="复盘与写作" count={(researchWorkspace?.reports.length ?? 0) + (researchWorkspace?.claims.length ?? 0)} onClick={() => setActive('research-review')}/>
         <Nav active={active === 'sources'} icon={<Files/>} label="资料库" count={sources.length} onClick={() => setActive('sources')}/>
         <Nav active={active === 'reader'} icon={<BookOpen/>} label="阅读" onClick={() => selected && setActive('reader')}/>
-        <Nav active={active === 'dashboard'} icon={<ClipboardCheck/>} label="复查草稿" count={reviewDocuments.length} onClick={() => setActive('dashboard')}/>
+        <Nav active={active === 'dashboard'} icon={<ClipboardCheck/>} label="文献综述" count={reviewDocuments.length} onClick={() => setActive('dashboard')}/>
         <Nav active={active === 'evidence'} icon={<GitBranch/>} label="证据关系" count={evidenceGraph?.summary.relations} onClick={() => openEvidence()}/>
-        <Nav active={active === 'actions'} icon={<FlaskConical/>} label="行动建议" count={actionPacks.reduce((total, pack) => total + pack.proposedCount, 0)} onClick={() => setActive('actions')}/>
+        <Nav active={active === 'actions'} icon={<FlaskConical/>} label="研究任务" count={(researchTasks?.summary.today ?? 0) + (researchTasks?.summary.inbox ?? 0)} onClick={() => { setTaskSourcePackOpen(false); setActive('actions') }}/>
       </nav>
-      <div className="sidebar-bottom"><button className="nav-item" onClick={() => setSettingsOpen(true)}><Settings2/><span>设置</span></button><div className="local-note"><span className="status-dot"/>本地优先存储<br/><small>仅在你触发时调用 AI</small></div></div>
+      <div className="sidebar-bottom">
+        <button className="nav-item" onClick={() => setFeedbackOpen(true)}><Bug/><span>问题反馈</span></button>
+        <button className="nav-item" onClick={() => setSettingsOpen(true)}><Settings2/><span>设置</span></button>
+        <div className="local-note"><span className="status-dot"/>本地优先存储<br/><small>仅在你触发时调用 AI</small></div>
+      </div>
     </aside>
     <main>
-      <header className="topbar"><button className="mobile-menu"><Menu/></button><div className="crumb">当前仓库 <ChevronRight size={14}/> <strong>{active === 'dashboard' ? '复查草稿' : active === 'reader' ? '阅读' : active === 'evidence' ? '证据关系' : active === 'actions' ? '行动建议' : '资料库'}</strong></div><div className="top-actions"><button className="icon-button" title="本地搜索" onClick={() => { setActive('sources'); setLibrarySearchRequest(value => value + 1) }}><Search size={19}/></button><button className="agent-button" onClick={() => setAgentOpen(true)}><MessageSquareText size={16}/> 询问研究 Agent</button></div></header>
+      <header className="topbar"><button className="mobile-menu"><Menu/></button><div className="crumb">当前研究库 <ChevronRight size={14}/> <strong>{active === 'today' ? '今日科研' : active === 'research-workspace' ? '课题与实验' : active === 'research-review' ? '复盘与写作' : active === 'dashboard' ? '文献综述' : active === 'reader' ? '阅读' : active === 'evidence' ? '证据关系' : active === 'actions' ? '研究任务' : '资料库'}</strong></div><div className="top-actions"><button className="icon-button" title="本地搜索" onClick={() => { setActive('sources'); setLibrarySearchRequest(value => value + 1) }}><Search size={19}/></button><button className="agent-button" onClick={() => setAgentOpen(true)}><MessageSquareText size={16}/> 询问科研助手</button></div></header>
+      {active === 'today' && <TodayResearch
+        workspace={researchWorkspace as DesktopResearchWorkspace | undefined}
+        papers={bibliographicItems}
+        sources={sources}
+        actionPacks={actionPacks}
+        resume={researchResume}
+        onContinue={continueLastResearch}
+        onSaveRecord={saveResearchRecord}
+        onOpenTasks={() => { setTaskSourcePackOpen(false); setActive('actions') }}
+        onOpenWorkspace={() => setActive('research-workspace')}
+      />}
+      {active === 'research-workspace' && <ResearchCommandCenter
+        workspace={researchWorkspace as DesktopResearchWorkspace | undefined}
+        fallbackName={workspace?.name ?? workspaceName}
+        papers={bibliographicItems}
+        sources={sources}
+        onSaveProject={saveResearchProject}
+        onSaveMilestone={saveResearchMilestone}
+        onSaveRun={saveResearchRun}
+        onSaveTemplate={saveResearchRunTemplate}
+        onRegisterArtifact={registerResearchArtifact}
+        onExportRun={(id) => exportPortableMarkdown('experiment_retrospective', id)}
+        onOpenPapers={() => setActive('sources')}
+        onOpenReports={() => setActive('research-review')}
+        onAskAgent={() => setAgentOpen(true)}
+      />}
+      {active === 'research-review' && <ResearchReviewWorkspace
+        workspace={researchWorkspace as DesktopResearchWorkspace | undefined}
+        bibliography={bibliographicItems}
+        onSaveReport={saveResearchReport}
+        onConfirmReport={confirmResearchReport}
+        onExportReport={exportResearchReport}
+        onPortableExportReport={(id) => exportPortableMarkdown('research_report', id)}
+        onSaveClaim={saveResearchClaim}
+        onArchiveClaim={archiveResearchClaim}
+        onOpenReader={(sourceId) => void openSource(sourceId)}
+      />}
       {active === 'dashboard' && <ReviewWorkspace
         sources={sources}
         items={bibliographicItems}
@@ -1134,7 +1604,9 @@ function App() {
         onOpenDocument={(id) => void openReviewDocument(id)}
         onOpenCitation={(sourceId, pageNumber, anchor) => openSource(sourceId, pageNumber, anchor as FragmentAnchor | undefined)}
         onOpenEvidence={(documentId) => openEvidence({ kind: 'document', id: documentId })}
+        onConfirm={(id) => void confirmReviewDocument(id)}
         onExport={(id, format) => void exportReviewDocument(id, format)}
+        onPortableExport={(id) => void exportPortableMarkdown('review_document', id)}
       />}
       {active === 'sources' && <SourcesV2
         sources={sources}
@@ -1143,6 +1615,13 @@ function App() {
         focusRequest={librarySearchRequest}
         onUpload={() => fileInput.current?.click()}
         onBibliography={() => void importBibliography()}
+        importResult={bibliographyImportResult ? {
+          items: bibliographicItems.filter(item => bibliographyImportResult.itemIds.includes(item.id)),
+          alreadyImported: bibliographyImportResult.alreadyImported,
+        } : undefined}
+        onDismissImportResult={() => setBibliographyImportResult(undefined)}
+        onCopyCitation={item => void copyCitation(item)}
+        onReviewCitation={item => setCitationDialog({ item })}
         onReader={openSource}
         onOpenReview={(documentId) => {
           setActive('dashboard')
@@ -1168,7 +1647,15 @@ function App() {
         onCreateRelation={createEvidenceRelation}
         onReviewRelation={reviewEvidenceRelation}
       />}
-      {active === 'actions' && <ActionPackWorkspace
+      {active === 'actions' && !taskSourcePackOpen && <ResearchTasks
+        data={researchTasks}
+        busy={researchTaskBusy}
+        error={researchTaskError}
+        onCreate={createUnifiedResearchTask}
+        onUpdate={updateUnifiedResearchTask}
+        onReturn={returnToResearchTaskSource}
+      />}
+      {active === 'actions' && taskSourcePackOpen && <div className="task-source-pack-workspace"><button className="back-link" onClick={() => setTaskSourcePackOpen(false)}><ArrowLeft/>返回统一研究任务</button><ActionPackWorkspace
         packs={actionPacks}
         activePack={activeActionPack}
         onOpen={packId => void openActionPack(packId)}
@@ -1182,7 +1669,7 @@ function App() {
           }
         }}
         onAskAgent={() => setAgentOpen(true)}
-      />}
+      /></div>}
       {active === 'reader' && selected && <FunctionalReader
         settings={aiSettings}
         workspaceName={workspace?.name ?? workspaceName}
@@ -1191,6 +1678,7 @@ function App() {
         items={bibliographicItems}
         annotations={annotations}
         paper={selectedPaper}
+        researchWorkspace={researchWorkspace}
         agentOpen={agentOpen}
         jumpTarget={readerJumpTarget}
         onSelectSource={(id) => { setSelectedSource(id); setReaderJumpTarget(undefined) }}
@@ -1206,17 +1694,27 @@ function App() {
         onOpenCitation={(sourceId, pageNumber, anchor) => openSource(sourceId, pageNumber, anchor)}
         onEditAnnotation={setEditingAnnotation}
         onArchiveAnnotation={annotation => void archiveAnnotation(annotation)}
+        onCreateTaskFromAnnotation={annotation => createUnifiedResearchTask({
+          sourceType: 'annotation',
+          sourceId: annotation.id,
+          sourceRole: 'primary',
+          status: 'inbox',
+        })}
         onExportAnnotations={sourceId => void exportSourceAnnotations(sourceId)}
+        onCopyCitation={item => void copyCitation(item)}
         onAgent={() => setAgentOpen(true)}
         onAgentClose={() => setAgentOpen(false)}
         onCreateActionPack={createActionPack}
         onSettings={() => setSettingsOpen(true)}
       />}
     </main>
+    {returnGreetingOpen && researchResume && <ResearchReturnGreeting resume={researchResume} onDismiss={() => setReturnGreetingOpen(false)} onContinue={continueLastResearch}/>}
+    {citationDialog && <CitationDialog item={citationDialog.item} reason={citationDialog.reason} onClose={() => setCitationDialog(undefined)}/>}
     <input ref={fileInput} className="hidden" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xlsx,.xls,.md,.txt" onChange={e => addFiles(e.target.files)} />
     {agentOpen && active !== 'reader' && <AgentModalV2
       settings={aiSettings}
       workspaceName={workspace?.name ?? workspaceName}
+      researchWorkspace={researchWorkspace}
       items={bibliographicItems}
       currentItemId={selectedPaper?.id}
       onClose={() => setAgentOpen(false)}
@@ -1228,19 +1726,24 @@ function App() {
     />}
     {annotationDraft && <AnnotationModalV2 source={selected} paper={selectedPaper} draft={annotationDraft} onClose={() => setAnnotationDraft(null)} onSave={addAnnotation}/>}
     {editingAnnotation && <AnnotationEditModal annotation={editingAnnotation} onClose={() => setEditingAnnotation(undefined)} onSave={(category, note) => void reviseAnnotation(editingAnnotation, category, note)}/>}
-    {settingsOpen && <SettingsModal
+    {(settingsOpen || (settingsLoaded && aiOnboardingRequired)) && <SettingsModal
       settings={aiSettings}
       uiSettings={uiSettings}
       credentialState={credentialState}
-      onClose={() => setSettingsOpen(false)}
+      onboarding={aiOnboardingRequired}
+      workspaceOpen={Boolean(workspace)}
+      onClose={() => { if (!aiOnboardingRequired) setSettingsOpen(false) }}
       onSave={saveAppSettings}
     />}
+    {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)}/>}
     {workspaceCreationRequest && <WorkspaceCreationModal
       directory={workspaceCreationRequest.directory}
       suggestedName={workspaceCreationRequest.suggestedName}
+      existingPaperCount={workspaceCreationRequest.existingPaperCount}
+      existingPaperNames={workspaceCreationRequest.existingPaperNames}
       busy={workspaceBusy}
       onClose={() => setWorkspaceCreationRequest(undefined)}
-      onCreate={name => void createWorkspaceInSelectedFolder(name)}
+      onCreate={(name, manageExistingPapers) => void createWorkspaceInSelectedFolder(name, manageExistingPapers)}
     />}
     {mineruTarget && <MineruConfirmModal
       source={mineruTarget}
@@ -1254,13 +1757,180 @@ function App() {
   </div>
 }
 
-function Nav({ icon, label, active, count, onClick }: { icon: React.ReactNode; label: string; active?: boolean; count?: number; onClick?: () => void }) { return <button onClick={onClick} className={`nav-item ${active ? 'active' : ''}`}>{icon}<span>{label}</span>{count !== undefined && <em>{count}</em>}</button> }
-function Dashboard({ sources, claims, actions, counts, onToggle, onNavigate, onAgent, onUpload }: { sources: Source[]; claims: Claim[]; actions: Action[]; counts: { fact:number; infer:number; hypo:number }; onToggle:(id:string)=>void; onNavigate:(v:'dashboard'|'sources'|'reader')=>void; onAgent:()=>void; onUpload:()=>void }) {
-  return <div className="page dashboard"><section className="hero"><div><p className="eyebrow">研究项目 · 进行中</p><h1>柔顺装配控制</h1><p className="hero-copy">研究在接触刚度变化下，如何通过在线辨识提升机械臂装配的鲁棒性。</p><div className="hypothesis"><span>当前假设</span><p>力/位混合反馈可以降低不同批次工件带来的控制参数失配。</p></div></div><button className="outline-button" onClick={onAgent}><Sparkles size={16}/> 让 Agent 审视项目</button></section>
-    <div className="metrics"><Metric label="可追溯证据" value={String(counts.fact)} detail="来自已解析资料" tone="green"/><Metric label="待验证推断" value={String(counts.infer)} detail="需要补充对照" tone="blue"/><Metric label="研究假设" value={String(counts.hypo)} detail="尚未获得实验支持" tone="amber"/><Metric label="资料状态" value={`${sources.filter(s=>s.status==='已解析').length}/${sources.length}`} detail="已完成解析" tone="slate"/></div>
-    <div className="dashboard-grid"><section className="card evidence-card"><div className="card-head"><div><p className="section-kicker">Evidence map</p><h2>证据地图</h2></div><button className="text-button" onClick={() => onNavigate('sources')}>查看资料 <ArrowRight size={14}/></button></div><p className="muted">所有结论都标明它是资料事实、Agent 推断还是你的研究假设。</p><div className="claims">{claims.map(c => <div className="claim" key={c.id}><span className={`claim-dot ${pill(c.status)}`}/><div><strong>{c.title}</strong><small>{c.source} · {c.location}</small></div><span className={`pill ${pill(c.status)}`}>{c.status}</span></div>)}</div></section>
-      <section className="card actions-card"><div className="card-head"><div><p className="section-kicker">Next actions</p><h2>待你确认的行动</h2></div><span className="pill amber">{actions.filter(a=>!a.done).length} 项</span></div><div className="actions">{actions.map(a => <button key={a.id} className={`action ${a.done ? 'done' : ''}`} onClick={() => onToggle(a.id)}><span className="check-box">{a.done && <Check size={14}/>}</span><div><span className="action-type">{a.type}</span><strong>{a.title}</strong><small>{a.reason}</small></div></button>)}</div></section></div>
-    <div className="dashboard-grid lower"><section className="card risk-card"><div className="card-head"><div><p className="section-kicker">Critical review</p><h2>Agent 发现的风险</h2></div><AlertTriangle className="risk-icon" size={20}/></div><div className="risk"><strong>比较条件可能不一致</strong><p>已有文献的“成功率”使用了不同的刚度范围和速度条件，暂不能直接支持性能优越的结论。</p><button className="text-button" onClick={onAgent}>查看质询与建议 <ArrowRight size={14}/></button></div></section><section className="card import-card"><FilePlus2 size={22}/><div><h2>把资料带进项目</h2><p>支持 PDF、Word、PPT、表格、Markdown。原文件始终保留，解析文本只是辅助层。</p><button className="primary-button" onClick={onUpload}><Upload size={16}/> 导入本地资料</button></div></section></div>
+function Nav({ icon, label, active, count, onClick }: { icon: React.ReactNode; label: string; active?: boolean; count?: number; onClick?: () => void }) { return <button aria-label={count === undefined ? label : `${label} ${count}`} title={label} onClick={onClick} className={`nav-item ${active ? 'active' : ''}`}>{icon}<span>{label}</span>{count !== undefined && <em>{count}</em>}</button> }
+
+function FeedbackModal({ onClose }: { onClose: () => void }) {
+  const dialogRef = useDialogKeyboard<HTMLElement>(onClose)
+  return <div className="research-modal-backdrop" onMouseDown={event => {
+    if (event.target === event.currentTarget) onClose()
+  }}>
+    <section ref={dialogRef} className="research-modal feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+      <header>
+        <div><p className="section-kicker">Support</p><h2 id="feedback-title">问题反馈</h2></div>
+        <button type="button" aria-label="关闭问题反馈" onClick={onClose}><X size={17}/></button>
+      </header>
+      <div className="feedback-copy">
+        <p>如果软件报错、功能不符合预期，或你有改进建议，可以选择下面任一种方式联系开发者。</p>
+        <div className="feedback-options">
+          <a autoFocus href={feedbackIssueUrl} target="_blank" rel="noreferrer">
+            <GitBranch size={22}/>
+            <span><strong>提交 GitHub Issue</strong><small>推荐：便于补充截图、版本与处理进度</small></span>
+            <ExternalLink size={16}/>
+          </a>
+          <a href={feedbackEmailUrl} target="_blank" rel="noreferrer">
+            <Mail size={22}/>
+            <span><strong>发送问题邮件</strong><small>hzh1144@163.com</small></span>
+            <ExternalLink size={16}/>
+          </a>
+        </div>
+        <p className="feedback-privacy"><ShieldCheck size={15}/>提交前请移除论文原文、API 密钥、私人路径等敏感信息。</p>
+      </div>
+      <div className="research-modal-actions"><button type="button" className="outline-button" onClick={onClose}>关闭</button></div>
+    </section>
+  </div>
+}
+const researchRecordMeta: Record<ResearchRecordType, { label: string; hint: string }> = {
+  log: { label: '研究日志', hint: '今天推进了什么、遇到什么问题' },
+  experiment: { label: '实验', hint: '目标、变量、步骤和结果' },
+  dataset: { label: '数据', hint: '数据集、脚本或结果文件的位置' },
+  decision: { label: '决策', hint: '决定了什么，以及为什么' },
+  milestone: { label: '里程碑', hint: '阶段成果或下一检查点' },
+}
+const researchStatusLabel: Record<ResearchRecordStatus, string> = {
+  planned: '待开始', active: '进行中', completed: '已完成', blocked: '受阻', archived: '已归档',
+}
+
+function ResearchDashboard({
+  workspace: data,
+  fallbackName,
+  papers,
+  sources,
+  onSaveProject,
+  onSaveRecord,
+  onOpenPapers,
+  onAskAgent,
+}: {
+  workspace?: ResearchWorkspace
+  fallbackName: string
+  papers: BibliographicSummary[]
+  sources: Source[]
+  onSaveProject: (project: Pick<ResearchWorkspace['project'], 'name' | 'researchQuestion' | 'currentHypothesis' | 'stage' | 'mode'>) => Promise<void>
+  onSaveRecord: (record: Partial<ResearchRecord> & Pick<ResearchRecord, 'recordType' | 'title' | 'status'>) => Promise<void>
+  onOpenPapers: () => void
+  onAskAgent: () => void
+}) {
+  const project = data?.project ?? { id: '', name: fallbackName || '我的研究课题', researchQuestion: '', currentHypothesis: '', stage: '探索中', mode: 'exploration', updatedAt: '' }
+  const records = data?.records ?? []
+  const [editingProject, setEditingProject] = useState(false)
+  const [projectDraft, setProjectDraft] = useState(project)
+  const [recordType, setRecordType] = useState<ResearchRecordType>()
+  const [recordDraft, setRecordDraft] = useState({ title: '', content: '', status: 'active' as ResearchRecordStatus, filePath: '', tags: '' })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => { if (!editingProject) setProjectDraft(project) }, [project.name, project.researchQuestion, project.currentHypothesis, project.stage, editingProject])
+
+  async function saveProject() {
+    setBusy(true); setError('')
+    try {
+      await onSaveProject({ name: projectDraft.name, researchQuestion: projectDraft.researchQuestion, currentHypothesis: projectDraft.currentHypothesis, stage: projectDraft.stage, mode: projectDraft.mode })
+      setEditingProject(false)
+    } catch (saveError) { setError(saveError instanceof Error ? saveError.message : '课题保存失败。') }
+    finally { setBusy(false) }
+  }
+
+  async function saveRecord() {
+    if (!recordType || !recordDraft.title.trim()) return
+    setBusy(true); setError('')
+    try {
+      await onSaveRecord({
+        recordType, title: recordDraft.title.trim(), content: recordDraft.content.trim(), status: recordDraft.status,
+        filePath: recordDraft.filePath.trim() || undefined,
+        tags: recordDraft.tags.split(/[，,]/).map(tag => tag.trim()).filter(Boolean),
+      })
+      setRecordType(undefined)
+      setRecordDraft({ title: '', content: '', status: 'active', filePath: '', tags: '' })
+    } catch (saveError) { setError(saveError instanceof Error ? saveError.message : '科研记录保存失败。') }
+    finally { setBusy(false) }
+  }
+
+  const activeRecords = records.filter(record => record.status === 'active' || record.status === 'blocked')
+  const completedMilestones = records.filter(record => record.recordType === 'milestone' && record.status === 'completed').length
+  return <div className="research-dashboard">
+    <section className="research-brief">
+      <div className="research-brief-main">
+        <div className="research-stage-line"><span>当前课题</span><b>{project.stage}</b></div>
+        <h1>{project.name}</h1>
+        <div className={`research-question ${project.researchQuestion ? '' : 'empty'}`}>
+          <small>研究问题</small><p>{project.researchQuestion || '还没有写下研究问题。先定义“要解释、比较或验证什么”。'}</p>
+        </div>
+        <div className={`research-hypothesis ${project.currentHypothesis ? '' : 'empty'}`}>
+          <small>当前假设</small><p>{project.currentHypothesis || '暂未形成假设。记录一个可被证据推翻的判断。'}</p>
+        </div>
+      </div>
+      <div className="research-brief-actions">
+        <button className="outline-button" onClick={() => setEditingProject(true)}><Pencil size={15}/>编辑课题</button>
+        <button className="primary-button" onClick={onAskAgent}><Sparkles size={15}/>审视下一步</button>
+      </div>
+    </section>
+
+    <section className="research-pulse" aria-label="课题进度概览">
+      <div><span>{papers.length}</span><small>篇论文进入课题</small></div>
+      <div><span>{records.filter(record => record.recordType === 'experiment').length}</span><small>项实验记录</small></div>
+      <div><span>{records.filter(record => record.recordType === 'dataset').length}</span><small>份数据记录</small></div>
+      <div><span>{completedMilestones}</span><small>个里程碑完成</small></div>
+      <div><span>{activeRecords.length}</span><small>项正在推进</small></div>
+    </section>
+
+    <div className="research-dashboard-grid">
+      <section className="research-record-panel">
+        <header><div><p className="section-kicker">Research trail</p><h2>研究过程</h2></div><span>{records.length} 条本地记录</span></header>
+        <div className="research-add-strip">
+          {(Object.entries(researchRecordMeta) as Array<[ResearchRecordType, { label: string; hint: string }]>).map(([type, meta]) => <button key={type} onClick={() => setRecordType(type)} className={recordType === type ? 'active' : ''}>
+            {type === 'experiment' ? <FlaskConical/> : type === 'dataset' ? <Files/> : type === 'decision' ? <GitBranch/> : type === 'milestone' ? <CircleDot/> : <FileText/>}
+            <span>添加{meta.label}</span>
+          </button>)}
+        </div>
+        {records.length ? <div className="research-timeline">{records.slice(0, 30).map(record => <article key={record.id} className={`research-record ${record.status}`}>
+          <i/><div className="research-record-date">{new Date(record.occurredAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}</div>
+          <div><div className="research-record-meta"><span>{researchRecordMeta[record.recordType].label}</span><b>{researchStatusLabel[record.status]}</b></div><h3>{record.title}</h3>{record.content && <p>{record.content}</p>}{record.filePath && <code>{record.filePath}</code>}{record.tags.length > 0 && <footer>{record.tags.map(tag => <span key={tag}>#{tag}</span>)}</footer>}</div>
+        </article>)}</div> : <div className="research-empty"><FlaskConical/><strong>把科研过程留在课题里</strong><p>从一条日志、一次实验或一个决定开始。它们会按时间形成可回看的研究轨迹。</p></div>}
+      </section>
+
+      <aside className="research-focus-panel">
+        <section><div className="research-panel-title"><p className="section-kicker">Now</p><h2>现在推进什么</h2></div>
+          {activeRecords.length ? activeRecords.slice(0, 5).map(record => <article key={record.id}><span>{researchRecordMeta[record.recordType].label}</span><strong>{record.title}</strong><small>{record.status === 'blocked' ? '需要解除阻碍' : '进行中'}</small></article>) : <div className="research-mini-empty">暂无进行中的记录。添加实验或里程碑，明确下一步。</div>}
+        </section>
+        <section className="research-paper-status"><div className="research-panel-title"><p className="section-kicker">Literature</p><h2>文献推进</h2></div>
+          <div className="research-paper-bar"><i style={{ width: `${papers.length ? Math.round(papers.filter(paper => paper.readingState.readingStatus === 'finished').length / papers.length * 100) : 0}%` }}/></div>
+          <p><b>{papers.filter(paper => paper.readingState.readingStatus === 'finished').length}</b> / {papers.length} 篇已精读</p>
+          <small>{sources.filter(source => source.status === '已解析').length} 份资料已解析，可作为科研助手的证据来源。</small>
+          <button className="text-button" onClick={onOpenPapers}>进入资料库 <ArrowRight size={14}/></button>
+        </section>
+      </aside>
+    </div>
+
+    {editingProject && <div className="research-inline-editor"><section>
+      <header><div><p className="section-kicker">Project definition</p><h2>编辑课题定位</h2></div><button className="icon-button" onClick={() => setEditingProject(false)}><X/></button></header>
+      <label>课题名称<input value={projectDraft.name} maxLength={80} onChange={event => setProjectDraft({ ...projectDraft, name: event.target.value })}/></label>
+      <label>研究阶段<select value={projectDraft.stage} onChange={event => setProjectDraft({ ...projectDraft, stage: event.target.value })}><option>探索中</option><option>方案设计</option><option>实验中</option><option>分析中</option><option>论文写作</option><option>已完成</option></select></label>
+      <label>研究问题<textarea value={projectDraft.researchQuestion} onChange={event => setProjectDraft({ ...projectDraft, researchQuestion: event.target.value })} placeholder="例如：在什么条件下，方法 A 是否比基线 B 更稳定？"/></label>
+      <label>当前假设<textarea value={projectDraft.currentHypothesis} onChange={event => setProjectDraft({ ...projectDraft, currentHypothesis: event.target.value })} placeholder="写成可以被数据或文献推翻的判断。"/></label>
+      {error && <p className="research-form-error">{error}</p>}
+      <footer><button className="outline-button" onClick={() => setEditingProject(false)}>取消</button><button className="primary-button" disabled={busy || !projectDraft.name.trim()} onClick={() => void saveProject()}>{busy ? '正在保存…' : '保存课题'}</button></footer>
+    </section></div>}
+
+    {recordType && <div className="research-inline-editor"><section>
+      <header><div><p className="section-kicker">New research record</p><h2>添加{researchRecordMeta[recordType].label}</h2></div><button className="icon-button" onClick={() => setRecordType(undefined)}><X/></button></header>
+      <p className="research-form-hint">{researchRecordMeta[recordType].hint}</p>
+      <label>标题<input autoFocus value={recordDraft.title} maxLength={240} onChange={event => setRecordDraft({ ...recordDraft, title: event.target.value })} placeholder="一句话说明这条记录"/></label>
+      <label>状态<select value={recordDraft.status} onChange={event => setRecordDraft({ ...recordDraft, status: event.target.value as ResearchRecordStatus })}><option value="planned">待开始</option><option value="active">进行中</option><option value="completed">已完成</option><option value="blocked">受阻</option></select></label>
+      <label>内容<textarea value={recordDraft.content} onChange={event => setRecordDraft({ ...recordDraft, content: event.target.value })} placeholder={recordType === 'experiment' ? '目标、变量、步骤、观察和结果…' : '记录过程、依据和下一步…'}/></label>
+      {(recordType === 'dataset' || recordType === 'experiment') && <label>本地文件或目录（可选）<input value={recordDraft.filePath} onChange={event => setRecordDraft({ ...recordDraft, filePath: event.target.value })} placeholder="例如 E:\\实验\\run-003"/></label>}
+      <label>标签（逗号分隔）<input value={recordDraft.tags} onChange={event => setRecordDraft({ ...recordDraft, tags: event.target.value })} placeholder="例如 基线, 待复现"/></label>
+      {error && <p className="research-form-error">{error}</p>}
+      <footer><button className="outline-button" onClick={() => setRecordType(undefined)}>取消</button><button className="primary-button" disabled={busy || !recordDraft.title.trim()} onClick={() => void saveRecord()}>{busy ? '正在保存…' : `保存${researchRecordMeta[recordType].label}`}</button></footer>
+    </section></div>}
   </div>
 }
 
@@ -1274,7 +1944,9 @@ function ReviewWorkspace({
   onOpenDocument,
   onOpenCitation,
   onOpenEvidence,
+  onConfirm,
   onExport,
+  onPortableExport,
 }: {
   sources: Source[]
   items: BibliographicSummary[]
@@ -1285,7 +1957,9 @@ function ReviewWorkspace({
   onOpenDocument: (id: string) => void
   onOpenCitation: (sourceId: string, pageNumber: number, anchor?: DesktopFragmentAnchor) => void
   onOpenEvidence: (documentId: string) => void
+  onConfirm: (id: string) => void
   onExport: (id: string, format: 'markdown' | 'docx') => void
+  onPortableExport: (id: string) => void
 }) {
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
   const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<string[]>([])
@@ -1362,7 +2036,7 @@ function ReviewWorkspace({
       {documents.length > 0 && <section className="review-history">
         <strong>历史草稿</strong>
         {documents.map(document => <button className={activeDocument?.id === document.id ? 'active' : ''} key={document.id} onClick={() => onOpenDocument(document.id)}>
-          <span>{document.title}</span><small>{document.itemCount} 篇 · {document.blockCount} 块 · {document.status === 'exported' ? '已导出' : '草稿'}</small>
+          <span>{document.title}</span><small>{document.itemCount} 篇 · {document.blockCount} 块 · {document.status === 'exported' ? '已导出' : document.status === 'reviewed' ? '已确认' : '草稿'}</small>
         </button>)}
       </section>}
     </aside>
@@ -1370,7 +2044,7 @@ function ReviewWorkspace({
       {activeDocument ? <>
         <header className="review-document-header">
           <div><span>TRACEABLE REVIEW</span><h2>{activeDocument.title}</h2><p>{activeDocument.items.length} 篇论文 · {activeDocument.blocks.length} 个来源区块</p></div>
-          <div><button className="review-evidence-button" onClick={() => onOpenEvidence(activeDocument.id)}><GitBranch size={13}/>查看证据关系</button><button onClick={() => onExport(activeDocument.id, 'markdown')}>导出 Markdown</button><button onClick={() => onExport(activeDocument.id, 'docx')}>导出 Word</button></div>
+          <div><button className="review-evidence-button" onClick={() => onOpenEvidence(activeDocument.id)}><GitBranch size={13}/>查看证据关系</button>{activeDocument.status === 'draft' ? <button onClick={() => onConfirm(activeDocument.id)}><ShieldCheck size={13}/>人工确认</button> : <button onClick={() => onPortableExport(activeDocument.id)}><Download size={13}/>可迁移 Markdown</button>}<button onClick={() => onExport(activeDocument.id, 'docx')}>导出 Word</button></div>
         </header>
         <article className="review-document-content">
           <div className="review-origin-legend"><span className="evidence">原文证据</span><span className="user">用户笔记</span><span className="ai">AI 整理</span></div>
@@ -1942,6 +2616,10 @@ function SourcesV2({
   focusRequest,
   onUpload,
   onBibliography,
+  importResult,
+  onDismissImportResult,
+  onCopyCitation,
+  onReviewCitation,
   onReader,
   onOpenReview,
   onReanalyze,
@@ -1953,6 +2631,10 @@ function SourcesV2({
   focusRequest: number
   onUpload:()=>void
   onBibliography:()=>void
+  importResult?: { items: BibliographicSummary[]; alreadyImported: boolean }
+  onDismissImportResult:()=>void
+  onCopyCitation:(item: CitationItemView)=>void
+  onReviewCitation:(item: CitationItemView)=>void
   onReader:(id:string, pageNumber?:number, anchor?:FragmentAnchor)=>void
   onOpenReview:(documentId:string)=>void
   onReanalyze:(id:string)=>void
@@ -2036,6 +2718,13 @@ function SourcesV2({
         <button className="primary-button" onClick={onUpload}><Upload size={16}/> 导入资料</button>
       </div>
     </div>
+    {importResult && <CitationImportPanel
+      items={importResult.items}
+      alreadyImported={importResult.alreadyImported}
+      onCopy={onCopyCitation}
+      onReview={onReviewCitation}
+      onClose={onDismissImportResult}
+    />}
     <div className="source-toolbar">
       <label className="search library-search">
         <Search size={16}/>
@@ -2073,6 +2762,8 @@ function SourcesV2({
         onReader={onReader}
         onReanalyze={onReanalyze}
         onMineru={onMineru}
+        onCopyCitation={onCopyCitation}
+        onReviewCitation={onReviewCitation}
       />
       <UnboundSourceList
         sources={unboundSources}
@@ -2106,11 +2797,15 @@ function PaperLibraryTable({
   onReader,
   onReanalyze,
   onMineru,
+  onCopyCitation,
+  onReviewCitation,
 }: {
   rows: ReturnType<typeof buildPaperLibraryRows<BibliographicSummary, Source>>
   onReader: (id: string) => void
   onReanalyze: (id: string) => void
   onMineru: (id: string) => void
+  onCopyCitation: (item: CitationItemView) => void
+  onReviewCitation: (item: CitationItemView) => void
 }) {
   if (!rows.length) return <section className="paper-library-empty">
     <BookOpen size={24}/>
@@ -2163,6 +2858,8 @@ function PaperLibraryTable({
             : <em>用途待标记</em>}
         </div>
         <div className="paper-library-actions">
+          {(item.needsMetadataReview || item.citation.incomplete) && <button className="citation-review-button" onClick={() => onReviewCitation(item)}><AlertTriangle size={13}/>检查题录</button>}
+          <CitationButton item={item} onCopy={onCopyCitation} compact/>
           {source?.status === '需重新分析' && <button className="compact-button warning" onClick={() => onReanalyze(source.id)}>重新分析</button>}
           {source?.fileId && !source.isDemo && source.mineruState !== '完成' && <button
             className="compact-button mineru-button"
@@ -2400,10 +3097,12 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
     : part)}</>
 }
 function Reader({ source, annotations, onAnnotate, onAgent }: { source:Source; annotations:Annotation[]; onAnnotate:()=>void; onAgent:()=>void }) { return <div className="reader-page"><div className="reader-header"><div><button className="back-link"><Files size={15}/> 资料库</button><h2>{source.name}</h2><span className={`pill ${pill(source.status)}`}>{source.status}</span></div><div><button className="outline-button" onClick={onAgent}><MessageSquareText size={16}/> 问本篇论文</button><button className="primary-button" onClick={onAnnotate}><Highlighter size={16}/> 添加批注</button></div></div><div className="reader-body"><section className="pdf-canvas"><div className="pdf-toolbar"><span>第 7 / {source.pages ?? 14} 页</span><span>100%</span><MoreHorizontal size={19}/></div><article className="paper"><p className="paper-kicker">III. ADAPTIVE IMPEDANCE CONTROL</p><h2>Force-feedback parameter adaptation</h2><p>To cope with the varying contact conditions, the controller adapts the impedance parameters based on contact force feedback. The adaptation law is designed to preserve stability while reducing transient tracking errors.</p><p className="selected-text">The experimental results demonstrate that the proposed approach maintains a higher success rate under uncertain stiffness conditions.</p><figure><div className="chart"><span>Success rate</span><i className="bar a"/><i className="bar b"/><i className="bar c"/><small>fixed &nbsp; adaptive &nbsp; proposed</small></div><figcaption>Fig. 5. Assembly performance under varying stiffness.</figcaption></figure><p>However, the comparison is limited to a single velocity range and a laboratory setup. Further validation is needed for different workpiece batches.</p></article></section><aside className="reader-side"><div className="side-tabs"><strong>批注与理解</strong><button onClick={onAgent}><Sparkles size={16}/></button></div><div className="translation"><p className="section-kicker">划词翻译 · 示例</p><strong>该控制器会根据接触力反馈，自适应调整阻抗参数。</strong><small>术语：impedance parameters = 阻抗参数；contact force feedback = 接触力反馈</small><button className="text-button">收藏术语 <Plus size={13}/></button></div><div className="annotation-head"><h3>本篇批注</h3><span>{annotations.length}</span></div>{annotations.length === 0 ? <div className="empty-note"><Highlighter size={22}/><p>选中原文后添加批注。每条批注会保留页码定位，并可进入阅读卡。</p></div> : annotations.map(a => <div className="annotation" key={a.id}><span className="pill blue">{a.category}</span><p>{a.text}</p><small>{a.page} · {a.note || '无额外备注'}</small></div>)}<button className="full-width outline-button" onClick={onAnnotate}><Plus size={16}/> 新建研究批注</button></aside></div></div> }
-type ReaderViewMode = 'original' | 'markdown' | 'parallel'
+type ReaderViewMode = 'original' | 'markdown' | 'parallel' | 'bilingual'
 type ReaderSelection = {
   text: string
+  translationText: string
   pageNumber?: number
+  endPageNumber?: number
   markdownBlockId?: string
   rects: Array<{ x: number; y: number; width: number; height: number }>
   menuX: number
@@ -2418,6 +3117,7 @@ function FunctionalReader({
   items,
   annotations,
   paper,
+  researchWorkspace,
   agentOpen,
   jumpTarget,
   onSelectSource,
@@ -2429,7 +3129,9 @@ function FunctionalReader({
   onOpenCitation,
   onEditAnnotation,
   onArchiveAnnotation,
+  onCreateTaskFromAnnotation,
   onExportAnnotations,
+  onCopyCitation,
   onAgent,
   onAgentClose,
   onCreateActionPack,
@@ -2442,6 +3144,7 @@ function FunctionalReader({
   items: BibliographicSummary[]
   annotations: Annotation[]
   paper?: BibliographicSummary
+  researchWorkspace?: ResearchWorkspace
   agentOpen: boolean
   jumpTarget?: ReaderJumpTarget
   onSelectSource: (id: string) => void
@@ -2453,7 +3156,9 @@ function FunctionalReader({
   onOpenCitation: (sourceId: string, pageNumber?: number, anchor?: FragmentAnchor) => void
   onEditAnnotation: (annotation: Annotation) => void
   onArchiveAnnotation: (annotation: Annotation) => void
+  onCreateTaskFromAnnotation: (annotation: Annotation) => Promise<void>
   onExportAnnotations: (sourceId: string) => void
+  onCopyCitation: (item: CitationItemView) => void
   onAgent: () => void
   onAgentClose: () => void
   onCreateActionPack: (draft: AgentActionPackDraft) => Promise<void>
@@ -2492,6 +3197,9 @@ function FunctionalReader({
   const [selectionAnswer, setSelectionAnswer] = useState('')
   const [selectionNotice, setSelectionNotice] = useState('')
   const [selectionBusy, setSelectionBusy] = useState(false)
+  const [selectionTranslationProvider, setSelectionTranslationProvider] = useState<'local' | 'ai'>(settings.translationProvider ?? 'local')
+  const [selectionCloudConfirm, setSelectionCloudConfirm] = useState(false)
+  const [selectionEditMode, setSelectionEditMode] = useState(false)
   const [localTranslationStatus, setLocalTranslationStatus] = useState<LocalTranslationStatus>()
   const [translationInstalling, setTranslationInstalling] = useState(false)
   const [translationInstallProgress, setTranslationInstallProgress] = useState('')
@@ -2525,8 +3233,6 @@ function FunctionalReader({
         anchor: citationAnchor,
       }]
     : sourceAnnotations
-  const translationProvider = settings.translationProvider ?? 'local'
-
   useEffect(() => {
     if (!paper || !['unread', 'title_only'].includes(paper.readingState.readingStatus)) return
     onUpdateReading(paper.id, { readingStatus: 'reading' }, true)
@@ -2655,7 +3361,7 @@ function FunctionalReader({
   useEffect(() => {
     let alive = true
     const desktop = window.readerDesktop
-    if (!desktop || translationProvider !== 'local') {
+    if (!desktop || selectionTranslationProvider !== 'local') {
       setLocalTranslationStatus(undefined)
       return () => { alive = false }
     }
@@ -2673,7 +3379,7 @@ function FunctionalReader({
         })
       })
     return () => { alive = false }
-  }, [translationProvider])
+  }, [selectionTranslationProvider])
 
   useEffect(() => {
     if (!jumpTarget || jumpTarget.sourceId !== source.id || !pdfDocument) return
@@ -2753,14 +3459,16 @@ function FunctionalReader({
       if (!current || current.isCollapsed || !text || current.rangeCount === 0) return
       const range = current.getRangeAt(0)
       const startElement = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement
+      const endElement = range.endContainer instanceof Element ? range.endContainer : range.endContainer.parentElement
       const pageElement = startElement?.closest<HTMLElement>('[data-pdf-page]')
+      const endPageElement = endElement?.closest<HTMLElement>('[data-pdf-page]')
       const markdownBlockElement = startElement?.closest<HTMLElement>('[data-markdown-block]')
       const allowedRoot = startElement?.closest('.reader-document')
       if (!allowedRoot) return
       const pageRect = pageElement?.getBoundingClientRect()
       const rects = pageRect
         ? Array.from(range.getClientRects())
-          .filter(rect => rect.width > 0 && rect.height > 0)
+          .filter(rect => rect.width > 0 && rect.height > 0 && rect.bottom >= pageRect.top && rect.top <= pageRect.bottom)
           .map(rect => ({
             x: Math.max(0, (rect.left - pageRect.left) / pageRect.width),
             y: Math.max(0, (rect.top - pageRect.top) / pageRect.height),
@@ -2769,9 +3477,12 @@ function FunctionalReader({
           }))
         : []
       const selectionRect = range.getBoundingClientRect()
+      const prepared = prepareTranslationSelection(text, pageElement ? Number(pageElement.dataset.pdfPage) : undefined, endPageElement ? Number(endPageElement.dataset.pdfPage) : undefined)
       const nextSelection = {
         text,
+        translationText: prepared.mergedText,
         pageNumber: pageElement ? Number(pageElement.dataset.pdfPage) : undefined,
+        endPageNumber: endPageElement ? Number(endPageElement.dataset.pdfPage) : undefined,
         markdownBlockId: markdownBlockElement?.dataset.markdownBlock,
         rects,
         menuX: Math.max(12, Math.min(selectionRect.left, window.innerWidth - 430)),
@@ -2789,6 +3500,9 @@ function FunctionalReader({
       setSelectionQuestion('')
       setSelectionAnswer('')
       setSelectionNotice('')
+      setSelectionTranslationProvider(settings.translationProvider ?? 'local')
+      setSelectionCloudConfirm(false)
+      setSelectionEditMode(false)
     })
   }
 
@@ -2812,7 +3526,7 @@ function FunctionalReader({
       const taskId = crypto.randomUUID()
       const result = await desktop.translateLocally({
         taskId,
-        text: selection.text,
+        text: selection.translationText,
         from: 'en',
         to: 'zh',
       })
@@ -2855,10 +3569,10 @@ function FunctionalReader({
     }
   }
 
-  async function runSelectionAI(mode: 'translate' | 'explain' | 'ask') {
+  async function runSelectionAI(mode: 'translate' | 'explain' | 'ask', cloudConfirmed = false) {
     if (!selection?.text) return
     setSelectionMode(mode)
-    if (mode === 'translate' && translationProvider === 'local') {
+    if (mode === 'translate' && selectionTranslationProvider === 'local') {
       await runLocalSelectionTranslation()
       return
     }
@@ -2870,6 +3584,11 @@ function FunctionalReader({
       setSelectionNotice(mode === 'translate'
         ? '当前选择使用 AI 翻译，但尚未配置 AI 服务；选区不会被发送。'
         : '当前未配置 AI 服务；选区不会被发送。')
+      return
+    }
+    if (mode === 'translate' && selectionTranslationProvider === 'ai' && !cloudConfirmed) {
+      setSelectionCloudConfirm(true)
+      setSelectionNotice('发送前请核对下方范围、Provider、模型和字符数。')
       return
     }
     setSelectionBusy(true)
@@ -2889,7 +3608,7 @@ function FunctionalReader({
           temperature: 0.1,
           messages: [
             { role: 'system', content: prompts[mode] },
-            { role: 'user', content: `原文位置：${selection.pageNumber ? `p. ${selection.pageNumber}` : '结构化文本'}\n\n${selection.text}` },
+            { role: 'user', content: `原文位置：${selection.pageNumber ? selection.endPageNumber && selection.endPageNumber !== selection.pageNumber ? `p. ${selection.pageNumber}–${selection.endPageNumber}` : `p. ${selection.pageNumber}` : '结构化文本'}\n\n${selection.translationText}` },
           ],
         }),
       })
@@ -2898,6 +3617,7 @@ function FunctionalReader({
       const content = data.choices?.[0]?.message?.content
       if (!content) throw new Error('服务没有返回可用内容。')
       setSelectionAnswer(content)
+      setSelectionCloudConfirm(false)
       setSelectionNotice('结果仅为辅助；原文仍是引用依据。')
     } catch (error) {
       setSelectionNotice(error instanceof Error ? `调用失败：${error.message}` : '调用失败。')
@@ -2929,7 +3649,9 @@ function FunctionalReader({
     return {
       text: selectedText.text,
       location: selectedText.pageNumber
-        ? `第 ${selectedText.pageNumber} 页`
+        ? selectedText.endPageNumber && selectedText.endPageNumber !== selectedText.pageNumber
+          ? `第 ${selectedText.pageNumber}–${selectedText.endPageNumber} 页`
+          : `第 ${selectedText.pageNumber} 页`
         : selectedText.markdownBlockId ? `Markdown · ${selectedText.markdownBlockId}` : '结构化文本选区',
       anchor: selectedText.pageNumber
         ? {
@@ -3037,6 +3759,8 @@ function FunctionalReader({
     agentOpen ? 'agent-inspector-open' : '',
     immersive ? 'is-immersive' : '',
   ].filter(Boolean).join(' ')
+  let selectionCloudProviderLabel = 'AI Provider'
+  try { selectionCloudProviderLabel = new URL(settings.baseUrl).host || selectionCloudProviderLabel } catch { /* Settings UI validates before use. */ }
 
   return <div className={readerClasses}>
     <header className="research-reader-toolbar">
@@ -3050,10 +3774,12 @@ function FunctionalReader({
       </div>
       <div className="reader-view-switch" aria-label="阅读视图">
         <button className={viewMode === 'original' ? 'active' : ''} disabled={source.kind !== 'PDF'} onClick={() => setViewMode('original')}><FileText size={14}/>原文</button>
-        <button className={viewMode === 'parallel' ? 'active' : ''} disabled={source.kind !== 'PDF' || !readableText} onClick={() => setViewMode('parallel')}><Columns2 size={14}/>对照</button>
-        <button className={viewMode === 'markdown' ? 'active' : ''} disabled={!readableText} onClick={() => setViewMode('markdown')}><BookOpen size={14}/>Markdown</button>
+        <button className={viewMode === 'parallel' ? 'active' : ''} disabled={source.kind !== 'PDF' || !readableText} onClick={() => setViewMode('parallel')}><Columns2 size={14}/>版面对照</button>
+        <button className={viewMode === 'bilingual' ? 'active' : ''} disabled={!readableText} onClick={() => setViewMode('bilingual')}><Languages size={14}/>中英对照</button>
+        <button className={viewMode === 'markdown' ? 'active' : ''} disabled={!readableText} onClick={() => setViewMode('markdown')}><BookOpen size={14}/>整理稿</button>
       </div>
       <div className="reader-toolbar-group">
+        {paper && <CitationButton item={paper} onCopy={onCopyCitation} compact/>}
         {source.kind === 'PDF' && <button className={`reader-icon-button ${leftOpen && leftPanelMode === 'search' ? 'active' : ''}`} onClick={() => openLeftPanel('search')} title="搜索当前 PDF（Ctrl + F）"><Search size={16}/></button>}
         {source.kind === 'PDF' && <div className="reader-zoom">
           <button onClick={() => setZoom(value => clampReaderZoom(value - .1))} title="缩小（Ctrl + 滚轮向下）"><Minus size={14}/></button>
@@ -3161,7 +3887,15 @@ function FunctionalReader({
           onSettings={onSettings}
         />
       </div>}
-      {(viewMode === 'markdown' || source.kind !== 'PDF') && <StructuredDocument
+      {viewMode === 'bilingual' && <BilingualDocument
+        sourceId={source.id}
+        sourceRevision={source.mineruRevision || source.hash}
+        text={readableText}
+        title={paper?.title || source.name.replace(/\.[^.]+$/, '')}
+        settings={settings}
+        onSettings={onSettings}
+      />}
+      {(viewMode === 'markdown' || (source.kind !== 'PDF' && viewMode !== 'bilingual')) && <StructuredDocument
         text={readableText}
         title={source.mineruMarkdown ? 'MinerU Markdown' : '结构化提取文本'}
         source={source}
@@ -3188,6 +3922,7 @@ function FunctionalReader({
         embedded
         settings={settings}
         workspaceName={workspaceName}
+        researchWorkspace={researchWorkspace}
         items={items}
         currentItemId={paper?.id}
         readerContext={{
@@ -3213,7 +3948,7 @@ function FunctionalReader({
         <div className="reader-section-label"><Languages size={14}/>划词助手</div>
         <p>直接在原文中选中文字，菜单会贴着选区出现。翻译或问答只在你点击后调用当前 Provider。</p>
         {selection?.text && <blockquote>{selection.text}<small>{selection.pageNumber ? `p. ${selection.pageNumber}` : '结构化文本'}</small></blockquote>}
-        {selectionAnswer && <div className="reader-ai-result"><span>{selectionMode === 'translate' && translationProvider === 'local' ? '本地翻译' : 'AI 整理'}</span><pre>{selectionAnswer}</pre></div>}
+        {selectionAnswer && <div className="reader-ai-result"><span>{selectionMode === 'translate' && selectionTranslationProvider === 'local' ? '本地翻译' : 'AI 整理'}</span><pre>{selectionAnswer}</pre></div>}
       </section>
       {paper && <PaperReadingCard
         paper={paper}
@@ -3246,13 +3981,17 @@ function FunctionalReader({
             <p>{annotation.text}</p>
             <small>{annotation.note || '无额外备注'}</small>
           </button>
-          <div className="annotation-actions"><button type="button" onClick={() => onEditAnnotation(annotation)}><Pencil size={13}/>编辑笔记</button><button type="button" className="danger" onClick={() => onArchiveAnnotation(annotation)}><Trash2 size={13}/>归档</button></div>
+          <div className="annotation-actions">
+            <button type="button" disabled={Boolean(annotation.taskStatus)} onClick={() => void onCreateTaskFromAnnotation(annotation)}><ClipboardCheck size={13}/>{annotation.taskStatus ? `任务：${annotation.taskStatus}` : '转为任务'}</button>
+            <button type="button" onClick={() => onEditAnnotation(annotation)}><Pencil size={13}/>编辑笔记</button>
+            <button type="button" className="danger" onClick={() => onArchiveAnnotation(annotation)}><Trash2 size={13}/>归档</button>
+          </div>
           </article>)}
         <button className={`full-width outline-button ${annotationCaptureMode ? 'active' : ''}`} onClick={beginAnnotationCapture}><Highlighter size={16}/>{annotationCaptureMode ? '请到原文拖选文字…' : '从原文新建研究批注'}</button>
       </section>
       <div className="reader-privacy-note">
         <span className="status-dot"/>
-        <div><strong>原文与 MinerU 结果保存在本机</strong><small>当前翻译后端：{translationProvider === 'local' ? localTranslationStatus?.available ? '本地 Argos · 无 Token' : '本地 Argos · 待安装' : settings.model ? `AI ${settings.model} · 会发送选区` : 'AI 未配置；不会发送'}</small></div>
+        <div><strong>原文与 MinerU 结果保存在本机</strong><small>当前划词翻译：{selectionTranslationProvider === 'local' ? localTranslationStatus?.available ? '本地 Argos · 无 Token' : '本地 Argos · 待安装' : settings.model ? `云端 ${settings.model} · 发送前确认范围` : '云端未配置；不会发送'}</small></div>
       </div>
       </>}
     </aside>
@@ -3264,8 +4003,15 @@ function FunctionalReader({
         <button className={selectionMode === 'ask' ? 'active' : ''} disabled={selectionBusy} onClick={() => { setSelectionMode('ask'); setSelectionNotice('输入你针对此处的问题，再发送。') }}><MessageSquareText size={14}/>提问</button>
         <button disabled={selectionBusy} onClick={addSelectionToAgent}><MessageSquareText size={14}/>添加到对话</button>
         <button disabled={selectionBusy} onClick={saveSelection}><Highlighter size={14}/>保存笔记</button>
-        <button className="close" onClick={() => setSelection(undefined)}><X size={14}/></button>
+        <button className="close" onClick={() => { setSelection(undefined); setSelectionCloudConfirm(false); setSelectionEditMode(false) }}><X size={14}/></button>
       </div>
+      {selectionMode === 'translate' && <div className="selection-translation-tools">
+        <div className="selection-engine-switch"><button className={selectionTranslationProvider === 'local' ? 'active' : ''} disabled={selectionBusy} onClick={() => { setSelectionTranslationProvider('local'); setSelectionCloudConfirm(false) }}><HardDrive size={13}/>本地 Argos</button><button className={selectionTranslationProvider === 'ai' ? 'active' : ''} disabled={selectionBusy} onClick={() => setSelectionTranslationProvider('ai')}><Cloud size={13}/>云端 AI</button></div>
+        <small>{selection.pageNumber ? selection.endPageNumber && selection.endPageNumber !== selection.pageNumber ? `跨页 p. ${selection.pageNumber}–${selection.endPageNumber} · 智能合并后 ${selection.translationText.length} 字符` : `p. ${selection.pageNumber} · ${selection.translationText.length} 字符` : `结构化文本 · ${selection.translationText.length} 字符`}</small>
+        <button className={selectionEditMode ? 'active' : ''} disabled={selectionBusy} onClick={() => setSelectionEditMode(value => !value)}><Pencil size={13}/>修正提取文本</button>
+      </div>}
+      {selectionEditMode && selectionMode === 'translate' && <div className="selection-source-editor"><strong>只修正本次用于翻译的文本</strong><small>PDF 和原始提取层不会改变。</small><textarea value={selection.translationText} onChange={event => setSelection({ ...selection, translationText: event.target.value })}/></div>}
+      {selectionCloudConfirm && selectionMode === 'translate' && selectionTranslationProvider === 'ai' && <div className="selection-cloud-confirm"><Cloud size={15}/><div><strong>确认发送当前选区？</strong><small>范围：{selection.pageNumber ? selection.endPageNumber && selection.endPageNumber !== selection.pageNumber ? `p. ${selection.pageNumber}–${selection.endPageNumber}` : `p. ${selection.pageNumber}` : '结构化文本'} · Provider：{selectionCloudProviderLabel} · 模型：{settings.model || '未配置'} · {selection.translationText.length} 字符。不会发送整篇 PDF。</small></div><button onClick={() => setSelectionCloudConfirm(false)}>取消</button><button className="confirm" onClick={() => void runSelectionAI('translate', true)}>确认发送</button></div>}
       {selectionMode === 'ask' && <div className="selection-question">
         <textarea autoFocus value={selectionQuestion} onChange={event => setSelectionQuestion(event.target.value)} placeholder="例如：这里的结论依赖哪些实验条件？"/>
         <button disabled={selectionBusy || !selectionQuestion.trim()} onClick={() => runSelectionAI('ask')}>发送</button>
@@ -3273,7 +4019,7 @@ function FunctionalReader({
       {(selectionBusy || selectionNotice || selectionAnswer) && <div className="selection-response">
         {selectionBusy && <span>正在处理当前选区…</span>}
         {selectionNotice && <small>{selectionNotice}</small>}
-        {selectionMode === 'translate' && translationProvider === 'local' && localTranslationStatus && !localTranslationStatus.available && <div className="selection-install-actions">
+        {selectionMode === 'translate' && selectionTranslationProvider === 'local' && localTranslationStatus && !localTranslationStatus.available && <div className="selection-install-actions">
           <button className="selection-install-button" disabled={translationInstalling || selectionBusy} onClick={installLocalTranslation}>{translationInstalling ? '正在安装，请勿关闭…' : '安装英文 → 中文本地翻译'}</button>
           <button className="selection-api-button" disabled={translationInstalling || selectionBusy} onClick={onSettings}>改用已配置 API</button>
         </div>}
@@ -3426,6 +4172,20 @@ function PaperReadingCard({
     }
   }
 
+  async function exportReadingCard() {
+    const desktop = window.readerDesktop
+    if (!desktop || snapshot?.card?.status !== 'accepted') return
+    setCardBusy(true)
+    try {
+      const result = await desktop.exportPortableMarkdown({ kind: 'reading_card', id: paper.id })
+      if (!result.canceled && result.filePath) setCardNotice(`可迁移 Markdown 已导出到 ${result.filePath}`)
+    } catch (error) {
+      setCardNotice(error instanceof Error ? error.message : '阅读卡导出失败。')
+    } finally {
+      setCardBusy(false)
+    }
+  }
+
   return <section className="paper-reading-card">
     <div className="annotation-head">
       <h3>阅读结论</h3>
@@ -3507,6 +4267,9 @@ function PaperReadingCard({
       </article>)}
       {snapshot?.card?.status === 'draft' && <button className="paper-ai-card-accept" disabled={cardBusy} onClick={() => void acceptReadingCard()}>
         <Check size={14}/>采纳为当前阅读卡
+      </button>}
+      {snapshot?.card?.status === 'accepted' && <button className="paper-ai-card-accept" disabled={cardBusy} onClick={() => void exportReadingCard()}>
+        <Download size={14}/>导出可迁移 Markdown
       </button>}
     </div>
   </section>
@@ -3664,18 +4427,7 @@ function PdfPage({
   </section>
 }
 
-function StructuredDocument({
-  text,
-  title,
-  source,
-  paper,
-  settings,
-  activeMarkdownBlockId,
-  mineruLayoutBlocks,
-  onMineruLayoutBlocks,
-  onSaveLayout,
-  onSettings,
-}: {
+type StructuredDocumentProps = {
   text?: string
   title: string
   source: Source
@@ -3686,7 +4438,36 @@ function StructuredDocument({
   onMineruLayoutBlocks: (blocks: MineruLayoutBlock[]) => void
   onSaveLayout: (layout: AcademicMarkdownLayout) => void
   onSettings: () => void
-}) {
+}
+
+function StructuredDocument(props: StructuredDocumentProps) {
+  if (window.readerDesktop && props.source.mineruMarkdown && props.text) {
+    return <VersionedStructuredReading
+      sourceId={props.source.id}
+      sourceName={props.source.name}
+      rawMarkdown={props.text}
+      paper={props.paper}
+      settings={props.settings}
+      activeMarkdownBlockId={props.activeMarkdownBlockId}
+      onMineruLayoutBlocks={props.onMineruLayoutBlocks}
+      onSettings={props.onSettings}
+    />
+  }
+  return <LegacyStructuredDocument {...props}/>
+}
+
+function LegacyStructuredDocument({
+  text,
+  title,
+  source,
+  paper,
+  settings,
+  activeMarkdownBlockId,
+  mineruLayoutBlocks,
+  onMineruLayoutBlocks,
+  onSaveLayout,
+  onSettings,
+}: StructuredDocumentProps) {
   const [displayMode, setDisplayMode] = useState<'academic' | 'raw'>('academic')
   const [confirmAI, setConfirmAI] = useState(false)
   const [aiBusy, setAIBusy] = useState(false)
@@ -3696,11 +4477,14 @@ function StructuredDocument({
   const savedLayout = text && validAcademicMarkdownLayout(source.markdownLayout, text)
     ? source.markdownLayout
     : undefined
+  const academicReading = useMemo(() => markdownReadingBlocks(text, mineruLayoutBlocks), [mineruLayoutBlocks, text])
   const academicBlocks = useMemo(() => {
-    const blocks = markdownReadingBlocks(text, mineruLayoutBlocks).blocks
+    const blocks = academicReading.blocks
     const sectionByBlock = new Map((savedLayout?.boundaries ?? []).map(boundary => [boundary.beforeBlockId, boundary.section]))
     return blocks.map(block => ({ ...block, section: sectionByBlock.get(block.id) }))
-  }, [mineruLayoutBlocks, savedLayout, text])
+  }, [academicReading.blocks, savedLayout])
+  const twoColumnPages = academicReading.diagnostics?.filter(diagnostic => diagnostic.layout === 'two-column') ?? []
+  const reorderedPages = twoColumnPages.filter(diagnostic => diagnostic.reordered)
   const authors = paper?.authors
     .map(author => author.literal || [author.family, author.given].filter(Boolean).join(', '))
     .filter(Boolean)
@@ -3815,7 +4599,7 @@ function StructuredDocument({
     </header>
     {text ? <>
       <section className="paper-metadata-card">
-        <span className="paper-metadata-origin">{savedLayout?.mode === 'ai-classified' ? `AI 章节边界 · ${savedLayout.model}` : '本地规则排版 · 未改写正文'}{mineruLayoutBlocks.length ? ` · MinerU ${mineruLayoutBlocks.length} 个页块` : ''}</span>
+        <span className="paper-metadata-origin">{savedLayout?.mode === 'ai-classified' ? `AI 章节边界 · ${savedLayout.model}` : '本地规则排版 · 未改写正文'}{mineruLayoutBlocks.length ? ` · MinerU ${mineruLayoutBlocks.length} 个页块` : ''}{twoColumnPages.length ? ` · 检出 ${twoColumnPages.length} 个双栏页${reorderedPages.length ? `，已自动修复 ${reorderedPages.length} 页顺序` : ''}` : ''}</span>
         <h1>{paper?.title || source.name.replace(/\.[^.]+$/, '')}</h1>
         {authors && <p>{authors}</p>}
         <div>
@@ -3872,6 +4656,7 @@ function AgentModalV2({
   embedded = false,
   settings,
   workspaceName,
+  researchWorkspace,
   items,
   currentItemId,
   readerContext,
@@ -3883,6 +4668,7 @@ function AgentModalV2({
   embedded?: boolean
   settings: AISettings
   workspaceName: string
+  researchWorkspace?: ResearchWorkspace
   items: BibliographicSummary[]
   currentItemId?: string
   readerContext?: AgentReaderContext
@@ -3949,7 +4735,10 @@ function AgentModalV2({
     }
     const retrievalQuestion = agentRetrievalQuestion(question, turns.map(turn => turn.question))
     const terms = agentQueryTerms(retrievalQuestion)
-    const directEvidence = readerContextEvidence(readerContext, scope) as DesktopLibrarySearchResult[]
+    const directEvidence = [
+      ...readerContextEvidence(readerContext, scope),
+      ...researchWorkspaceEvidence(researchWorkspace as unknown as { milestones?: Array<Record<string, unknown>>; runs?: Array<Record<string, unknown>> } | undefined, 12),
+    ] as unknown as DesktopLibrarySearchResult[]
     if (!terms.length && !directEvidence.length) {
       setNotice('问题中没有提取到可用于本地检索的关键词，请写得更具体一些。')
       return
@@ -4000,6 +4789,7 @@ function AgentModalV2({
         evidence: ranked,
         scopeLabel,
         readerContext,
+        researchContext: researchWorkspace,
         history: turns.slice(-3).flatMap(turn => [
           { role: 'user' as const, content: turn.question },
           { role: 'assistant' as const, content: turn.sections.map(section => section.content).join('\n') },
@@ -4078,18 +4868,24 @@ function AgentModalV2({
   function actionEvidenceForCitation(citationId: string): ActionEvidenceInput | undefined {
     const entry = evidenceForCitation(citationId)
     if (!entry) return undefined
-    const evidenceType: ActionEvidenceInput['evidenceType'] = entry.kind === 'fragment'
-      ? 'fragment'
-      : entry.kind === 'review'
-        ? 'review'
-        : entry.kind === 'paper'
-          ? 'bibliography'
-          : 'source'
+    const evidenceType: ActionEvidenceInput['evidenceType'] = entry.origin === 'run'
+      ? 'run'
+      : entry.origin === 'milestone'
+        ? 'milestone'
+        : entry.kind === 'fragment'
+          ? 'fragment'
+          : entry.kind === 'review'
+            ? 'review'
+            : entry.kind === 'paper'
+              ? 'bibliography'
+              : 'source'
     return {
       evidenceType,
       entityId: entry.entityId,
       sourceId: entry.sourceId,
       itemId: entry.itemId,
+      milestoneId: evidenceType === 'milestone' ? entry.entityId : undefined,
+      runId: evidenceType === 'run' ? entry.entityId : undefined,
       reviewDocumentId: entry.reviewDocumentId,
       label: entry.title,
       excerpt: entry.excerpt,
@@ -4221,12 +5017,16 @@ function SettingsModal({
   settings,
   uiSettings,
   credentialState,
+  onboarding = false,
+  workspaceOpen,
   onClose,
   onSave,
 }: {
   settings: AISettings
   uiSettings: UISettings
   credentialState: 'empty' | 'encrypted' | 'unavailable'
+  onboarding?: boolean
+  workspaceOpen: boolean
   onClose: () => void
   onSave: (settings: AISettings, uiSettings: UISettings) => Promise<void>
 }) {
@@ -4240,6 +5040,16 @@ function SettingsModal({
   const [embeddingInstalling, setEmbeddingInstalling] = useState(false)
   const [semanticIndexing, setSemanticIndexing] = useState(false)
   const [embeddingProgress, setEmbeddingProgress] = useState('')
+  const previewAccent = ({
+    slate: { main: '#42474b', soft: '#e9ebec' },
+    blue: { main: '#476b86', soft: '#e6eef4' },
+    plum: { main: '#6d5c75', soft: '#eee8f1' },
+  } as const)[(uiDraft.accentColor === 'green' ? 'plum' : uiDraft.accentColor) as 'slate' | 'blue' | 'plum']
+  const previewSurface = ({
+    neutral: { page: '#f5f5f3', paper: '#ffffff' },
+    warm: { page: '#f7f5f0', paper: '#fffefb' },
+    cool: { page: '#f3f5f6', paper: '#fcfdfe' },
+  } as const)[uiDraft.surfaceTone]
 
   useEffect(() => {
     let alive = true
@@ -4251,6 +5061,16 @@ function SettingsModal({
         model: 'BAAI/bge-small-zh-v1.5',
         localOnly: true,
         message: '网页预览不能安装本地组件，请在桌面客户端中使用。',
+      })
+      return () => { alive = false }
+    }
+    if (!workspaceOpen) {
+      setEmbeddingStatus({
+        available: false,
+        provider: 'fastembed-local',
+        model: 'BAAI/bge-small-zh-v1.5',
+        localOnly: true,
+        message: '创建或打开研究库后，可以建立当前研究库的本地语义索引。',
       })
       return () => { alive = false }
     }
@@ -4271,7 +5091,7 @@ function SettingsModal({
         })
       })
     return () => { alive = false }
-  }, [])
+  }, [workspaceOpen])
 
   async function installEmbedding() {
     const desktop = window.readerDesktop
@@ -4332,6 +5152,9 @@ function SettingsModal({
     setBusy(true)
     setError('')
     try {
+      if (onboarding && (!draft.baseUrl.trim() || !draft.model.trim() || !draft.apiKey.trim())) {
+        throw new Error('首次使用请完整填写服务地址、模型名称和 API 密钥。')
+      }
       await onSave(draft, uiDraft)
       onClose()
     } catch (saveError) {
@@ -4343,8 +5166,8 @@ function SettingsModal({
 
   return <div className="modal-backdrop"><section className="annotation-modal settings-modal settings-center">
     <header>
-      <div><p className="section-kicker">本机设置</p><h2>设置</h2></div>
-      <button className="icon-button" onClick={onClose}><X/></button>
+      <div><p className="section-kicker">{onboarding ? '首次使用' : '本机设置'}</p><h2>{onboarding ? '先接入你的 AI 服务' : '设置'}</h2></div>
+      {!onboarding && <button className="icon-button" onClick={onClose}><X/></button>}
     </header>
     <nav className="settings-tabs">
       <button className={tab === 'ai' ? 'active' : ''} onClick={() => setTab('ai')}><Sparkles size={14}/> AI 与翻译</button>
@@ -4353,8 +5176,8 @@ function SettingsModal({
     <div className="settings-content">
       {tab === 'ai' ? <section className="settings-panel">
         <div className="settings-intro">
-          <strong>本地优先，云端调用必须手动触发</strong>
-          <p>划词翻译默认使用 Argos，不消耗第三方 Token。研究问答只发送问题和本地检索到的证据片段；整篇派生 Markdown 需要单独授权和再次确认。</p>
+          <strong>{onboarding ? '接入后，科研助手才可以进行问答、阅读卡和章节整理' : '本地优先，云端调用必须手动触发'}</strong>
+          <p>MinerU 转 Markdown 在本机完成，不依赖 AI。AI 用于章节整理、论文问答、阅读卡和课题推进；整篇派生 Markdown 仍需单独授权和再次确认。</p>
         </div>
         <div className={`local-component-card ${embeddingStatus?.available ? 'ready' : 'missing'}`}>
           <div className="local-component-copy">
@@ -4374,7 +5197,7 @@ function SettingsModal({
               : semanticIndexStatus?.stale
                 ? '研究库内容已变化，需要更新语义索引'
                 : '向量引擎已就绪，尚未建立当前研究库索引'}</em>
-            <button type="button" disabled={semanticIndexing} onClick={() => void rebuildSemanticIndex()}>{semanticIndexing ? '正在建立…' : semanticIndexStatus?.ready ? '重新建立索引' : '建立研究库索引'}</button>
+            <button type="button" disabled={semanticIndexing || !workspaceOpen} onClick={() => void rebuildSemanticIndex()}>{semanticIndexing ? '正在建立…' : semanticIndexStatus?.ready ? '重新建立索引' : workspaceOpen ? '建立研究库索引' : '请先打开研究库'}</button>
           </div>}
           {embeddingProgress && <p>{embeddingProgress}</p>}
         </div>
@@ -4392,8 +5215,8 @@ function SettingsModal({
         <label className="toggle-label"><input type="checkbox" checked={draft.allowFullDocument} onChange={event => setDraft({ ...draft, allowFullDocument: event.target.checked })}/>允许在每次再次确认后，发送整篇派生 Markdown 做章节识别</label>
       </section> : <section className="settings-panel appearance-settings">
         <div className="settings-intro">
-          <strong>默认保持 Codex 式中性界面</strong>
-          <p>这里只调整阅读舒适度，不改变论文、批注或研究库数据。设置会应用到所有研究库。</p>
+          <strong>让界面适合长时间科研工作</strong>
+          <p>选择会立即显示在下方预览中；保存后应用到课题驾驶舱、资料库、阅读与复查界面。</p>
         </div>
         <div className="settings-two-column">
           <label>界面可读性<select value={Math.max(1, uiDraft.uiScale)} onChange={event => setUIDraft({ ...uiDraft, uiScale: Number(event.target.value) })}>
@@ -4423,7 +5246,6 @@ function SettingsModal({
           <div>{([
             ['slate', '石墨', '#42474b'],
             ['blue', '沉静蓝', '#476b86'],
-            ['green', '论文绿', '#557254'],
             ['plum', '柔和紫', '#6d5c75'],
           ] as const).map(([value, label, color]) => <button
             className={uiDraft.accentColor === value ? 'active' : ''}
@@ -4438,7 +5260,11 @@ function SettingsModal({
           maxWidth: `${Math.min(540, uiDraft.readerWidth * .62)}px`,
           fontSize: `${Math.max(12, uiDraft.readerFontSize * .8)}px`,
           lineHeight: uiDraft.readerLineHeight,
-        }}>
+          '--ui-accent': previewAccent.main,
+          '--ui-accent-soft': previewAccent.soft,
+          '--ui-paper': previewSurface.paper,
+          '--ui-page': previewSurface.page,
+        } as CSSProperties}>
           <span>阅读效果预览</span>
           <h3>2. Experimental Method</h3>
           <p>论文正文应当保持稳定的行宽、清楚的章节层级和足够的行距，让长时间精读不容易疲劳。</p>
@@ -4446,37 +5272,43 @@ function SettingsModal({
       </section>}
     </div>
     {error && <p className="settings-save-error">{error}</p>}
-    <footer><button className="outline-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy} onClick={() => void save()}>{busy ? '正在保存…' : '保存本机设置'}</button></footer>
+    <footer>{!onboarding && <button className="outline-button" disabled={busy} onClick={onClose}>取消</button>}<button className="primary-button" disabled={busy} onClick={() => void save()}>{busy ? '正在保存…' : onboarding ? '保存并进入 H’s 科研助手' : '保存本机设置'}</button></footer>
   </section></div>
 }
 
 function WorkspaceCreationModal({
   directory,
   suggestedName,
+  existingPaperCount,
+  existingPaperNames,
   busy,
   onClose,
   onCreate,
 }: {
   directory: string
   suggestedName: string
+  existingPaperCount: number
+  existingPaperNames: string[]
   busy: boolean
   onClose: () => void
-  onCreate: (name: string) => void
+  onCreate: (name: string, manageExistingPapers: boolean) => void
 }) {
   const [step, setStep] = useState<'confirm' | 'name'>('confirm')
   const [name, setName] = useState(suggestedName)
+  const [manageExistingPapers, setManageExistingPapers] = useState(existingPaperCount > 0)
   return <div className="modal-backdrop"><section className="annotation-modal workspace-create-modal">
     <header><div><p className="section-kicker">新建研究库</p><h2>{step === 'confirm' ? '这个文件夹还不是研究库' : '给研究库起个名字'}</h2></div><button className="icon-button" disabled={busy} onClick={onClose}><X/></button></header>
     {step === 'confirm' ? <div className="workspace-create-copy">
       <p>是否直接在这个文件夹中创建科研阅读工作库？</p>
       <code title={directory}>{directory}</code>
       <small>软件只会新增 vault.json、library.sqlite、papers、exports 和缓存目录，不会删除文件夹里已有的内容。</small>
+      {existingPaperCount > 0 && <label className="workspace-paper-import"><input type="checkbox" checked={manageExistingPapers} onChange={event => setManageExistingPapers(event.target.checked)}/><span><strong>一键管理发现的 {existingPaperCount} 篇 PDF</strong><small>{existingPaperNames.join('、')}{existingPaperCount > existingPaperNames.length ? '…' : ''}<br/>软件会复制论文到研究库，原文件保持不动。</small></span></label>}
     </div> : <label>研究库名称<input autoFocus value={name} maxLength={80} onChange={event => setName(event.target.value)} placeholder="例如：柔顺装配控制"/></label>}
     <footer>
       <button className="outline-button" disabled={busy} onClick={step === 'name' ? () => setStep('confirm') : onClose}>{step === 'name' ? '上一步' : '取消'}</button>
       {step === 'confirm'
         ? <button className="primary-button" onClick={() => setStep('name')}>在这里创建</button>
-        : <button className="primary-button" disabled={busy || !name.trim()} onClick={() => onCreate(name.trim())}>{busy ? '正在创建…' : '创建并打开'}</button>}
+        : <button className="primary-button" disabled={busy || !name.trim()} onClick={() => onCreate(name.trim(), manageExistingPapers)}>{busy ? '正在创建…' : manageExistingPapers && existingPaperCount ? `创建并纳入 ${existingPaperCount} 篇论文` : '创建并打开'}</button>}
     </footer>
   </section></div>
 }

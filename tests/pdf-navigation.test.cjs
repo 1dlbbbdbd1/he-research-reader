@@ -55,6 +55,7 @@ test('PDF 目录解析层级、命名目的地和页引用', async () => {
 test('每篇资料的阅读模式和缩放设置会校验范围', async () => {
   const { normalizeReaderSourceState, restoredReaderPage } = await import('../src/pdf-navigation.mjs')
   assert.deepEqual(normalizeReaderSourceState({ viewMode: 'parallel', zoom: 9 }), { viewMode: 'parallel', zoom: 3 })
+  assert.deepEqual(normalizeReaderSourceState({ viewMode: 'bilingual', zoom: 1.15 }), { viewMode: 'bilingual', zoom: 1.15 })
   assert.deepEqual(normalizeReaderSourceState({ viewMode: 'markdown', zoom: .1 }, false), { viewMode: 'original', zoom: .5 })
   assert.deepEqual(normalizeReaderSourceState({ viewMode: 'unknown', zoom: 'bad' }), { viewMode: 'original', zoom: 1 })
   assert.equal(restoredReaderPage(17, 12), 12)

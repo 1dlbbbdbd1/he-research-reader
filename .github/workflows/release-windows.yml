@@ -42,14 +42,54 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Prepare bundled local translation
+        shell: pwsh
+        run: |
+          $runtimeRoot = Join-Path $PWD '.runtime\translation'
+          & ./scripts/setup-argos.ps1 -RuntimeRoot $runtimeRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "Local translation runtime setup failed with exit code $LASTEXITCODE."
+          }
+
+          $requiredFiles = @(
+            (Join-Path $runtimeRoot 'argos\.venv\Scripts\python.exe')
+            (Join-Path $runtimeRoot 'packages')
+            (Join-Path $runtimeRoot 'python')
+          )
+          $missingFiles = $requiredFiles | Where-Object { -not (Test-Path -LiteralPath $_) }
+          if ($missingFiles) {
+            throw "Bundled local translation runtime is incomplete: $($missingFiles -join ', ')"
+          }
+
+      - name: Verify bundled local translation
+        run: npm run smoke:translation
+
       - name: Build Windows installers
-        run: npm run dist:win
+        shell: pwsh
+        run: |
+          # NSIS cannot open deeply nested runtime license paths under the
+          # long GitHub Actions checkout prefix. Build from a short drive.
+          $buildDrive = 'R:'
+          & subst.exe $buildDrive $PWD
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to map the short build drive $buildDrive."
+          }
+          try {
+            Push-Location "$buildDrive\"
+            npm run dist:win
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows installer build failed with exit code $LASTEXITCODE."
+            }
+          } finally {
+            Pop-Location
+            & subst.exe $buildDrive /D
+          }
 
       - name: Create checksums
         shell: pwsh
         run: |
           $artifacts = Get-ChildItem -LiteralPath release -File |
-            Where-Object { $_.Name -match '^XiaoHeResearchReader-(Setup|Portable)-.+-x64\.exe$' }
+            Where-Object { $_.Name -match '^HsResearchAssistant-(Setup|Portable)-.+-x64\.exe$' }
           if ($artifacts.Count -ne 2) {
             throw "Expected one setup installer and one portable executable, found $($artifacts.Count)."
           }
@@ -67,12 +107,12 @@ jobs:
         run: |
           $assets = Get-ChildItem -LiteralPath release -File |
             Where-Object {
-              $_.Name -match '^XiaoHeResearchReader-(Setup|Portable)-.+-x64\.exe$' -or
+              $_.Name -match '^HsResearchAssistant-(Setup|Portable)-.+-x64\.exe$' -or
               $_.Name -eq 'SHA256SUMS.txt'
             } |
             ForEach-Object { $_.FullName }
           gh release create "$env:GITHUB_REF_NAME" @assets `
             --repo "$env:GITHUB_REPOSITORY" `
-            --title "小何的科研阅读助手 $env:GITHUB_REF_NAME" `
-            --generate-notes `
+            --title "H’s 科研助手 $env:GITHUB_REF_NAME" `
+            --notes-file RELEASE_NOTES.md `
             --verify-tag

@@ -4,14 +4,14 @@
   grid-template-columns: 340px minmax(0, 1fr);
   overflow: hidden;
   color: #343431;
-  background: #f5f5f3;
+  background: var(--ui-page, #f5f5f3);
 }
 
 .review-builder {
   padding: 20px 16px 28px;
   overflow: auto;
   border-right: 1px solid #ddddda;
-  background: #fafaf9;
+  background: var(--ui-paper, #fafaf9);
 }
 
 .review-builder > header > span,

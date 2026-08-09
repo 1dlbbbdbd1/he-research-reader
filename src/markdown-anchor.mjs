@@ -1,4 +1,4 @@
-import { splitAcademicMarkdownBlocks } from './academic-markdown-skill.mjs'
+import { repairAcademicMarkdownReadingOrder } from './academic-markdown-skill.mjs'
 
 const EXPLICIT_PAGE_PATTERN = /^#{1,6}\s+(?:page|p\.?|第)\s*(\d{1,6})\s*(?:页)?\s*$/i
 
@@ -43,10 +43,13 @@ function mineruTarget(value, mineruLayoutBlocks) {
 }
 
 export function markdownReadingBlocks(markdown, mineruLayoutBlocks = []) {
-  const { fingerprint, blocks } = splitAcademicMarkdownBlocks(markdown)
+  const repaired = repairAcademicMarkdownReadingOrder(markdown, mineruLayoutBlocks)
+  const { blocks } = repaired
   let currentPage
   return {
-    fingerprint,
+    fingerprint: repaired.sourceFingerprint,
+    diagnostics: repaired.diagnostics,
+    readingOrderChanged: repaired.changed,
     blocks: blocks.map(block => {
       const firstLine = block.content.split('\n', 1)[0].trim()
       const explicitPage = Number(EXPLICIT_PAGE_PATTERN.exec(firstLine)?.[1])
@@ -55,7 +58,7 @@ export function markdownReadingBlocks(markdown, mineruLayoutBlocks = []) {
       const mineru = mineruTarget(blockText, mineruLayoutBlocks)
       return {
         ...block,
-        pageNumber: mineru.pageNumber ?? currentPage,
+        pageNumber: block.pageNumber ?? mineru.pageNumber ?? currentPage,
         ...(mineru.rects ? { rects: mineru.rects } : {}),
       }
     }),

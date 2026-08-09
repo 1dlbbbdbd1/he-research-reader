@@ -1,5 +1,246 @@
 export type ISODateTime = string
 
+export type ResearchRecordType = 'log' | 'experiment' | 'dataset' | 'decision' | 'milestone'
+
+export type ResearchRecordStatus = 'planned' | 'active' | 'completed' | 'blocked' | 'archived'
+
+export type ResearchProjectMode = 'exploration' | 'execution'
+
+export type ResearchRunOutcome = 'planned' | 'running' | 'success' | 'failure' | 'invalid' | 'interrupted'
+
+export type ResearchArtifactRole =
+  | 'raw_data'
+  | 'processed_data'
+  | 'figure'
+  | 'log'
+  | 'script'
+  | 'config'
+  | 'model'
+  | 'video'
+  | 'image'
+  | 'document'
+  | 'directory'
+  | 'other'
+
+export type ResearchProject = {
+  id: string
+  name: string
+  researchQuestion: string
+  currentHypothesis: string
+  stage: string
+  mode: ResearchProjectMode
+  updatedAt: ISODateTime
+}
+
+export type ResearchRecord = {
+  id: string
+  recordType: ResearchRecordType
+  title: string
+  content: string
+  status: ResearchRecordStatus
+  occurredAt: ISODateTime
+  filePath?: string
+  sourceIds: string[]
+  tags: string[]
+  createdAt: ISODateTime
+  updatedAt: ISODateTime
+}
+
+export type ResearchWorkspace = {
+  project: ResearchProject
+  records: ResearchRecord[]
+  milestones: ResearchMilestone[]
+  runs: ResearchRun[]
+  artifacts: ResearchArtifact[]
+  runTemplates: ResearchRunTemplate[]
+  reports: ResearchReport[]
+  claims: ResearchClaim[]
+  history: ResearchProjectHistoryEntry[]
+}
+
+export type ResearchEvidenceRefType = 'bibliography' | 'source' | 'run' | 'artifact' | 'milestone'
+
+export type ResearchEvidenceRef = {
+  type: ResearchEvidenceRefType
+  id: string
+  label?: string
+}
+
+export type ResearchReportType = 'weekly' | 'meeting' | 'stage_review'
+
+export type ResearchReportStatus = 'draft' | 'confirmed'
+
+export type ResearchReportRevision = {
+  id: string
+  revisionNumber: number
+  snapshot: {
+    title: string
+    type: ResearchReportType
+    period: string
+    markdown: string
+    sourceRefs: ResearchEvidenceRef[]
+    status: ResearchReportStatus
+    confirmedAt?: ISODateTime
+    updatedAt: ISODateTime
+  }
+  createdAt: ISODateTime
+}
+
+export type ResearchReport = {
+  id: string
+  title: string
+  type: ResearchReportType
+  period: string
+  markdown: string
+  sourceRefs: ResearchEvidenceRef[]
+  status: ResearchReportStatus
+  revisionNumber: number
+  revisions: ResearchReportRevision[]
+  createdAt: ISODateTime
+  updatedAt: ISODateTime
+  confirmedAt?: ISODateTime
+}
+
+export type ResearchClaimStatus = 'draft' | 'confirmed'
+
+export type ResearchClaimRevision = {
+  id: string
+  revisionNumber: number
+  snapshot: {
+    section: string
+    text: string
+    status: ResearchClaimStatus
+    requiredEvidence: string[]
+    evidenceRefs: ResearchEvidenceRef[]
+    confirmedAt?: ISODateTime
+    archivedAt?: ISODateTime
+    updatedAt: ISODateTime
+  }
+  createdAt: ISODateTime
+}
+
+export type ResearchClaim = {
+  id: string
+  section: string
+  text: string
+  status: ResearchClaimStatus
+  requiredEvidence: string[]
+  evidenceRefs: ResearchEvidenceRef[]
+  revisionNumber: number
+  revisions: ResearchClaimRevision[]
+  createdAt: ISODateTime
+  updatedAt: ISODateTime
+  confirmedAt?: ISODateTime
+  archivedAt?: ISODateTime
+}
+
+export type ResearchMilestone = {
+  id: string
+  title: string
+  description: string
+  status: ResearchRecordStatus
+  acceptanceCriteria: string[]
+  dueAt?: ISODateTime
+  completedAt?: ISODateTime
+  createdAt: ISODateTime
+  updatedAt: ISODateTime
+}
+
+export type ResearchVariableChange = {
+  name: string
+  previousValue?: string
+  currentValue: string
+  unit?: string
+}
+
+export type ResearchRunTemplateDefaults = {
+  purpose?: string
+  hypothesis?: string
+  changedVariables?: ResearchVariableChange[]
+  command?: string
+  environment?: string
+  procedure?: string
+  observations?: string
+  anomaly?: string
+  nextStep?: string
+}
+
+export type ResearchRunTemplate = {
+  id: string
+  projectId?: string
+  name: string
+  category: string
+  description: string
+  defaults: ResearchRunTemplateDefaults
+  builtIn: boolean
+  createdAt: ISODateTime
+  updatedAt: ISODateTime
+}
+
+export type ResearchRun = {
+  id: string
+  milestoneId?: string
+  templateId?: string
+  title: string
+  purpose: string
+  hypothesis: string
+  changedVariables: ResearchVariableChange[]
+  command: string
+  environment: string
+  procedure: string
+  outcome: ResearchRunOutcome
+  observations: string
+  anomaly: string
+  nextStep: string
+  sourceIds: string[]
+  startedAt: ISODateTime
+  endedAt?: ISODateTime
+  createdAt: ISODateTime
+  updatedAt: ISODateTime
+}
+
+export type ResearchArtifact = {
+  id: string
+  runId: string
+  label: string
+  role: ResearchArtifactRole
+  filePath: string
+  resolvedPath: string
+  kind: 'file' | 'directory'
+  existsState: 'found' | 'missing' | 'denied'
+  sizeBytes?: number
+  modifiedAt?: ISODateTime
+  contentSha256?: string
+  metadata: Record<string, unknown>
+  createdAt: ISODateTime
+  updatedAt: ISODateTime
+}
+
+export type ResearchProjectHistoryEntry = {
+  id: string
+  changedFields: string[]
+  snapshot: Pick<ResearchProject, 'name' | 'researchQuestion' | 'currentHypothesis' | 'stage' | 'mode'>
+  createdAt: ISODateTime
+  createdBy: 'user' | 'ai' | 'system'
+}
+
+export type ReadingTranslationSegment = {
+  sourceId: string
+  segmentId: string
+  sourceHash: string
+  sourceText: string
+  translatedText: string
+  sourceLanguage: string
+  targetLanguage: string
+  provider: string
+  model?: string
+  status: 'pending' | 'translated' | 'failed'
+  error?: string
+  attempts: number
+  createdAt: ISODateTime
+  updatedAt: ISODateTime
+}
+
 export type PersonName = {
   family?: string
   given?: string
@@ -24,7 +265,10 @@ export type BibliographicItem = {
   title: string
   authors: PersonName[]
   issued?: string
+  accessed?: string
   containerTitle?: string
+  publisher?: string
+  publisherPlace?: string
   volume?: string
   issue?: string
   pages?: string

@@ -4,6 +4,29 @@ const path = require('node:path')
 const { fileURLToPath } = require('node:url')
 const { openWorkspaceDatabase, SCHEMA_VERSION } = require('./workspace-db.cjs')
 const { detectBibliographyFormat, parseBibliography } = require('./bibliography-adapters.cjs')
+const { CitationFormatter } = require('./citation-formatter.cjs')
+const {
+  ZOTERO_SYNC_ADAPTER,
+  planZoteroMetadataSync,
+  zoteroSyncCapabilities,
+} = require('./bibliography-sync.cjs')
+const { portableMarkdownFileName, renderPortableMarkdown } = require('./portable-markdown.cjs')
+const {
+  legacyTaskId,
+  milestoneStatusFromTask,
+  taskApprovalFromActionItem,
+  taskStatusFromActionItem,
+  taskStatusFromMilestone,
+  taskStatusFromReading,
+  taskViewFromRow,
+  validateTaskSourceType,
+  validateTaskStatus,
+} = require('./research-task.cjs')
+const {
+  buildStructuredReadingDraft,
+  structuredSourceFingerprint,
+  validateManualAdjustment,
+} = require('./structured-reading.cjs')
 const {
   semanticDocumentsFromSearchRows,
   vectorFromBuffer,
@@ -12,6 +35,7 @@ const {
 
 const VAULT_FILE = 'vault.json'
 const DATABASE_FILE = 'library.sqlite'
+const citationFormatter = new CitationFormatter()
 
 function now() {
   return new Date().toISOString()
@@ -21,6 +45,24 @@ const READING_STATUS_VALUES = new Set(['unread', 'title_only', 'skimming', 'read
 const RELEVANCE_VALUES = new Set(['undecided', 'core', 'relevant', 'supplemental', 'mismatched'])
 const IDEA_STATE_VALUES = new Set(['undecided', 'has_ideas', 'no_new_ideas'])
 const QUESTION_STATE_VALUES = new Set(['undecided', 'has_questions', 'no_questions'])
+const RESEARCH_RECORD_TYPE_VALUES = new Set(['log', 'experiment', 'dataset', 'decision', 'milestone'])
+const RESEARCH_RECORD_STATUS_VALUES = new Set(['planned', 'active', 'completed', 'blocked', 'archived'])
+const RESEARCH_PROJECT_MODE_VALUES = new Set(['exploration', 'execution'])
+const RESEARCH_MILESTONE_STATUS_VALUES = new Set(['planned', 'active', 'completed', 'blocked', 'archived'])
+const RESEARCH_RUN_OUTCOME_VALUES = new Set(['planned', 'running', 'success', 'failure', 'invalid', 'interrupted'])
+const RESEARCH_ARTIFACT_ROLE_VALUES = new Set([
+  'raw_data', 'processed_data', 'figure', 'log', 'script', 'config', 'model',
+  'video', 'image', 'document', 'directory', 'other',
+])
+const RESEARCH_REPORT_TYPE_VALUES = new Set(['weekly', 'meeting', 'stage_review'])
+const RESEARCH_REPORT_STATUS_VALUES = new Set(['draft', 'confirmed'])
+const RESEARCH_CLAIM_STATUS_VALUES = new Set(['draft', 'confirmed'])
+const RESEARCH_EVIDENCE_REF_TYPE_VALUES = new Set(['bibliography', 'source', 'run', 'artifact', 'milestone'])
+const TRANSLATION_SEGMENT_STATUS_VALUES = new Set(['pending', 'translated', 'failed'])
+const RESEARCH_RESUME_VIEW_VALUES = new Set([
+  'today', 'research-workspace', 'research-review', 'sources', 'reader', 'dashboard', 'evidence', 'actions',
+])
+const RESEARCH_RESUME_READER_MODE_VALUES = new Set(['original', 'markdown', 'parallel', 'bilingual'])
 const EDITABLE_EVIDENCE_RELATIONS = new Set(['supports', 'refutes', 'mentions'])
 const ACTION_TYPE_VALUES = new Set(['read', 'compare', 'verify', 'experiment', 'review', 'note'])
 const SEARCH_ORIGIN_VALUES = new Set([
@@ -80,6 +122,199 @@ function ensureVaultName(name) {
   return normalized
 }
 
+function ensureResearchText(value, label, maximumLength, { required = false } = {}) {
+  if (value !== undefined && typeof value !== 'string') throw new Error(`${label}必须是文本。`)
+  const normalized = String(value ?? '').trim()
+  if (required && !normalized) throw new Error(`${label}不能为空。`)
+  if (normalized.length > maximumLength) throw new Error(`${label}不能超过 ${maximumLength} 个字符。`)
+  return normalized
+}
+
+function ensureResearchStringList(value, label, maximumItems, maximumItemLength) {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw new Error(`${label}必须是列表。`)
+  if (value.length > maximumItems) throw new Error(`${label}不能超过 ${maximumItems} 项。`)
+  const normalized = value.map((item) => {
+    if (typeof item !== 'string') throw new Error(`${label}中的每一项都必须是文本。`)
+    const text = item.trim()
+    if (!text) throw new Error(`${label}中不能包含空项。`)
+    if (text.length > maximumItemLength) throw new Error(`${label}中的单项不能超过 ${maximumItemLength} 个字符。`)
+    return text
+  })
+  return [...new Set(normalized)]
+}
+
+function ensureResearchDateTime(value) {
+  if (value === undefined || value === null || value === '') return now()
+  if (typeof value !== 'string') throw new Error('科研记录时间必须是 ISO 日期时间文本。')
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) throw new Error('科研记录时间无效。')
+  return new Date(timestamp).toISOString()
+}
+
+function ensureOptionalResearchDateTime(value, label) {
+  if (value === undefined || value === null || value === '') return undefined
+  if (typeof value !== 'string') throw new Error(`${label}必须是 ISO 日期时间文本。`)
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) throw new Error(`${label}无效。`)
+  return new Date(timestamp).toISOString()
+}
+
+function ensureResearchObject(value, label) {
+  if (value === undefined) return {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label}必须是对象。`)
+  return value
+}
+
+function ensureChangedVariables(value) {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw new Error('改变变量必须是列表。')
+  if (value.length > 100) throw new Error('改变变量不能超过 100 项。')
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`第 ${index + 1} 个改变变量格式无效。`)
+    }
+    const name = ensureResearchText(entry.name, `第 ${index + 1} 个变量名称`, 160, { required: true })
+    const currentValue = ensureResearchText(entry.currentValue, `第 ${index + 1} 个变量当前值`, 1000, { required: true })
+    const previousValue = ensureResearchText(entry.previousValue, `第 ${index + 1} 个变量原值`, 1000)
+    const unit = ensureResearchText(entry.unit, `第 ${index + 1} 个变量单位`, 80)
+    return {
+      name,
+      currentValue,
+      ...(previousValue ? { previousValue } : {}),
+      ...(unit ? { unit } : {}),
+    }
+  })
+}
+
+function ensureTemplateDefaults(value) {
+  const input = ensureResearchObject(value, '模板默认值')
+  const defaults = {}
+  for (const key of ['purpose', 'hypothesis', 'command', 'environment', 'procedure', 'observations', 'anomaly', 'nextStep']) {
+    if (input[key] !== undefined) defaults[key] = ensureResearchText(input[key], `模板 ${key}`, 20000)
+  }
+  if (input.changedVariables !== undefined) defaults.changedVariables = ensureChangedVariables(input.changedVariables)
+  if (JSON.stringify(defaults).length > 50000) throw new Error('模板默认值过大。')
+  return defaults
+}
+
+function ensureResearchEvidenceRefs(value, label) {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw new Error(`${label}必须是列表。`)
+  if (value.length > 500) throw new Error(`${label}不能超过 500 项。`)
+  const seen = new Set()
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`${label}第 ${index + 1} 项格式无效。`)
+    }
+    const type = ensureResearchText(entry.type, `${label}第 ${index + 1} 项类型`, 40, { required: true })
+    if (!RESEARCH_EVIDENCE_REF_TYPE_VALUES.has(type)) throw new Error(`${label}第 ${index + 1} 项类型无效。`)
+    const id = ensureResearchText(entry.id, `${label}第 ${index + 1} 项 ID`, 160, { required: true })
+    const labelText = ensureResearchText(entry.label, `${label}第 ${index + 1} 项名称`, 500)
+    const key = `${type}:${id}`
+    if (seen.has(key)) throw new Error(`${label}中存在重复引用：${key}。`)
+    seen.add(key)
+    return { type, id, ...(labelText ? { label: labelText } : {}) }
+  })
+}
+
+function researchReportTypeLabel(value) {
+  return { weekly: '周报', meeting: '组会', stage_review: '阶段复盘' }[value] || value
+}
+
+function renderResearchReportMarkdown(report) {
+  const lines = [
+    `# ${report.title}`,
+    '',
+    `- 类型：${researchReportTypeLabel(report.type)}`,
+    `- 周期：${report.period || '未填写'}`,
+    `- 状态：${report.status === 'confirmed' ? '已确认' : '草稿'}`,
+    `- 更新时间：${report.updatedAt}`,
+    '',
+    report.markdown.trim(),
+  ]
+  if (report.sourceRefs.length) {
+    lines.push('', '## 来源追溯', '')
+    report.sourceRefs.forEach((ref, index) => {
+      lines.push(`${index + 1}. [${ref.type}] ${ref.label || ref.id}（${ref.id}）`)
+    })
+  }
+  return `${lines.join('\n').trim()}\n`
+}
+
+function sha256Text(value) {
+  return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex')
+}
+
+function bilingualSourceHash(value) {
+  const normalized = String(value ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
+  let hash = 2166136261
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash ^= normalized.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, '0')}-${normalized.length}`
+}
+
+function sha256File(filePath) {
+  const hash = crypto.createHash('sha256')
+  const handle = fs.openSync(filePath, 'r')
+  const buffer = Buffer.allocUnsafe(1024 * 1024)
+  try {
+    let bytesRead
+    do {
+      bytesRead = fs.readSync(handle, buffer, 0, buffer.length, null)
+      if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead))
+    } while (bytesRead > 0)
+  } finally {
+    fs.closeSync(handle)
+  }
+  return hash.digest('hex')
+}
+
+function inspectResearchArtifactPath(filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) throw new Error('成果文件路径不能为空。')
+  if (filePath.includes('\u0000')) throw new Error('成果文件路径无效。')
+  const originalPath = filePath.trim()
+  if (!path.isAbsolute(originalPath)) throw new Error('成果文件路径必须是绝对路径。')
+  const absolutePath = path.resolve(originalPath)
+  let resolvedPath
+  let stats
+  try {
+    fs.accessSync(absolutePath, fs.constants.R_OK)
+    resolvedPath = fs.realpathSync.native(absolutePath)
+    stats = fs.statSync(resolvedPath)
+  } catch (error) {
+    if (error?.code === 'EACCES' || error?.code === 'EPERM') throw new Error('成果文件路径无法读取，未登记。')
+    throw new Error('成果文件或目录不存在，未登记。')
+  }
+  if (!stats.isFile() && !stats.isDirectory()) throw new Error('只支持登记普通文件或目录。')
+  const kind = stats.isDirectory() ? 'directory' : 'file'
+  let metadata = {}
+  let contentSha256
+  if (kind === 'file') {
+    contentSha256 = sha256File(resolvedPath)
+    metadata = { extension: path.extname(resolvedPath).toLowerCase() }
+  } else {
+    let entryCount
+    try {
+      entryCount = fs.readdirSync(resolvedPath).length
+    } catch {
+      entryCount = undefined
+    }
+    metadata = { ...(entryCount === undefined ? {} : { entryCount }), hashScope: 'not-computed-for-directory' }
+  }
+  return {
+    originalPath,
+    resolvedPath,
+    kind,
+    sizeBytes: kind === 'file' ? stats.size : undefined,
+    modifiedAt: stats.mtime.toISOString(),
+    contentSha256,
+    metadata,
+  }
+}
+
 function safeFileName(name) {
   const base = path.basename(String(name || 'paper.pdf'))
   return base.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/g, '') || 'paper.pdf'
@@ -93,6 +328,22 @@ function writeJsonAtomic(filePath, value) {
   const temporaryPath = `${filePath}.${process.pid}.tmp`
   fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
   fs.renameSync(temporaryPath, filePath)
+}
+
+function researchResumeStateFromRow(row, extra = {}) {
+  return {
+    projectId: row.project_id,
+    activeView: row.active_view,
+    sourceId: row.source_id ?? undefined,
+    pageNumber: row.reader_page ?? undefined,
+    readerMode: row.reader_mode ?? undefined,
+    activeRunId: row.active_run_id ?? undefined,
+    lastOpenedAt: row.last_opened_at ?? undefined,
+    lastActiveAt: row.last_active_at ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...extra,
+  }
 }
 
 class WorkspaceService {
@@ -229,6 +480,7 @@ class WorkspaceService {
   }
 
   close() {
+    if (this.database && this.current) this.endResearchSession()
     this.database?.close()
     this.database = undefined
     this.current = undefined
@@ -280,7 +532,13 @@ class WorkspaceService {
                WHERE quote.annotation_id = a.id AND quote.origin = 'source_evidence'
                ORDER BY quote.created_at, quote.rowid LIMIT 1
              ) AS quote_text,
-             note.content AS note_text
+             note.content AS note_text,
+             (
+               SELECT rt.status FROM research_tasks rt
+               WHERE rt.project_id = a.project_id AND rt.source_type = 'annotation'
+                 AND rt.source_id = a.id AND rt.source_role = 'primary'
+               LIMIT 1
+             ) AS task_status
       FROM annotations a
       LEFT JOIN sources s ON s.id = a.source_id
       LEFT JOIN bibliographic_items b ON b.id = s.bibliographic_item_id
@@ -301,11 +559,13 @@ class WorkspaceService {
         category: row.category,
         anchor,
         page: anchor.pageNumber ? `第 ${anchor.pageNumber} 页` : anchor.legacyLocatorText || '',
+        ...(row.task_status ? { taskStatus: row.task_status } : {}),
       }
     })
     const bibliographicItems = this.database.prepare(`
-      SELECT b.id, b.title, b.item_type, b.authors_json, b.issued,
-             b.container_title, b.abstract, b.keywords_json, b.identifiers_json,
+      SELECT b.id, b.title, b.item_type, b.authors_json, b.issued, b.accessed,
+             b.container_title, b.publisher, b.publisher_place, b.volume, b.issue, b.pages,
+             b.abstract, b.language, b.keywords_json, b.identifiers_json,
              b.needs_metadata_review,
              count(a.id) AS attachment_count,
              max(a.exists_state) AS attachment_state,
@@ -325,22 +585,17 @@ class WorkspaceService {
       WHERE b.project_id = ? AND b.archived_at IS NULL
       GROUP BY b.id
       ORDER BY b.updated_at DESC
-    `).all(this.current.projectId).map(row => ({
-      id: row.id,
-      title: row.title,
-      itemType: row.item_type,
-      authors: JSON.parse(row.authors_json),
-      issued: row.issued ?? undefined,
-      containerTitle: row.container_title ?? undefined,
-      abstract: row.abstract ?? undefined,
-      keywords: JSON.parse(row.keywords_json),
-      identifiers: JSON.parse(row.identifiers_json),
-      needsMetadataReview: Boolean(row.needs_metadata_review),
-      attachmentCount: row.attachment_count,
-      attachmentState: row.attachment_state ?? 'unknown',
-      sourceId: row.source_id ?? undefined,
-      annotationCount: row.annotation_count,
-      readingState: {
+    `).all(this.current.projectId).map(row => {
+      const item = bibliographicSummaryFromRow(row)
+      return {
+        ...item,
+        citation: citationFormatter.format(item, { style: 'gb-t-7714-2015' }),
+        needsMetadataReview: Boolean(row.needs_metadata_review),
+        attachmentCount: row.attachment_count,
+        attachmentState: row.attachment_state ?? 'unknown',
+        sourceId: row.source_id ?? undefined,
+        annotationCount: row.annotation_count,
+        readingState: {
         readingStatus: row.reading_status ?? 'unread',
         relevance: row.relevance ?? 'undecided',
         ideaState: row.idea_state ?? 'undecided',
@@ -349,9 +604,1729 @@ class WorkspaceService {
         decisionNote: row.decision_note ?? '',
         lastPage: row.last_page ?? undefined,
         totalPages: row.total_pages ?? undefined,
-      },
+        },
+      }
+    })
+    return { sources, annotations, bibliographicItems, researchWorkspace: this.getResearchWorkspace() }
+  }
+
+  getResearchWorkspace() {
+    this.#requireOpen()
+    const project = this.database.prepare(`
+      SELECT id, name, research_question, current_hypothesis, stage, mode, updated_at
+      FROM projects WHERE id = ?
+    `).get(this.current.projectId)
+    const records = this.database.prepare(`
+      SELECT id, record_type, title, content, status, occurred_at, file_path,
+             source_ids_json, tags_json, created_at, updated_at
+      FROM research_records
+      WHERE project_id = ? AND status != 'archived'
+      ORDER BY occurred_at DESC, updated_at DESC
+      LIMIT 300
+    `).all(this.current.projectId).map(row => ({
+      id: row.id,
+      recordType: row.record_type,
+      title: row.title,
+      content: row.content,
+      status: row.status,
+      occurredAt: row.occurred_at,
+      filePath: row.file_path ?? undefined,
+      sourceIds: JSON.parse(row.source_ids_json),
+      tags: JSON.parse(row.tags_json),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     }))
-    return { sources, annotations, bibliographicItems }
+    const milestones = this.database.prepare(`
+      SELECT id, title, description, status, acceptance_criteria_json, due_at,
+             completed_at, created_at, updated_at
+      FROM research_milestones
+      WHERE project_id = ? AND status != 'archived'
+      ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'blocked' THEN 1 WHEN 'planned' THEN 2 ELSE 3 END,
+               COALESCE(due_at, updated_at), updated_at DESC
+      LIMIT 300
+    `).all(this.current.projectId).map(row => ({
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      status: row.status,
+      acceptanceCriteria: safeJson(row.acceptance_criteria_json, []),
+      dueAt: row.due_at ?? undefined,
+      completedAt: row.completed_at ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }))
+    const runTemplates = this.database.prepare(`
+      SELECT id, project_id, name, category, description, defaults_json, built_in,
+             created_at, updated_at
+      FROM research_run_templates
+      WHERE archived_at IS NULL AND (built_in = 1 OR project_id = ?)
+      ORDER BY built_in DESC, name
+    `).all(this.current.projectId).map(row => ({
+      id: row.id,
+      projectId: row.project_id ?? undefined,
+      name: row.name,
+      category: row.category,
+      description: row.description,
+      defaults: safeJson(row.defaults_json, {}),
+      builtIn: Boolean(row.built_in),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }))
+    const runs = this.database.prepare(`
+      SELECT id, milestone_id, template_id, title, purpose, hypothesis,
+             changed_variables_json, command, environment, procedure, outcome,
+             observations, anomaly, next_step, source_ids_json, started_at,
+             (SELECT rt.status FROM research_tasks rt WHERE rt.project_id = research_runs.project_id AND rt.source_type = 'run' AND rt.source_id = research_runs.id AND rt.source_role = 'next_step' LIMIT 1) AS next_step_task_status,
+             (SELECT rt.status FROM research_tasks rt WHERE rt.project_id = research_runs.project_id AND rt.source_type = 'anomaly' AND rt.source_id = research_runs.id AND rt.source_role = 'anomaly' LIMIT 1) AS anomaly_task_status,
+             ended_at, created_at, updated_at
+      FROM research_runs
+      WHERE project_id = ?
+      ORDER BY started_at DESC, updated_at DESC
+      LIMIT 500
+    `).all(this.current.projectId).map(row => ({
+      id: row.id,
+      milestoneId: row.milestone_id ?? undefined,
+      templateId: row.template_id ?? undefined,
+      title: row.title,
+      purpose: row.purpose,
+      hypothesis: row.hypothesis,
+      changedVariables: safeJson(row.changed_variables_json, []),
+      command: row.command,
+      environment: row.environment,
+      procedure: row.procedure,
+      outcome: row.outcome,
+      observations: row.observations,
+      anomaly: row.anomaly,
+      nextStep: row.next_step,
+      nextStepTaskStatus: row.next_step_task_status ?? undefined,
+      anomalyTaskStatus: row.anomaly_task_status ?? undefined,
+      sourceIds: safeJson(row.source_ids_json, []),
+      startedAt: row.started_at,
+      endedAt: row.ended_at ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }))
+    const artifacts = this.database.prepare(`
+      SELECT id, run_id, label, role, path_original, path_resolved, kind,
+             exists_state, size_bytes, modified_at, content_sha256, metadata_json,
+             created_at, updated_at
+      FROM research_artifacts
+      WHERE project_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 1500
+    `).all(this.current.projectId).map(row => ({
+      id: row.id,
+      runId: row.run_id,
+      label: row.label,
+      role: row.role,
+      filePath: row.path_original,
+      resolvedPath: row.path_resolved,
+      kind: row.kind,
+      existsState: row.exists_state,
+      sizeBytes: row.size_bytes ?? undefined,
+      modifiedAt: row.modified_at ?? undefined,
+      contentSha256: row.content_sha256 ?? undefined,
+      metadata: safeJson(row.metadata_json, {}),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }))
+    const reports = this.listResearchReports()
+    const claims = this.listResearchClaims()
+    const history = this.database.prepare(`
+      SELECT id, changed_fields_json, snapshot_json, created_at, created_by
+      FROM research_project_history
+      WHERE project_id = ?
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 100
+    `).all(this.current.projectId).map(row => ({
+      id: row.id,
+      changedFields: safeJson(row.changed_fields_json, []),
+      snapshot: safeJson(row.snapshot_json, {}),
+      createdAt: row.created_at,
+      createdBy: row.created_by,
+    }))
+    return {
+      project: {
+        id: project.id,
+        name: project.name,
+        researchQuestion: project.research_question,
+        currentHypothesis: project.current_hypothesis,
+        stage: project.stage,
+        mode: project.mode,
+        updatedAt: project.updated_at,
+      },
+      records,
+      milestones,
+      runs,
+      artifacts,
+      runTemplates,
+      reports,
+      claims,
+      history,
+    }
+  }
+
+  getResearchResume() {
+    this.#requireOpen()
+    const row = this.database.prepare(`
+      SELECT project_id, active_view, source_id, reader_page, reader_mode,
+             active_run_id, last_opened_at, last_active_at, created_at, updated_at
+      FROM research_resume_state WHERE project_id = ?
+    `).get(this.current.projectId)
+    if (!row) {
+      return {
+        projectId: this.current.projectId,
+        activeView: 'today',
+        firstVisit: true,
+      }
+    }
+    return researchResumeStateFromRow(row, { firstVisit: !row.last_active_at })
+  }
+
+  beginResearchSession() {
+    this.#requireOpen()
+    const previous = this.database.prepare(`
+      SELECT project_id, active_view, source_id, reader_page, reader_mode,
+             active_run_id, last_opened_at, last_active_at, created_at, updated_at
+      FROM research_resume_state WHERE project_id = ?
+    `).get(this.current.projectId)
+    const previousActiveAt = previous?.last_active_at ?? undefined
+    let activeRunId = previous?.active_run_id ?? undefined
+    if (activeRunId) {
+      const valid = this.database.prepare(
+        'SELECT id FROM research_runs WHERE id = ? AND project_id = ?',
+      ).get(activeRunId, this.current.projectId)
+      if (!valid) activeRunId = undefined
+    }
+    if (!activeRunId) {
+      activeRunId = this.database.prepare(`
+        SELECT id FROM research_runs
+        WHERE project_id = ? AND outcome IN ('running', 'planned')
+        ORDER BY CASE outcome WHEN 'running' THEN 0 ELSE 1 END, updated_at DESC
+        LIMIT 1
+      `).get(this.current.projectId)?.id
+    }
+    const timestamp = now()
+    const createdAt = previous?.created_at || timestamp
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare(`
+        INSERT INTO research_resume_state(
+          project_id, active_view, source_id, reader_page, reader_mode, active_run_id,
+          last_opened_at, last_active_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(project_id) DO UPDATE SET
+          active_run_id = excluded.active_run_id,
+          last_opened_at = excluded.last_opened_at,
+          last_active_at = excluded.last_active_at
+      `).run(
+        this.current.projectId,
+        previous?.active_view || 'today',
+        previous?.source_id || null,
+        previous?.reader_page || null,
+        previous?.reader_mode || null,
+        activeRunId || null,
+        timestamp,
+        timestamp,
+        createdAt,
+        previous?.updated_at || timestamp,
+      )
+      const state = this.getResearchResume()
+      this.#appendResearchResumeEvent('opened', state, timestamp)
+      this.database.exec('COMMIT')
+      return {
+        ...state,
+        previousActiveAt,
+        firstVisit: !previousActiveAt,
+      }
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  saveResearchResume(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('科研现场格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧现场写入已取消。')
+    }
+    const previous = this.database.prepare(`
+      SELECT project_id, active_view, source_id, reader_page, reader_mode,
+             active_run_id, last_opened_at, last_active_at, created_at, updated_at
+      FROM research_resume_state WHERE project_id = ?
+    `).get(this.current.projectId)
+    const activeView = input.activeView === undefined
+      ? previous?.active_view || 'today'
+      : validateEnum(input.activeView, RESEARCH_RESUME_VIEW_VALUES, '科研工作面')
+    const sourceId = input.sourceId === undefined
+      ? previous?.source_id ?? undefined
+      : input.sourceId === null || input.sourceId === ''
+        ? undefined
+        : ensureResearchText(input.sourceId, '最后阅读资料 ID', 120, { required: true })
+    if (sourceId) {
+      const source = this.database.prepare(
+        'SELECT id FROM sources WHERE id = ? AND project_id = ? AND archived_at IS NULL',
+      ).get(sourceId, this.current.projectId)
+      if (!source) throw new Error('最后阅读资料不存在或不属于当前课题。')
+    }
+    const requestedPage = input.pageNumber === undefined ? previous?.reader_page : input.pageNumber
+    const pageNumber = requestedPage === null || requestedPage === undefined
+      ? undefined
+      : Number(requestedPage)
+    if (pageNumber !== undefined && (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > 100000)) {
+      throw new Error('最后阅读页码无效。')
+    }
+    const readerMode = input.readerMode === undefined
+      ? previous?.reader_mode ?? undefined
+      : input.readerMode === null || input.readerMode === ''
+        ? undefined
+        : validateEnum(input.readerMode, RESEARCH_RESUME_READER_MODE_VALUES, '阅读模式')
+    const activeRunId = input.activeRunId === undefined
+      ? previous?.active_run_id ?? undefined
+      : input.activeRunId === null || input.activeRunId === ''
+        ? undefined
+        : ensureResearchText(input.activeRunId, '当前 Run ID', 120, { required: true })
+    if (activeRunId) {
+      const run = this.database.prepare(
+        'SELECT id FROM research_runs WHERE id = ? AND project_id = ?',
+      ).get(activeRunId, this.current.projectId)
+      if (!run) throw new Error('当前 Run 不存在或不属于当前课题。')
+    }
+    const timestamp = now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare(`
+        INSERT INTO research_resume_state(
+          project_id, active_view, source_id, reader_page, reader_mode, active_run_id,
+          last_opened_at, last_active_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(project_id) DO UPDATE SET
+          active_view = excluded.active_view,
+          source_id = excluded.source_id,
+          reader_page = excluded.reader_page,
+          reader_mode = excluded.reader_mode,
+          active_run_id = excluded.active_run_id,
+          last_active_at = excluded.last_active_at,
+          updated_at = excluded.updated_at
+      `).run(
+        this.current.projectId,
+        activeView,
+        sourceId || null,
+        pageNumber ?? null,
+        readerMode || null,
+        activeRunId || null,
+        previous?.last_opened_at || timestamp,
+        timestamp,
+        previous?.created_at || timestamp,
+        timestamp,
+      )
+      const state = this.getResearchResume()
+      this.#appendResearchResumeEvent('state_saved', state, timestamp)
+      this.database.exec('COMMIT')
+      return state
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  endResearchSession() {
+    if (!this.database || !this.current) return undefined
+    const previous = this.database.prepare(`
+      SELECT project_id, active_view, source_id, reader_page, reader_mode,
+             active_run_id, last_opened_at, last_active_at, created_at, updated_at
+      FROM research_resume_state WHERE project_id = ?
+    `).get(this.current.projectId)
+    if (!previous) return undefined
+    const timestamp = now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare(
+        'UPDATE research_resume_state SET last_active_at = ? WHERE project_id = ?',
+      ).run(timestamp, this.current.projectId)
+      const state = { ...researchResumeStateFromRow(previous), lastActiveAt: timestamp }
+      this.#appendResearchResumeEvent('closed', state, timestamp)
+      this.database.exec('COMMIT')
+      return state
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  listResearchTasks(input = {}) {
+    this.#requireOpen()
+    this.#syncLegacyResearchTasks()
+    const requestedStatus = input?.status === undefined ? undefined : validateTaskStatus(input.status)
+    const rows = this.database.prepare(`
+      SELECT * FROM research_tasks
+      WHERE project_id = ? ${requestedStatus ? 'AND status = ?' : ''}
+      ORDER BY CASE status
+        WHEN 'today' THEN 0 WHEN 'inbox' THEN 1 WHEN 'waiting' THEN 2
+        WHEN 'deferred' THEN 3 WHEN 'later' THEN 4 WHEN 'completed' THEN 5 ELSE 6 END,
+        updated_at DESC
+      LIMIT 1000
+    `).all(...(requestedStatus ? [this.current.projectId, requestedStatus] : [this.current.projectId]))
+    const tasks = rows.map(row => ({
+      ...taskViewFromRow(row),
+      events: this.database.prepare(`
+        SELECT id, event_type, from_status, to_status, actor, note, occurred_at
+        FROM research_task_events WHERE task_id = ?
+        ORDER BY occurred_at DESC, rowid DESC LIMIT 50
+      `).all(row.id).map(event => ({
+        id: event.id,
+        eventType: event.event_type,
+        fromStatus: event.from_status ?? undefined,
+        toStatus: event.to_status ?? undefined,
+        actor: event.actor,
+        note: event.note,
+        occurredAt: event.occurred_at,
+      })),
+    }))
+    const summary = Object.fromEntries(
+      ['inbox', 'today', 'later', 'waiting', 'completed', 'abandoned', 'deferred']
+        .map(status => [status, tasks.filter(task => task.status === status).length]),
+    )
+    return { tasks, summary }
+  }
+
+  createResearchTask(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('科研任务格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧任务写入已取消。')
+    }
+    const sourceType = validateTaskSourceType(input.sourceType || 'manual')
+    const sourceId = sourceType === 'manual'
+      ? undefined
+      : ensureResearchText(input.sourceId, '任务来源 ID', 160, { required: true })
+    const sourceRole = ensureResearchText(input.sourceRole || 'primary', '任务来源角色', 80, { required: true })
+    const source = sourceType === 'manual'
+      ? { title: '', detail: '', returnTarget: {}, sourceSnapshot: {} }
+      : this.#resolveResearchTaskSource(sourceType, sourceId, sourceRole)
+    const title = input.title === undefined
+      ? ensureResearchText(source.title, '科研任务标题', 240, { required: true })
+      : ensureResearchText(input.title, '科研任务标题', 240, { required: true })
+    const detail = input.detail === undefined
+      ? ensureResearchText(source.detail, '科研任务说明', 10000)
+      : ensureResearchText(input.detail, '科研任务说明', 10000)
+    const origin = input.origin === 'ai' ? 'ai' : input.origin === 'system' ? 'system' : 'user'
+    const approvalStatus = origin === 'ai' ? 'proposed' : 'not_required'
+    const isFormal = origin === 'ai' ? 0 : 1
+    const status = origin === 'ai' ? 'waiting' : validateTaskStatus(input.status || 'inbox')
+    const waitCondition = ensureResearchText(input.waitCondition, '等待条件', 4000)
+    const deferredUntil = ensureOptionalResearchDateTime(input.deferredUntil, '推迟时间')
+    if (status === 'waiting' && origin !== 'ai' && !waitCondition) throw new Error('等待任务必须写明等待条件。')
+    if (status === 'deferred' && !deferredUntil) throw new Error('推迟任务必须写明恢复时间。')
+    const existing = sourceId ? this.database.prepare(`
+      SELECT * FROM research_tasks
+      WHERE project_id = ? AND source_type = ? AND source_id = ? AND source_role = ?
+    `).get(this.current.projectId, sourceType, sourceId, sourceRole) : undefined
+    if (existing) return { task: taskViewFromRow(existing), alreadyExists: true }
+    const taskId = crypto.randomUUID()
+    const timestamp = now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare(`
+        INSERT INTO research_tasks(
+          id, project_id, title, detail, status, source_type, source_id, source_role,
+          origin, approval_status, is_formal, wait_condition, deferred_until,
+          return_target_json, source_snapshot_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        taskId, this.current.projectId, title, detail, status, sourceType, sourceId || null, sourceRole,
+        origin, approvalStatus, isFormal, waitCondition, deferredUntil || null,
+        JSON.stringify(source.returnTarget || {}), JSON.stringify(source.sourceSnapshot || {}), timestamp, timestamp,
+      )
+      this.#appendResearchTaskEvent({
+        taskId, eventType: 'created', toStatus: status, actor: origin, note: sourceId ? `来自 ${sourceType}:${sourceId}` : '快速收件箱', timestamp,
+      })
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    return { task: taskViewFromRow(this.database.prepare('SELECT * FROM research_tasks WHERE id = ?').get(taskId)), alreadyExists: false }
+  }
+
+  updateResearchTask(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('科研任务变更格式无效。')
+    const taskId = ensureResearchText(input.taskId, '科研任务 ID', 160, { required: true })
+    let task = this.database.prepare('SELECT * FROM research_tasks WHERE id = ? AND project_id = ?').get(taskId, this.current.projectId)
+    if (!task) throw new Error('当前研究库中找不到这条科研任务。')
+    const timestamp = now()
+
+    if (input.decision !== undefined) {
+      if (task.approval_status !== 'proposed' || !['confirm', 'reject'].includes(input.decision)) {
+        throw new Error('这条任务不处于待确认 AI 建议状态。')
+      }
+      if (task.source_type === 'ai_suggestion') {
+        this.reviewActionItem({ itemId: task.source_id, decision: input.decision === 'confirm' ? 'confirm' : 'dismiss' })
+      }
+      const nextStatus = input.decision === 'confirm' ? 'today' : 'abandoned'
+      const approvalStatus = input.decision === 'confirm' ? 'confirmed' : 'rejected'
+      this.database.exec('BEGIN IMMEDIATE')
+      try {
+        this.database.prepare(`
+          UPDATE research_tasks
+          SET status = ?, approval_status = ?, is_formal = ?, updated_at = ?
+          WHERE id = ? AND project_id = ?
+        `).run(nextStatus, approvalStatus, input.decision === 'confirm' ? 1 : 0, timestamp, taskId, this.current.projectId)
+        this.#appendResearchTaskEvent({
+          taskId,
+          eventType: input.decision === 'confirm' ? 'confirmed' : 'rejected',
+          fromStatus: task.status,
+          toStatus: nextStatus,
+          actor: 'user',
+          note: input.decision === 'confirm' ? '人工确认后进入正式任务。' : '人工拒绝 AI 建议。',
+          timestamp,
+        })
+        this.database.exec('COMMIT')
+      } catch (error) {
+        this.database.exec('ROLLBACK')
+        throw error
+      }
+      return this.listResearchTasks()
+    }
+
+    if (task.approval_status === 'proposed' || !task.is_formal) throw new Error('AI 建议必须人工确认后才能进入正式任务。')
+    const nextStatus = validateTaskStatus(input.status)
+    const waitCondition = input.waitCondition === undefined
+      ? task.wait_condition
+      : ensureResearchText(input.waitCondition, '等待条件', 4000)
+    const deferredUntil = input.deferredUntil === undefined
+      ? task.deferred_until ?? undefined
+      : ensureOptionalResearchDateTime(input.deferredUntil, '推迟时间')
+    if (nextStatus === 'waiting' && !waitCondition) throw new Error('等待任务必须写明等待条件。')
+    if (nextStatus === 'deferred' && !deferredUntil) throw new Error('推迟任务必须写明恢复时间。')
+    this.#writeBackResearchTaskSource(task, nextStatus, timestamp)
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare(`
+        UPDATE research_tasks
+        SET status = ?, wait_condition = ?, deferred_until = ?, updated_at = ?
+        WHERE id = ? AND project_id = ?
+      `).run(
+        nextStatus,
+        nextStatus === 'waiting' ? waitCondition : '',
+        nextStatus === 'deferred' ? deferredUntil || null : null,
+        timestamp,
+        taskId,
+        this.current.projectId,
+      )
+      this.#appendResearchTaskEvent({
+        taskId, eventType: 'status_changed', fromStatus: task.status, toStatus: nextStatus,
+        actor: 'user', note: ensureResearchText(input.note, '任务变更说明', 2000), timestamp,
+      })
+      this.#appendResearchTaskEvent({
+        taskId, eventType: 'source_written_back', fromStatus: task.status, toStatus: nextStatus,
+        actor: 'system', note: `${task.source_type}:${task.source_id || 'manual'} 已同步任务状态。`, timestamp,
+      })
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    return this.listResearchTasks()
+  }
+
+  saveResearchWorkspace(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('课题资料格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧状态写入已取消。')
+    }
+    const currentProject = this.database.prepare(`
+      SELECT name, research_question, current_hypothesis, stage, mode
+      FROM projects WHERE id = ?
+    `).get(this.current.projectId)
+    if (!currentProject) throw new Error('当前课题不存在。')
+    const name = input.name === undefined ? currentProject.name : ensureVaultName(input.name)
+    const researchQuestion = input.researchQuestion === undefined
+      ? currentProject.research_question
+      : ensureResearchText(input.researchQuestion, '研究问题', 4000)
+    const currentHypothesis = input.currentHypothesis === undefined
+      ? currentProject.current_hypothesis
+      : ensureResearchText(input.currentHypothesis, '当前假设', 4000)
+    const stage = input.stage === undefined
+      ? currentProject.stage
+      : ensureResearchText(input.stage, '研究阶段', 80, { required: true })
+    const mode = input.mode === undefined
+      ? currentProject.mode
+      : ensureResearchText(input.mode, '课题模式', 40, { required: true })
+    if (!RESEARCH_PROJECT_MODE_VALUES.has(mode)) throw new Error('课题模式无效。')
+    const createdBy = input.createdBy === undefined
+      ? 'user'
+      : validateEnum(input.createdBy, new Set(['user', 'ai', 'system']), '修改来源')
+    const changedFields = [
+      ['name', currentProject.name, name],
+      ['researchQuestion', currentProject.research_question, researchQuestion],
+      ['currentHypothesis', currentProject.current_hypothesis, currentHypothesis],
+      ['stage', currentProject.stage, stage],
+      ['mode', currentProject.mode, mode],
+    ].filter(([, previous, next]) => previous !== next).map(([field]) => field)
+    if (!changedFields.length) return this.getResearchWorkspace()
+    const timestamp = now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare(`
+        UPDATE projects
+        SET name = ?, research_question = ?, current_hypothesis = ?, stage = ?, mode = ?, updated_at = ?
+        WHERE id = ?
+      `).run(name, researchQuestion, currentHypothesis, stage, mode, timestamp, this.current.projectId)
+      this.database.prepare(`
+        INSERT INTO research_project_history(
+          id, project_id, changed_fields_json, snapshot_json, created_at, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        crypto.randomUUID(),
+        this.current.projectId,
+        JSON.stringify(changedFields),
+        JSON.stringify({ name, researchQuestion, currentHypothesis, stage, mode }),
+        timestamp,
+        createdBy,
+      )
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    this.current.name = name
+    this.current.updatedAt = timestamp
+    const manifestPath = path.join(this.current.path, VAULT_FILE)
+    const manifest = readJson(manifestPath)
+    writeJsonAtomic(manifestPath, { ...manifest, name, updatedAt: timestamp, schemaVersion: SCHEMA_VERSION })
+    this.#remember(this.current)
+    return this.getResearchWorkspace()
+  }
+
+  saveResearchProject(input = {}) {
+    return this.saveResearchWorkspace(input)
+  }
+
+  saveResearchRecord(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('科研记录格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧状态写入已取消。')
+    }
+    const recordType = ensureResearchText(input.recordType, '科研记录类型', 40, { required: true })
+    const status = input.status === undefined
+      ? 'active'
+      : ensureResearchText(input.status, '科研记录状态', 40, { required: true })
+    const title = ensureResearchText(input.title, '科研记录标题', 240, { required: true })
+    if (!RESEARCH_RECORD_TYPE_VALUES.has(recordType)) throw new Error('科研记录类型无效。')
+    if (!RESEARCH_RECORD_STATUS_VALUES.has(status)) throw new Error('科研记录状态无效。')
+    const recordId = input.id === undefined
+      ? crypto.randomUUID()
+      : ensureResearchText(input.id, '科研记录 ID', 120, { required: true })
+    const existingRecord = this.database.prepare('SELECT project_id FROM research_records WHERE id = ?').get(recordId)
+    if (existingRecord && existingRecord.project_id !== this.current.projectId) {
+      throw new Error('科研记录不属于当前课题，已拒绝覆盖。')
+    }
+    const timestamp = now()
+    const occurredAt = ensureResearchDateTime(input.occurredAt)
+    const sourceIds = ensureResearchStringList(input.sourceIds, '关联文献', 100, 120)
+    const tags = ensureResearchStringList(input.tags, '标签', 30, 80)
+    const content = ensureResearchText(input.content, '科研记录内容', 100000)
+    const filePath = ensureResearchText(input.filePath, '数据文件路径', 2000) || null
+    if (sourceIds.length) {
+      const placeholders = sourceIds.map(() => '?').join(', ')
+      const validSources = this.database.prepare(`
+        SELECT id FROM sources
+        WHERE project_id = ? AND archived_at IS NULL AND id IN (${placeholders})
+      `).all(this.current.projectId, ...sourceIds)
+      if (validSources.length !== sourceIds.length) throw new Error('关联文献不存在或不属于当前课题。')
+    }
+    this.database.prepare(`
+      INSERT INTO research_records(
+        id, project_id, record_type, title, content, status, occurred_at,
+        file_path, source_ids_json, tags_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        record_type = excluded.record_type,
+        title = excluded.title,
+        content = excluded.content,
+        status = excluded.status,
+        occurred_at = excluded.occurred_at,
+        file_path = excluded.file_path,
+        source_ids_json = excluded.source_ids_json,
+        tags_json = excluded.tags_json,
+        updated_at = excluded.updated_at
+      WHERE research_records.project_id = excluded.project_id
+    `).run(
+      recordId,
+      this.current.projectId,
+      recordType,
+      title,
+      content,
+      status,
+      occurredAt,
+      filePath,
+      JSON.stringify(sourceIds),
+      JSON.stringify(tags),
+      timestamp,
+      timestamp,
+    )
+    return this.getResearchWorkspace()
+  }
+
+  saveResearchRunTemplate(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('测试模板格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧状态写入已取消。')
+    }
+    const templateId = input.id === undefined
+      ? crypto.randomUUID()
+      : ensureResearchText(input.id, '模板 ID', 120, { required: true })
+    const existing = this.database.prepare(`
+      SELECT project_id, name, category, description, defaults_json, built_in, archived_at, created_at
+      FROM research_run_templates WHERE id = ?
+    `).get(templateId)
+    if (existing?.built_in) throw new Error('内置测试模板不可修改，请另存为自定义模板。')
+    if (existing && existing.project_id !== this.current.projectId) throw new Error('测试模板不属于当前课题。')
+    const name = input.name === undefined && existing
+      ? existing.name
+      : ensureResearchText(input.name, '模板名称', 160, { required: true })
+    const category = input.category === undefined && existing
+      ? existing.category
+      : ensureResearchText(input.category || 'custom', '模板类别', 80, { required: true })
+    const description = input.description === undefined && existing
+      ? existing.description
+      : ensureResearchText(input.description, '模板说明', 4000)
+    const defaults = input.defaults === undefined && existing
+      ? safeJson(existing.defaults_json, {})
+      : ensureTemplateDefaults(input.defaults)
+    const timestamp = now()
+    const archivedAt = input.archived === true ? timestamp : null
+    this.database.prepare(`
+      INSERT INTO research_run_templates(
+        id, project_id, name, category, description, defaults_json, built_in,
+        archived_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        category = excluded.category,
+        description = excluded.description,
+        defaults_json = excluded.defaults_json,
+        archived_at = excluded.archived_at,
+        updated_at = excluded.updated_at
+      WHERE research_run_templates.project_id = excluded.project_id
+        AND research_run_templates.built_in = 0
+    `).run(
+      templateId,
+      this.current.projectId,
+      name,
+      category,
+      description,
+      JSON.stringify(defaults),
+      archivedAt,
+      existing?.created_at || timestamp,
+      timestamp,
+    )
+    return this.getResearchWorkspace()
+  }
+
+  saveResearchMilestone(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('里程碑格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧状态写入已取消。')
+    }
+    const milestoneId = input.id === undefined
+      ? crypto.randomUUID()
+      : ensureResearchText(input.id, '里程碑 ID', 120, { required: true })
+    const existing = this.database.prepare(`
+      SELECT project_id, title, description, status, acceptance_criteria_json,
+             due_at, completed_at, created_at
+      FROM research_milestones WHERE id = ?
+    `).get(milestoneId)
+    if (existing && existing.project_id !== this.current.projectId) throw new Error('里程碑不属于当前课题。')
+    const title = input.title === undefined && existing
+      ? existing.title
+      : ensureResearchText(input.title, '里程碑标题', 240, { required: true })
+    const description = input.description === undefined && existing
+      ? existing.description
+      : ensureResearchText(input.description, '里程碑说明', 10000)
+    const status = input.status === undefined
+      ? existing?.status || 'planned'
+      : ensureResearchText(input.status, '里程碑状态', 40, { required: true })
+    if (!RESEARCH_MILESTONE_STATUS_VALUES.has(status)) throw new Error('里程碑状态无效。')
+    const acceptanceCriteria = input.acceptanceCriteria === undefined && existing
+      ? safeJson(existing.acceptance_criteria_json, [])
+      : ensureResearchStringList(input.acceptanceCriteria, '里程碑验收条件', 100, 1000)
+    const dueAt = input.dueAt === undefined && existing
+      ? existing.due_at ?? undefined
+      : ensureOptionalResearchDateTime(input.dueAt, '里程碑截止时间')
+    const timestamp = now()
+    const completedAt = status === 'completed'
+      ? existing?.completed_at || timestamp
+      : null
+    this.database.prepare(`
+      INSERT INTO research_milestones(
+        id, project_id, title, description, status, acceptance_criteria_json,
+        due_at, completed_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        description = excluded.description,
+        status = excluded.status,
+        acceptance_criteria_json = excluded.acceptance_criteria_json,
+        due_at = excluded.due_at,
+        completed_at = excluded.completed_at,
+        updated_at = excluded.updated_at
+      WHERE research_milestones.project_id = excluded.project_id
+    `).run(
+      milestoneId,
+      this.current.projectId,
+      title,
+      description,
+      status,
+      JSON.stringify(acceptanceCriteria),
+      dueAt || null,
+      completedAt,
+      existing?.created_at || timestamp,
+      timestamp,
+    )
+    return this.getResearchWorkspace()
+  }
+
+  saveResearchRun(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('测试记录格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧状态写入已取消。')
+    }
+    const runId = input.id === undefined
+      ? crypto.randomUUID()
+      : ensureResearchText(input.id, '测试 ID', 120, { required: true })
+    const existing = this.database.prepare(`
+      SELECT project_id, milestone_id, template_id, title, purpose, hypothesis,
+             changed_variables_json, command, environment, procedure, outcome,
+             observations, anomaly, next_step, source_ids_json, started_at,
+             ended_at, created_at
+      FROM research_runs WHERE id = ?
+    `).get(runId)
+    if (existing && existing.project_id !== this.current.projectId) throw new Error('测试不属于当前课题。')
+    const templateId = input.templateId === undefined
+      ? existing?.template_id ?? undefined
+      : ensureResearchText(input.templateId, '测试模板 ID', 120) || undefined
+    let template
+    if (templateId) {
+      template = this.database.prepare(`
+        SELECT id, project_id, defaults_json, built_in
+        FROM research_run_templates
+        WHERE id = ? AND archived_at IS NULL
+      `).get(templateId)
+      if (!template || (!template.built_in && template.project_id !== this.current.projectId)) {
+        throw new Error('测试模板不存在或不属于当前课题。')
+      }
+    }
+    const defaults = template ? safeJson(template.defaults_json, {}) : {}
+    const milestoneId = input.milestoneId === undefined
+      ? existing?.milestone_id ?? undefined
+      : ensureResearchText(input.milestoneId, '里程碑 ID', 120) || undefined
+    if (milestoneId) {
+      const milestone = this.database.prepare(
+        'SELECT id FROM research_milestones WHERE id = ? AND project_id = ? AND status != ?',
+      ).get(milestoneId, this.current.projectId, 'archived')
+      if (!milestone) throw new Error('里程碑不存在或不属于当前课题。')
+    }
+    const pickText = (key, column, label, maximum, required = false) => {
+      if (input[key] !== undefined) return ensureResearchText(input[key], label, maximum, { required })
+      if (existing) return existing[column]
+      if (defaults[key] !== undefined) return ensureResearchText(defaults[key], label, maximum, { required })
+      return ensureResearchText('', label, maximum, { required })
+    }
+    const title = pickText('title', 'title', '测试标题', 240, true)
+    const purpose = pickText('purpose', 'purpose', '测试目的', 10000)
+    const hypothesis = pickText('hypothesis', 'hypothesis', '测试假设', 10000)
+    const command = pickText('command', 'command', '运行命令', 30000)
+    const environment = pickText('environment', 'environment', '运行环境', 10000)
+    const procedure = pickText('procedure', 'procedure', '测试步骤', 30000)
+    const observations = pickText('observations', 'observations', '测试观察', 30000)
+    const anomaly = pickText('anomaly', 'anomaly', '异常记录', 30000)
+    const nextStep = pickText('nextStep', 'next_step', '下一步', 10000)
+    const changedVariables = input.changedVariables !== undefined
+      ? ensureChangedVariables(input.changedVariables)
+      : existing
+        ? safeJson(existing.changed_variables_json, [])
+        : ensureChangedVariables(defaults.changedVariables)
+    const outcome = input.outcome === undefined
+      ? existing?.outcome || 'planned'
+      : ensureResearchText(input.outcome, '测试结果', 40, { required: true })
+    if (!RESEARCH_RUN_OUTCOME_VALUES.has(outcome)) throw new Error('测试结果无效。')
+    const sourceIds = input.sourceIds === undefined && existing
+      ? safeJson(existing.source_ids_json, [])
+      : ensureResearchStringList(input.sourceIds, '关联文献', 100, 120)
+    if (sourceIds.length) {
+      const placeholders = sourceIds.map(() => '?').join(', ')
+      const validSources = this.database.prepare(`
+        SELECT id FROM sources
+        WHERE project_id = ? AND archived_at IS NULL AND id IN (${placeholders})
+      `).all(this.current.projectId, ...sourceIds)
+      if (validSources.length !== sourceIds.length) throw new Error('关联文献不存在或不属于当前课题。')
+    }
+    const startedAt = input.startedAt === undefined && existing
+      ? existing.started_at
+      : ensureResearchDateTime(input.startedAt)
+    const endedAt = input.endedAt === undefined && existing
+      ? existing.ended_at ?? undefined
+      : ensureOptionalResearchDateTime(input.endedAt, '测试结束时间')
+    if (endedAt && Date.parse(endedAt) < Date.parse(startedAt)) throw new Error('测试结束时间不能早于开始时间。')
+    const timestamp = now()
+    this.database.prepare(`
+      INSERT INTO research_runs(
+        id, project_id, milestone_id, template_id, title, purpose, hypothesis,
+        changed_variables_json, command, environment, procedure, outcome,
+        observations, anomaly, next_step, source_ids_json, started_at, ended_at,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        milestone_id = excluded.milestone_id,
+        template_id = excluded.template_id,
+        title = excluded.title,
+        purpose = excluded.purpose,
+        hypothesis = excluded.hypothesis,
+        changed_variables_json = excluded.changed_variables_json,
+        command = excluded.command,
+        environment = excluded.environment,
+        procedure = excluded.procedure,
+        outcome = excluded.outcome,
+        observations = excluded.observations,
+        anomaly = excluded.anomaly,
+        next_step = excluded.next_step,
+        source_ids_json = excluded.source_ids_json,
+        started_at = excluded.started_at,
+        ended_at = excluded.ended_at,
+        updated_at = excluded.updated_at
+      WHERE research_runs.project_id = excluded.project_id
+    `).run(
+      runId,
+      this.current.projectId,
+      milestoneId || null,
+      templateId || null,
+      title,
+      purpose,
+      hypothesis,
+      JSON.stringify(changedVariables),
+      command,
+      environment,
+      procedure,
+      outcome,
+      observations,
+      anomaly,
+      nextStep,
+      JSON.stringify(sourceIds),
+      startedAt,
+      endedAt || null,
+      existing?.created_at || timestamp,
+      timestamp,
+    )
+    if (outcome === 'running' || outcome === 'planned') {
+      this.saveResearchResume({ activeRunId: runId })
+    } else {
+      const currentResume = this.getResearchResume()
+      if (currentResume.activeRunId === runId) {
+        const fallbackRunId = this.database.prepare(`
+          SELECT id FROM research_runs
+          WHERE project_id = ? AND id != ? AND outcome IN ('running', 'planned')
+          ORDER BY CASE outcome WHEN 'running' THEN 0 ELSE 1 END, updated_at DESC
+          LIMIT 1
+        `).get(this.current.projectId, runId)?.id
+        this.saveResearchResume({ activeRunId: fallbackRunId || null })
+      }
+    }
+    return this.getResearchWorkspace()
+  }
+
+  saveResearchArtifact(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('成果登记格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧状态写入已取消。')
+    }
+    const artifactId = input.id === undefined
+      ? crypto.randomUUID()
+      : ensureResearchText(input.id, '成果 ID', 120, { required: true })
+    const existing = this.database.prepare(`
+      SELECT project_id, run_id, label, role, path_original, created_at
+      FROM research_artifacts WHERE id = ?
+    `).get(artifactId)
+    if (existing && existing.project_id !== this.current.projectId) throw new Error('成果不属于当前课题。')
+    const runId = input.runId === undefined
+      ? existing?.run_id
+      : ensureResearchText(input.runId, '测试 ID', 120, { required: true })
+    const run = this.database.prepare('SELECT id FROM research_runs WHERE id = ? AND project_id = ?').get(
+      runId,
+      this.current.projectId,
+    )
+    if (!run) throw new Error('测试不存在或不属于当前课题，成果未登记。')
+    const artifactPath = input.filePath === undefined && existing ? existing.path_original : input.filePath
+    const inspected = inspectResearchArtifactPath(artifactPath)
+    const label = input.label === undefined && existing
+      ? existing.label
+      : ensureResearchText(input.label || path.basename(inspected.resolvedPath), '成果名称', 240, { required: true })
+    const role = input.role === undefined
+      ? existing?.role || (inspected.kind === 'directory' ? 'directory' : 'other')
+      : ensureResearchText(input.role, '成果角色', 40, { required: true })
+    if (!RESEARCH_ARTIFACT_ROLE_VALUES.has(role)) throw new Error('成果角色无效。')
+    const timestamp = now()
+    this.database.prepare(`
+      INSERT INTO research_artifacts(
+        id, project_id, run_id, label, role, path_original, path_resolved, kind,
+        exists_state, size_bytes, modified_at, content_sha256, metadata_json,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'found', ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        run_id = excluded.run_id,
+        label = excluded.label,
+        role = excluded.role,
+        path_original = excluded.path_original,
+        path_resolved = excluded.path_resolved,
+        kind = excluded.kind,
+        exists_state = excluded.exists_state,
+        size_bytes = excluded.size_bytes,
+        modified_at = excluded.modified_at,
+        content_sha256 = excluded.content_sha256,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at
+      WHERE research_artifacts.project_id = excluded.project_id
+    `).run(
+      artifactId,
+      this.current.projectId,
+      runId,
+      label,
+      role,
+      inspected.originalPath,
+      inspected.resolvedPath,
+      inspected.kind,
+      inspected.sizeBytes ?? null,
+      inspected.modifiedAt,
+      inspected.contentSha256 || null,
+      JSON.stringify(inspected.metadata),
+      existing?.created_at || timestamp,
+      timestamp,
+    )
+    return this.getResearchWorkspace()
+  }
+
+  listResearchReports() {
+    this.#requireOpen()
+    const revisions = this.database.prepare(`
+      SELECT id, report_id, revision_number, snapshot_json, created_at
+      FROM research_report_revisions
+      WHERE project_id = ?
+      ORDER BY revision_number DESC
+    `).all(this.current.projectId)
+    const revisionsByReport = new Map()
+    for (const row of revisions) {
+      const values = revisionsByReport.get(row.report_id) || []
+      values.push({
+        id: row.id,
+        revisionNumber: row.revision_number,
+        snapshot: safeJson(row.snapshot_json, {}),
+        createdAt: row.created_at,
+      })
+      revisionsByReport.set(row.report_id, values)
+    }
+    return this.database.prepare(`
+      SELECT id, title, report_type, period, markdown, source_refs_json, status,
+             revision_number, created_at, updated_at, confirmed_at
+      FROM research_reports
+      WHERE project_id = ?
+      ORDER BY updated_at DESC, rowid DESC
+      LIMIT 500
+    `).all(this.current.projectId).map(row => ({
+      id: row.id,
+      title: row.title,
+      type: row.report_type,
+      period: row.period,
+      markdown: row.markdown,
+      sourceRefs: safeJson(row.source_refs_json, []),
+      status: row.status,
+      revisionNumber: row.revision_number,
+      revisions: revisionsByReport.get(row.id) || [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      confirmedAt: row.confirmed_at ?? undefined,
+    }))
+  }
+
+  getResearchReport(reportId) {
+    this.#requireOpen()
+    const id = ensureResearchText(reportId, '科研报告 ID', 120, { required: true })
+    const report = this.listResearchReports().find(candidate => candidate.id === id)
+    if (!report) throw new Error('科研报告不存在或不属于当前课题。')
+    return report
+  }
+
+  saveResearchReport(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('科研报告格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧状态写入已取消。')
+    }
+    if (input.status !== undefined && input.status !== 'draft') {
+      throw new Error('保存科研报告只能写入草稿；请使用确认操作形成正式记录。')
+    }
+    const reportId = input.id === undefined
+      ? crypto.randomUUID()
+      : ensureResearchText(input.id, '科研报告 ID', 120, { required: true })
+    const existing = this.database.prepare(`
+      SELECT project_id, title, report_type, period, markdown, source_refs_json,
+             status, revision_number, created_at, updated_at, confirmed_at
+      FROM research_reports WHERE id = ?
+    `).get(reportId)
+    if (existing && existing.project_id !== this.current.projectId) throw new Error('科研报告不属于当前课题。')
+    const title = input.title === undefined && existing
+      ? existing.title
+      : ensureResearchText(input.title, '科研报告标题', 300, { required: true })
+    const type = input.type === undefined && existing
+      ? existing.report_type
+      : ensureResearchText(input.type, '科研报告类型', 40, { required: true })
+    if (!RESEARCH_REPORT_TYPE_VALUES.has(type)) throw new Error('科研报告类型无效。')
+    const period = input.period === undefined && existing
+      ? existing.period
+      : ensureResearchText(input.period, '科研报告周期', 400)
+    const markdown = input.markdown === undefined && existing
+      ? existing.markdown
+      : ensureResearchText(input.markdown, '科研报告正文', 1000000)
+    const sourceRefs = input.sourceRefs === undefined && existing
+      ? safeJson(existing.source_refs_json, [])
+      : this.#validatedResearchRefs(input.sourceRefs, '科研报告来源')
+    if (input.sourceRefs === undefined && existing) this.#validatedResearchRefs(sourceRefs, '科研报告来源')
+    const timestamp = now()
+    const nextStatus = 'draft'
+    const changed = !existing || title !== existing.title || type !== existing.report_type
+      || period !== existing.period || markdown !== existing.markdown
+      || JSON.stringify(sourceRefs) !== existing.source_refs_json || existing.status !== nextStatus
+    if (!changed) return this.getResearchReport(reportId)
+    const nextRevision = existing ? existing.revision_number + 1 : 1
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      if (existing) {
+        this.database.prepare(`
+          INSERT INTO research_report_revisions(
+            id, report_id, project_id, revision_number, snapshot_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          crypto.randomUUID(),
+          reportId,
+          this.current.projectId,
+          existing.revision_number,
+          JSON.stringify({
+            title: existing.title,
+            type: existing.report_type,
+            period: existing.period,
+            markdown: existing.markdown,
+            sourceRefs: safeJson(existing.source_refs_json, []),
+            status: existing.status,
+            confirmedAt: existing.confirmed_at ?? undefined,
+            updatedAt: existing.updated_at,
+          }),
+          timestamp,
+        )
+        this.database.prepare(`
+          UPDATE research_reports
+          SET title = ?, report_type = ?, period = ?, markdown = ?, source_refs_json = ?,
+              status = 'draft', revision_number = ?, updated_at = ?, confirmed_at = NULL
+          WHERE id = ? AND project_id = ?
+        `).run(
+          title, type, period, markdown, JSON.stringify(sourceRefs), nextRevision,
+          timestamp, reportId, this.current.projectId,
+        )
+      } else {
+        this.database.prepare(`
+          INSERT INTO research_reports(
+            id, project_id, title, report_type, period, markdown, source_refs_json,
+            status, revision_number, created_at, updated_at, confirmed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, NULL)
+        `).run(
+          reportId, this.current.projectId, title, type, period, markdown,
+          JSON.stringify(sourceRefs), timestamp, timestamp,
+        )
+      }
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getResearchReport(reportId)
+  }
+
+  confirmResearchReport(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('科研报告确认格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧状态写入已取消。')
+    }
+    const reportId = ensureResearchText(input.id, '科研报告 ID', 120, { required: true })
+    const existing = this.database.prepare(`
+      SELECT project_id, title, report_type, period, markdown, source_refs_json,
+             status, revision_number, created_at, updated_at, confirmed_at
+      FROM research_reports WHERE id = ?
+    `).get(reportId)
+    if (!existing || existing.project_id !== this.current.projectId) throw new Error('科研报告不存在或不属于当前课题。')
+    if (!existing.markdown.trim()) throw new Error('科研报告正文为空，不能确认。')
+    this.#validatedResearchRefs(safeJson(existing.source_refs_json, []), '科研报告来源')
+    if (existing.status === 'confirmed') return this.getResearchReport(reportId)
+    const timestamp = now()
+    this.database.prepare(`
+      UPDATE research_reports SET status = 'confirmed', confirmed_at = ?, updated_at = ?
+      WHERE id = ? AND project_id = ?
+    `).run(timestamp, timestamp, reportId, this.current.projectId)
+    return this.getResearchReport(reportId)
+  }
+
+  exportResearchReport(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('科研报告导出格式无效。')
+    const report = this.getResearchReport(input.id)
+    let filePath
+    if (input.filePath === undefined || input.filePath === null || input.filePath === '') {
+      const baseName = safeFileName(report.title).replace(/\.[^.]+$/, '').slice(0, 100)
+      const suffix = now().replace(/[:.]/g, '-')
+      filePath = path.join(this.current.path, 'exports', `${baseName}-${suffix}.md`)
+    } else {
+      const requested = ensureResearchText(input.filePath, '科研报告导出路径', 4000, { required: true })
+      if (!path.isAbsolute(requested)) throw new Error('科研报告导出路径必须是绝对路径。')
+      filePath = path.extname(requested).toLowerCase() === '.md' ? path.resolve(requested) : path.resolve(`${requested}.md`)
+      const parent = path.dirname(filePath)
+      if (!fs.existsSync(parent) || !fs.statSync(parent).isDirectory()) throw new Error('科研报告导出目录不存在。')
+    }
+    const bytes = Buffer.from(renderResearchReportMarkdown(report), 'utf8')
+    fs.writeFileSync(filePath, bytes)
+    const timestamp = now()
+    const fileSha256 = crypto.createHash('sha256').update(bytes).digest('hex')
+    this.database.prepare(`
+      INSERT INTO research_report_exports(id, report_id, project_id, file_path, file_sha256, exported_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(crypto.randomUUID(), report.id, this.current.projectId, filePath, fileSha256, timestamp)
+    return { reportId: report.id, filePath, fileSha256, format: 'markdown', exportedAt: timestamp }
+  }
+
+  getZoteroSyncCapabilities() {
+    this.#requireOpen()
+    return zoteroSyncCapabilities()
+  }
+
+  previewZoteroMetadataSync(input = {}) {
+    this.#requireOpen()
+    const records = Array.isArray(input.records) ? input.records : []
+    const existing = this.database.prepare(`
+      SELECT item_id, external_library_id, external_item_key, record_fingerprint
+      FROM bibliographic_external_refs
+      WHERE project_id = ? AND adapter = ?
+    `).all(this.current.projectId, ZOTERO_SYNC_ADAPTER).map(row => ({
+      itemId: row.item_id,
+      libraryId: row.external_library_id,
+      itemKey: row.external_item_key,
+      fingerprint: row.record_fingerprint,
+    }))
+    const plan = planZoteroMetadataSync({
+      incoming: records,
+      existing,
+      resolveLocalItem: record => this.#resolveZoteroLocalItem(record),
+    })
+    return {
+      ...plan,
+      sourceFingerprint: crypto.createHash('sha256').update(JSON.stringify(records)).digest('hex'),
+      writesZoteroDatabase: false,
+    }
+  }
+
+  applyZoteroMetadataSync(input = {}) {
+    this.#requireOpen()
+    const plan = this.previewZoteroMetadataSync(input)
+    if (plan.conflicts.length || plan.unmatched.length) {
+      throw new Error(`Zotero 增量绑定未执行：${plan.conflicts.length} 条冲突，${plan.unmatched.length} 条尚未匹配本地题录。`)
+    }
+    const timestamp = now()
+    const runId = crypto.randomUUID()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      for (const record of [...plan.added, ...plan.updated]) {
+        this.database.prepare(`
+          INSERT INTO bibliographic_external_refs(
+            id, project_id, item_id, adapter, external_library_id, external_item_key,
+            external_version, collections_json, attachment_keys_json, record_fingerprint,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(project_id, adapter, external_library_id, external_item_key) DO UPDATE SET
+            item_id = excluded.item_id,
+            external_version = excluded.external_version,
+            collections_json = excluded.collections_json,
+            attachment_keys_json = excluded.attachment_keys_json,
+            record_fingerprint = excluded.record_fingerprint,
+            updated_at = excluded.updated_at
+        `).run(
+          crypto.randomUUID(), this.current.projectId, record.localItemId, ZOTERO_SYNC_ADAPTER,
+          record.libraryId, record.itemKey, record.version || null, JSON.stringify(record.collections),
+          JSON.stringify(record.attachmentKeys), record.fingerprint, timestamp, timestamp,
+        )
+      }
+      this.database.prepare(`
+        INSERT INTO bibliographic_sync_runs(
+          id, project_id, adapter, mode, status, source_fingerprint, plan_json, created_at
+        ) VALUES (?, ?, ?, 'applied', 'completed', ?, ?, ?)
+      `).run(runId, this.current.projectId, ZOTERO_SYNC_ADAPTER, plan.sourceFingerprint, JSON.stringify({ counts: plan.counts }), timestamp)
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    return { ...plan, runId, appliedAt: timestamp }
+  }
+
+  exportPortableMarkdown(input = {}) {
+    this.#requireOpen()
+    const kind = String(input.kind || '')
+    const entityId = String(input.id || '').trim()
+    const directory = path.resolve(String(input.directory || ''))
+    if (!path.isAbsolute(String(input.directory || '')) || !fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) {
+      throw new Error('请选择已存在的 Markdown 导出目录。')
+    }
+    const project = this.database.prepare('SELECT id, name FROM projects WHERE id = ?').get(this.current.projectId)
+    const snapshot = this.#portableMarkdownSnapshot(kind, entityId, project)
+    const fileName = portableMarkdownFileName(kind, snapshot.title, entityId)
+    const filePath = path.join(directory, fileName)
+    const markdown = renderPortableMarkdown({ kind, id: entityId, project, ...snapshot })
+    const bytes = Buffer.from(markdown, 'utf8')
+    const overwritten = fs.existsSync(filePath)
+    const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`
+    fs.writeFileSync(temporaryPath, bytes)
+    fs.renameSync(temporaryPath, filePath)
+    const exportedAt = now()
+    const fileSha256 = crypto.createHash('sha256').update(bytes).digest('hex')
+    this.database.prepare(`
+      INSERT INTO portable_markdown_exports(
+        id, project_id, entity_kind, entity_id, file_path, file_sha256, exported_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(crypto.randomUUID(), this.current.projectId, kind, entityId, filePath, fileSha256, exportedAt)
+    return {
+      kind, entityId, filePath, fileName, fileSha256, exportedAt,
+      sourceOfTruth: 'sqlite', direction: 'one-way-snapshot', overwritten,
+    }
+  }
+
+  listResearchClaims(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('科研论断查询格式无效。')
+    const includeArchived = input.includeArchived === true
+    const revisions = this.database.prepare(`
+      SELECT id, claim_id, revision_number, snapshot_json, created_at
+      FROM research_claim_revisions
+      WHERE project_id = ?
+      ORDER BY revision_number DESC
+    `).all(this.current.projectId)
+    const revisionsByClaim = new Map()
+    for (const row of revisions) {
+      const values = revisionsByClaim.get(row.claim_id) || []
+      values.push({
+        id: row.id,
+        revisionNumber: row.revision_number,
+        snapshot: safeJson(row.snapshot_json, {}),
+        createdAt: row.created_at,
+      })
+      revisionsByClaim.set(row.claim_id, values)
+    }
+    return this.database.prepare(`
+      SELECT id, section, text, status, required_evidence, evidence_refs_json,
+             revision_number, created_at, updated_at, confirmed_at, archived_at
+      FROM research_claims
+      WHERE project_id = ? AND (? = 1 OR archived_at IS NULL)
+      ORDER BY updated_at DESC, rowid DESC
+      LIMIT 1000
+    `).all(this.current.projectId, includeArchived ? 1 : 0).map(row => ({
+      id: row.id,
+      section: row.section,
+      text: row.text,
+      status: row.status,
+      requiredEvidence: safeJson(row.required_evidence, []),
+      evidenceRefs: safeJson(row.evidence_refs_json, []),
+      revisionNumber: row.revision_number,
+      revisions: revisionsByClaim.get(row.id) || [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      confirmedAt: row.confirmed_at ?? undefined,
+      archivedAt: row.archived_at ?? undefined,
+    }))
+  }
+
+  saveResearchClaim(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('科研论断格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧状态写入已取消。')
+    }
+    const claimId = input.id === undefined
+      ? crypto.randomUUID()
+      : ensureResearchText(input.id, '科研论断 ID', 120, { required: true })
+    const existing = this.database.prepare(`
+      SELECT project_id, section, text, status, required_evidence, evidence_refs_json,
+             revision_number, created_at, updated_at, confirmed_at, archived_at
+      FROM research_claims WHERE id = ?
+    `).get(claimId)
+    if (existing && existing.project_id !== this.current.projectId) throw new Error('科研论断不属于当前课题。')
+    if (existing?.archived_at) throw new Error('已归档科研论断不可修改。')
+    const section = input.section === undefined && existing
+      ? existing.section
+      : ensureResearchText(input.section, '论文章节', 300)
+    const text = input.text === undefined && existing
+      ? existing.text
+      : ensureResearchText(input.text, '科研论断', 100000, { required: true })
+    let status = input.status === undefined
+      ? existing?.status || 'draft'
+      : ensureResearchText(input.status, '科研论断状态', 40, { required: true })
+    if (!RESEARCH_CLAIM_STATUS_VALUES.has(status)) throw new Error('科研论断状态无效。')
+    const requiredEvidence = input.requiredEvidence === undefined && existing
+      ? safeJson(existing.required_evidence, [])
+      : ensureResearchStringList(input.requiredEvidence, '所需证据', 100, 200)
+    const evidenceRefs = input.evidenceRefs === undefined && existing
+      ? safeJson(existing.evidence_refs_json, [])
+      : this.#validatedResearchRefs(input.evidenceRefs, '科研论断证据')
+    if (input.evidenceRefs === undefined && existing) this.#validatedResearchRefs(evidenceRefs, '科研论断证据')
+    const confirmedContentChanged = existing?.status === 'confirmed' && input.status === undefined && (
+      section !== existing.section || text !== existing.text
+      || JSON.stringify(requiredEvidence) !== existing.required_evidence
+      || JSON.stringify(evidenceRefs) !== existing.evidence_refs_json
+    )
+    if (confirmedContentChanged) status = 'draft'
+    if (status === 'confirmed' && evidenceRefs.length === 0) {
+      throw new Error('没有已验证证据的科研论断只能保存为草稿，不能确认。')
+    }
+    const timestamp = now()
+    const changed = !existing || section !== existing.section || text !== existing.text || status !== existing.status
+      || JSON.stringify(requiredEvidence) !== existing.required_evidence
+      || JSON.stringify(evidenceRefs) !== existing.evidence_refs_json
+    if (!changed) return this.listResearchClaims().find(candidate => candidate.id === claimId)
+    const nextRevision = existing ? existing.revision_number + 1 : 1
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      if (existing) {
+        this.database.prepare(`
+          INSERT INTO research_claim_revisions(
+            id, claim_id, project_id, revision_number, snapshot_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          crypto.randomUUID(), claimId, this.current.projectId, existing.revision_number,
+          JSON.stringify({
+            section: existing.section,
+            text: existing.text,
+            status: existing.status,
+            requiredEvidence: safeJson(existing.required_evidence, []),
+            evidenceRefs: safeJson(existing.evidence_refs_json, []),
+            confirmedAt: existing.confirmed_at ?? undefined,
+            archivedAt: existing.archived_at ?? undefined,
+            updatedAt: existing.updated_at,
+          }),
+          timestamp,
+        )
+        this.database.prepare(`
+          UPDATE research_claims
+          SET section = ?, text = ?, status = ?, required_evidence = ?, evidence_refs_json = ?,
+              revision_number = ?, updated_at = ?, confirmed_at = ?
+          WHERE id = ? AND project_id = ?
+        `).run(
+          section, text, status, JSON.stringify(requiredEvidence), JSON.stringify(evidenceRefs),
+          nextRevision, timestamp, status === 'confirmed' ? (existing.confirmed_at || timestamp) : null,
+          claimId, this.current.projectId,
+        )
+      } else {
+        this.database.prepare(`
+          INSERT INTO research_claims(
+            id, project_id, section, text, status, required_evidence, evidence_refs_json,
+            revision_number, created_at, updated_at, confirmed_at, archived_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL)
+        `).run(
+          claimId, this.current.projectId, section, text, status,
+          JSON.stringify(requiredEvidence), JSON.stringify(evidenceRefs), timestamp, timestamp,
+          status === 'confirmed' ? timestamp : null,
+        )
+      }
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    return this.listResearchClaims().find(candidate => candidate.id === claimId)
+  }
+
+  archiveResearchClaim(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('科研论断归档格式无效。')
+    if (input.projectId !== undefined && input.projectId !== this.current.projectId) {
+      throw new Error('课题已切换，本次旧状态写入已取消。')
+    }
+    const claimId = ensureResearchText(input.id, '科研论断 ID', 120, { required: true })
+    const existing = this.database.prepare(`
+      SELECT project_id, section, text, status, required_evidence, evidence_refs_json,
+             revision_number, created_at, updated_at, confirmed_at, archived_at
+      FROM research_claims WHERE id = ?
+    `).get(claimId)
+    if (!existing || existing.project_id !== this.current.projectId) throw new Error('科研论断不存在或不属于当前课题。')
+    if (existing.archived_at) return { id: claimId, archivedAt: existing.archived_at, alreadyArchived: true }
+    const timestamp = now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare(`
+        INSERT INTO research_claim_revisions(
+          id, claim_id, project_id, revision_number, snapshot_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        crypto.randomUUID(), claimId, this.current.projectId, existing.revision_number,
+        JSON.stringify({
+          section: existing.section,
+          text: existing.text,
+          status: existing.status,
+          requiredEvidence: safeJson(existing.required_evidence, []),
+          evidenceRefs: safeJson(existing.evidence_refs_json, []),
+          confirmedAt: existing.confirmed_at ?? undefined,
+          updatedAt: existing.updated_at,
+        }),
+        timestamp,
+      )
+      this.database.prepare(`
+        UPDATE research_claims
+        SET archived_at = ?, updated_at = ?, revision_number = revision_number + 1
+        WHERE id = ? AND project_id = ?
+      `).run(timestamp, timestamp, claimId, this.current.projectId)
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    return { id: claimId, archivedAt: timestamp, alreadyArchived: false }
+  }
+
+  getReadingTranslationSegments(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('对照翻译缓存查询格式无效。')
+    const sourceId = ensureResearchText(input.sourceId, '文献来源 ID', 120, { required: true })
+    const source = this.database.prepare(`
+      SELECT id FROM sources WHERE id = ? AND project_id = ? AND archived_at IS NULL
+    `).get(sourceId, this.current.projectId)
+    if (!source) throw new Error('文献来源不存在或不属于当前研究库。')
+    if (!Array.isArray(input.segments)) throw new Error('翻译分段查询必须是列表。')
+    if (input.segments.length > 1000) throw new Error('一次最多查询 1000 个翻译分段。')
+    const requested = input.segments.map((segment, index) => {
+      if (!segment || typeof segment !== 'object' || Array.isArray(segment)) throw new Error(`第 ${index + 1} 个翻译分段格式无效。`)
+      return {
+        segmentId: ensureResearchText(segment.segmentId, `第 ${index + 1} 个分段 ID`, 240, { required: true }),
+        sourceHash: ensureResearchText(segment.sourceHash, `第 ${index + 1} 个原文哈希`, 128, { required: true }),
+      }
+    })
+    const found = []
+    const misses = []
+    const statement = this.database.prepare(`
+      SELECT segment_id, source_hash, source_text, translated_text, source_language,
+             target_language, provider, model, status, error, attempts, created_at, updated_at
+      FROM reading_translation_segments
+      WHERE project_id = ? AND source_id = ? AND segment_id = ? AND source_hash = ?
+    `)
+    const overrideStatement = this.database.prepare(`
+      SELECT working_source_hash, working_source_text, locked, locked_at
+      FROM reading_translation_overrides
+      WHERE project_id = ? AND source_id = ? AND segment_id = ? AND base_source_hash = ?
+    `)
+    for (const segment of requested) {
+      const override = overrideStatement.get(this.current.projectId, sourceId, segment.segmentId, segment.sourceHash)
+      const workingSourceHash = override?.working_source_hash || segment.sourceHash
+      const row = statement.get(this.current.projectId, sourceId, segment.segmentId, workingSourceHash)
+      if (!row) {
+        misses.push(segment)
+        continue
+      }
+      found.push({
+        sourceId,
+        segmentId: row.segment_id,
+        sourceHash: row.source_hash,
+        baseSourceHash: segment.sourceHash,
+        sourceText: row.source_text,
+        translatedText: row.translated_text,
+        sourceLanguage: row.source_language,
+        targetLanguage: row.target_language,
+        provider: row.provider,
+        model: row.model ?? undefined,
+        status: row.status,
+        error: row.error ?? undefined,
+        attempts: row.attempts,
+        locked: Boolean(override?.locked),
+        lockedAt: override?.locked_at ?? undefined,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })
+    }
+    return { sourceId, segments: found, misses }
+  }
+
+  saveReadingTranslationSegment(input = {}) {
+    this.#requireOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('对照翻译缓存格式无效。')
+    const sourceId = ensureResearchText(input.sourceId, '文献来源 ID', 120, { required: true })
+    const source = this.database.prepare(`
+      SELECT id FROM sources WHERE id = ? AND project_id = ? AND archived_at IS NULL
+    `).get(sourceId, this.current.projectId)
+    if (!source) throw new Error('文献来源不存在或不属于当前研究库。')
+    const segmentId = ensureResearchText(input.segmentId, '分段 ID', 240, { required: true })
+    const sourceText = ensureResearchText(input.sourceText, '分段原文', 200000, { required: true })
+    const sourceHash = ensureResearchText(input.sourceHash, '分段原文哈希', 128, { required: true }).toLowerCase()
+    if (sha256Text(sourceText) !== sourceHash && bilingualSourceHash(sourceText) !== sourceHash) {
+      throw new Error('分段原文哈希与原文不一致。')
+    }
+    const status = ensureResearchText(input.status, '翻译状态', 40, { required: true })
+    if (!TRANSLATION_SEGMENT_STATUS_VALUES.has(status)) throw new Error('翻译状态无效。')
+    const translatedText = ensureResearchText(input.translatedText, '分段译文', 200000)
+    const errorText = ensureResearchText(input.error, '翻译错误', 10000)
+    if (status === 'translated' && !translatedText) throw new Error('已完成的翻译必须包含译文。')
+    if (status === 'failed' && !errorText) throw new Error('失败的翻译必须包含错误说明。')
+    const provider = ensureResearchText(input.provider, '翻译提供方', 160, { required: true })
+    const model = ensureResearchText(input.model, '翻译模型', 240)
+    const sourceLanguage = ensureResearchText(input.sourceLanguage || 'en', '原文语言', 40, { required: true })
+    const targetLanguage = ensureResearchText(input.targetLanguage || 'zh', '译文语言', 40, { required: true })
+    const attempts = input.attempts === undefined ? 0 : Number(input.attempts)
+    if (!Number.isInteger(attempts) || attempts < 0 || attempts > 100000) throw new Error('翻译尝试次数无效。')
+    const timestamp = now()
+    const baseSourceHash = ensureResearchText(input.baseSourceHash || sourceHash, '原始分段哈希', 128, { required: true }).toLowerCase()
+    const previousOverride = this.database.prepare(`
+      SELECT working_source_hash, working_source_text, locked, locked_at, created_at
+      FROM reading_translation_overrides
+      WHERE project_id = ? AND source_id = ? AND segment_id = ? AND base_source_hash = ?
+    `).get(this.current.projectId, sourceId, segmentId, baseSourceHash)
+    const previousCache = previousOverride ? this.database.prepare(`
+      SELECT translated_text, provider, model, status, error, attempts
+      FROM reading_translation_segments
+      WHERE project_id = ? AND source_id = ? AND segment_id = ? AND source_hash = ?
+    `).get(this.current.projectId, sourceId, segmentId, previousOverride.working_source_hash) : undefined
+    const unchangedLockedWrite = previousOverride?.locked
+      && previousOverride.working_source_hash === sourceHash
+      && previousCache?.translated_text === translatedText
+      && previousCache?.status === status
+    if (previousOverride?.locked && !input.unlock && !unchangedLockedWrite) {
+      throw new Error('这段译文已锁定；请先显式解锁再修改、重试或更换引擎。')
+    }
+    const locked = input.locked === undefined ? Boolean(previousOverride?.locked) : Boolean(input.locked)
+    const lockedAt = locked ? previousOverride?.locked_at || timestamp : null
+    const existing = this.database.prepare(`
+      SELECT created_at FROM reading_translation_segments
+      WHERE project_id = ? AND source_id = ? AND segment_id = ? AND source_hash = ?
+    `).get(this.current.projectId, sourceId, segmentId, sourceHash)
+    this.database.prepare(`
+      INSERT INTO reading_translation_segments(
+        project_id, source_id, segment_id, source_hash, source_text, translated_text,
+        source_language, target_language, provider, model, status, error, created_at,
+        updated_at, attempts
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, source_id, segment_id, source_hash) DO UPDATE SET
+        source_text = excluded.source_text,
+        translated_text = excluded.translated_text,
+        source_language = excluded.source_language,
+        target_language = excluded.target_language,
+        provider = excluded.provider,
+        model = excluded.model,
+        status = excluded.status,
+        error = excluded.error,
+        attempts = excluded.attempts,
+        updated_at = excluded.updated_at
+    `).run(
+      this.current.projectId,
+      sourceId,
+      segmentId,
+      sourceHash,
+      sourceText,
+      translatedText,
+      sourceLanguage,
+      targetLanguage,
+      provider,
+      model || null,
+      status,
+      errorText || null,
+      existing?.created_at || timestamp,
+      timestamp,
+      attempts,
+    )
+    this.database.prepare(`
+      INSERT INTO reading_translation_overrides(
+        project_id, source_id, segment_id, base_source_hash, working_source_hash,
+        working_source_text, locked, locked_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, source_id, segment_id, base_source_hash) DO UPDATE SET
+        working_source_hash = excluded.working_source_hash,
+        working_source_text = excluded.working_source_text,
+        locked = excluded.locked,
+        locked_at = excluded.locked_at,
+        updated_at = excluded.updated_at
+    `).run(
+      this.current.projectId, sourceId, segmentId, baseSourceHash, sourceHash, sourceText,
+      locked ? 1 : 0, lockedAt, previousOverride?.created_at || timestamp, timestamp,
+    )
+    return this.getReadingTranslationSegments({ sourceId, segments: [{ segmentId, sourceHash: baseSourceHash }] }).segments[0]
+  }
+
+  listReadingTranslationTerms(input = {}) {
+    this.#requireOpen()
+    const sourceId = ensureResearchText(input.sourceId, '文献来源 ID', 120, { required: true })
+    this.#requireTranslationSource(sourceId)
+    return this.database.prepare(`
+      SELECT id, source_term, target_term, note, created_at, updated_at
+      FROM reading_translation_terms
+      WHERE project_id = ? AND source_id = ?
+      ORDER BY source_term COLLATE NOCASE, updated_at DESC
+    `).all(this.current.projectId, sourceId).map(row => ({
+      id: row.id,
+      sourceId,
+      sourceTerm: row.source_term,
+      targetTerm: row.target_term,
+      note: row.note,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }))
+  }
+
+  saveReadingTranslationTerm(input = {}) {
+    this.#requireOpen()
+    const sourceId = ensureResearchText(input.sourceId, '文献来源 ID', 120, { required: true })
+    this.#requireTranslationSource(sourceId)
+    const sourceTerm = ensureResearchText(input.sourceTerm, '原文术语', 240, { required: true })
+    const targetTerm = ensureResearchText(input.targetTerm, '中文术语', 240, { required: true })
+    const note = ensureResearchText(input.note, '术语备注', 2000)
+    const timestamp = now()
+    const existing = this.database.prepare(`
+      SELECT id, created_at FROM reading_translation_terms
+      WHERE project_id = ? AND source_id = ? AND source_term = ?
+    `).get(this.current.projectId, sourceId, sourceTerm)
+    const id = existing?.id || crypto.randomUUID()
+    this.database.prepare(`
+      INSERT INTO reading_translation_terms(id, project_id, source_id, source_term, target_term, note, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, source_id, source_term) DO UPDATE SET
+        target_term = excluded.target_term, note = excluded.note, updated_at = excluded.updated_at
+    `).run(id, this.current.projectId, sourceId, sourceTerm, targetTerm, note, existing?.created_at || timestamp, timestamp)
+    return this.listReadingTranslationTerms({ sourceId })
+  }
+
+  deleteReadingTranslationTerm(input = {}) {
+    this.#requireOpen()
+    const sourceId = ensureResearchText(input.sourceId, '文献来源 ID', 120, { required: true })
+    this.#requireTranslationSource(sourceId)
+    const termId = ensureResearchText(input.termId, '术语 ID', 120, { required: true })
+    const removed = this.database.prepare(`
+      DELETE FROM reading_translation_terms WHERE id = ? AND project_id = ? AND source_id = ?
+    `).run(termId, this.current.projectId, sourceId)
+    if (!removed.changes) throw new Error('术语不存在或不属于当前文献。')
+    return this.listReadingTranslationTerms({ sourceId })
+  }
+
+  #requireTranslationSource(sourceId) {
+    const source = this.database.prepare(`
+      SELECT id FROM sources WHERE id = ? AND project_id = ? AND archived_at IS NULL
+    `).get(sourceId, this.current.projectId)
+    if (!source) throw new Error('文献来源不存在或不属于当前研究库。')
+    return source
   }
 
   searchLibrary(input = {}) {
@@ -1018,6 +2993,111 @@ class WorkspaceService {
     }
   }
 
+  #resolveZoteroLocalItem(record) {
+    const conditions = ['project_id = ?', 'archived_at IS NULL']
+    const parameters = [this.current.projectId]
+    if (record.localItemId) {
+      conditions.push('id = ?')
+      parameters.push(record.localItemId)
+    } else if (record.rawRecordId) {
+      conditions.push('raw_record_id = ?')
+      parameters.push(record.rawRecordId)
+      if (record.rawRecordIdField) {
+        conditions.push('raw_record_id_field = ?')
+        parameters.push(record.rawRecordIdField)
+      }
+      if (record.importFormat) {
+        conditions.push('import_format = ?')
+        parameters.push(record.importFormat)
+      }
+    } else {
+      return undefined
+    }
+    const matches = this.database.prepare(`
+      SELECT id FROM bibliographic_items WHERE ${conditions.join(' AND ')} LIMIT 2
+    `).all(...parameters)
+    return matches.length === 1 ? matches[0].id : undefined
+  }
+
+  #portableMarkdownSnapshot(kind, entityId, project) {
+    if (kind === 'reading_card') {
+      const snapshot = this.getPaperReadingCard(entityId)
+      if (snapshot.card?.status !== 'accepted') throw new Error('阅读卡必须先由用户采纳，才能导出正式 Markdown。')
+      const title = `阅读卡 · ${snapshot.paper.title}`
+      const references = []
+      const body = snapshot.card.sections.map(section => {
+        for (const citation of section.citations) {
+          references.push(this.#portableCitationReference({ ...citation, paperTitle: snapshot.paper.title }))
+        }
+        return `## ${section.title}\n\n${section.content}\n\n${section.citations.map(citation => `- ${citation.sourceName || snapshot.paper.title}${citation.pageNumber ? ` · 第 ${citation.pageNumber} 页` : ''}`).join('\n')}`
+      }).join('\n\n')
+      return {
+        title, status: 'accepted', createdAt: snapshot.card.generatedAt, updatedAt: snapshot.card.acceptedAt || snapshot.card.generatedAt,
+        body, references: uniquePortableReferences(references), links: [],
+      }
+    }
+    if (kind === 'review_document') {
+      const document = this.getReviewDocument(entityId)
+      if (!['reviewed', 'exported'].includes(document.status)) throw new Error('复查文档必须先由用户确认，才能导出正式 Markdown。')
+      const references = []
+      const body = document.blocks.filter(block => !block.unsupported).map(block => {
+        for (const citation of block.citations) references.push(this.#portableCitationReference(citation))
+        const heading = block.blockType === 'heading' ? '##' : '###'
+        return `${heading} ${reviewBlockPortableLabel(block.blockType)}\n\n${block.content}`
+      }).join('\n\n')
+      const links = document.items.map(item => ({
+        fileName: portableMarkdownFileName('reading_card', `阅读卡 · ${item.title}`, item.id), label: `阅读卡 · ${item.title}`,
+      }))
+      return { title: document.title, status: document.status, createdAt: document.createdAt, updatedAt: document.updatedAt, body, references: uniquePortableReferences(references), links }
+    }
+    if (kind === 'experiment_retrospective') {
+      const workspace = this.getResearchWorkspace()
+      const run = workspace.runs.find(candidate => candidate.id === entityId)
+      if (!run) throw new Error('找不到要导出的实验 Run。')
+      if (['planned', 'running'].includes(run.outcome)) throw new Error('实验 Run 尚未形成结果，不能导出正式复盘。')
+      const artifacts = workspace.artifacts.filter(artifact => artifact.runId === run.id)
+      const variables = run.changedVariables.length
+        ? run.changedVariables.map(item => `- ${item.name}: ${item.previousValue ? `${item.previousValue} → ` : ''}${item.currentValue}${item.unit ? ` ${item.unit}` : ''}`).join('\n')
+        : '- 未记录变量变化'
+      const body = `## 目的\n\n${run.purpose || '未记录'}\n\n## 可证伪假设\n\n${run.hypothesis || '未记录'}\n\n## 变量变化\n\n${variables}\n\n## 复现信息\n\n- 命令：\`${String(run.command || '未记录').replace(/`/g, '\\`')}\`\n- 环境：${run.environment || '未记录'}\n\n${run.procedure || ''}\n\n## 观察与结果\n\n${run.observations || '未记录'}\n\n## 异常\n\n${run.anomaly || '无'}\n\n## 下一步\n\n${run.nextStep || '未记录'}`
+      const references = artifacts.map(artifact => ({ label: artifact.label, type: artifact.role, runTitle: run.title, originalFile: artifact.filePath, id: artifact.id }))
+      return { title: `实验复盘 · ${run.title}`, status: run.outcome, createdAt: run.createdAt, updatedAt: run.updatedAt, body, references, links: [] }
+    }
+    if (kind === 'research_report') {
+      const report = this.getResearchReport(entityId)
+      if (report.status !== 'confirmed') throw new Error('科研报告必须先由用户确认，才能导出正式 Markdown。')
+      const workspace = this.getResearchWorkspace()
+      const links = report.sourceRefs.flatMap(ref => {
+        if (ref.type === 'run') {
+          const run = workspace.runs.find(candidate => candidate.id === ref.id)
+          return run ? [{ fileName: portableMarkdownFileName('experiment_retrospective', `实验复盘 · ${run.title}`, run.id), label: `实验复盘 · ${run.title}` }] : []
+        }
+        const paper = ref.type === 'bibliography' ? this.loadLibraryState().bibliographicItems.find(item => item.id === ref.id) : undefined
+        return paper ? [{ fileName: portableMarkdownFileName('reading_card', `阅读卡 · ${paper.title}`, paper.id), label: `阅读卡 · ${paper.title}` }] : []
+      })
+      const references = report.sourceRefs.map(ref => ({ label: ref.label || ref.type, type: ref.type, id: ref.id }))
+      return { title: report.title, status: report.status, createdAt: report.createdAt, updatedAt: report.updatedAt, body: report.markdown, references, links }
+    }
+    throw new Error('不支持的可迁移 Markdown 类型。')
+  }
+
+  #portableCitationReference(citation) {
+    const source = citation.sourceId ? this.database.prepare(`
+      SELECT name, path_relative FROM sources WHERE id = ? AND project_id = ?
+    `).get(citation.sourceId, this.current.projectId) : undefined
+    const original = citation.itemId ? this.database.prepare(`
+      SELECT path_original FROM bibliographic_attachments WHERE item_id = ? ORDER BY CASE role WHEN 'primary' THEN 0 ELSE 1 END LIMIT 1
+    `).get(citation.itemId) : undefined
+    return {
+      label: citation.label || source?.name || '论文证据',
+      paperTitle: citation.paperTitle,
+      pageNumber: citation.pageNumber,
+      originalFile: original?.path_original || (source?.path_relative ? path.join(this.current.path, source.path_relative) : undefined),
+      deepLink: citation.sourceId ? reviewDeepLink(citation.sourceId, citation.pageNumber, citation.fragmentId) : undefined,
+      id: citation.fragmentId || citation.sourceId,
+    }
+  }
+
   savePaperReadingCardDraft(input = {}) {
     this.#requireOpen()
     const itemId = String(input.itemId || '')
@@ -1146,6 +3226,35 @@ class WorkspaceService {
       throw error
     }
     return this.getPaperReadingCard(itemId)
+  }
+
+  #validatedResearchRefs(value, label) {
+    const refs = ensureResearchEvidenceRefs(value, label)
+    const statements = {
+      bibliography: this.database.prepare(`
+        SELECT title AS label FROM bibliographic_items
+        WHERE id = ? AND project_id = ? AND archived_at IS NULL
+      `),
+      source: this.database.prepare(`
+        SELECT name AS label FROM sources
+        WHERE id = ? AND project_id = ? AND archived_at IS NULL
+      `),
+      run: this.database.prepare(`
+        SELECT title AS label FROM research_runs WHERE id = ? AND project_id = ?
+      `),
+      artifact: this.database.prepare(`
+        SELECT label FROM research_artifacts WHERE id = ? AND project_id = ?
+      `),
+      milestone: this.database.prepare(`
+        SELECT title AS label FROM research_milestones
+        WHERE id = ? AND project_id = ? AND status != 'archived'
+      `),
+    }
+    return refs.map((ref) => {
+      const row = statements[ref.type].get(ref.id, this.current.projectId)
+      if (!row) throw new Error(`${label}“${ref.type}:${ref.id}”不存在或不属于当前课题。`)
+      return { type: ref.type, id: ref.id, label: ref.label || row.label }
+    })
   }
 
   #materializeReadingCardContext(itemId, context, fallbackSourceId, timestamp) {
@@ -1329,12 +3438,17 @@ class WorkspaceService {
     `).get(String(documentId || ''), this.current.projectId)
     if (!document) throw new Error('找不到这份复查文档。')
     const items = this.database.prepare(`
-      SELECT bi.id, bi.title, rdi.position
+      SELECT bi.id, bi.title, bi.item_type, bi.authors_json, bi.issued, bi.accessed,
+             bi.container_title, bi.publisher, bi.publisher_place, bi.volume, bi.issue,
+             bi.pages, bi.language, bi.identifiers_json, rdi.position
       FROM review_document_items rdi
       JOIN bibliographic_items bi ON bi.id = rdi.item_id
       WHERE rdi.document_id = ?
       ORDER BY rdi.position
-    `).all(document.id)
+    `).all(document.id).map((row, index) => {
+      const item = bibliographicSummaryFromRow(row)
+      return { ...item, position: row.position, citation: citationFormatter.format(item, { style: 'gb-t-7714-2015', sequence: index + 1 }) }
+    })
     const blocks = this.database.prepare(`
       SELECT id, position, block_type, content, content_sha256,
              source_fragment_id, unsupported
@@ -1376,6 +3490,19 @@ class WorkspaceService {
       items,
       blocks,
     }
+  }
+
+  confirmReviewDocument(input = {}) {
+    this.#requireOpen()
+    const document = this.getReviewDocument(input.documentId)
+    if (document.status === 'reviewed' || document.status === 'exported') return document
+    if (!document.blocks.some(block => !block.unsupported)) throw new Error('复查文档没有可确认的来源内容。')
+    const timestamp = now()
+    this.database.prepare(`
+      UPDATE review_documents SET status = 'reviewed', updated_at = ?
+      WHERE id = ? AND project_id = ?
+    `).run(timestamp, document.id, this.current.projectId)
+    return this.getReviewDocument(document.id)
   }
 
   createActionPack(input = {}) {
@@ -1507,26 +3634,7 @@ class WorkspaceService {
       status: row.status,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      evidence: this.database.prepare(`
-        SELECT id, evidence_type, entity_id, fragment_id, review_block_id,
-               review_document_id, source_id, item_id, label, excerpt,
-               page_number, anchor_json
-        FROM action_item_evidence
-        WHERE action_item_id = ? ORDER BY rowid
-      `).all(row.id).map(evidence => ({
-        id: evidence.id,
-        evidenceType: evidence.evidence_type,
-        entityId: evidence.entity_id,
-        fragmentId: evidence.fragment_id ?? undefined,
-        reviewBlockId: evidence.review_block_id ?? undefined,
-        reviewDocumentId: evidence.review_document_id ?? undefined,
-        sourceId: evidence.source_id ?? undefined,
-        itemId: evidence.item_id ?? undefined,
-        label: evidence.label,
-        excerpt: evidence.excerpt,
-        pageNumber: evidence.page_number ?? undefined,
-        anchor: evidence.anchor_json ? JSON.parse(evidence.anchor_json) : undefined,
-      })),
+      evidence: this.#actionEvidenceForItem(row.id),
     }))
     const events = this.database.prepare(`
       SELECT id, item_id, event_type, actor, note, created_at
@@ -1948,7 +4056,9 @@ class WorkspaceService {
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(crypto.randomUUID(), document.id, format, revisionHash, filePath, fileSha256, timestamp)
     this.database.prepare(`
-      UPDATE review_documents SET status = 'exported', updated_at = ? WHERE id = ?
+      UPDATE review_documents
+      SET status = CASE WHEN status = 'reviewed' THEN 'exported' ELSE status END, updated_at = ?
+      WHERE id = ?
     `).run(timestamp, document.id)
     return { filePath, fileSha256, revisionHash, format, exportedAt: timestamp }
   }
@@ -2010,7 +4120,7 @@ class WorkspaceService {
             path_resolved = excluded.path_resolved,
             exists_state = 'found',
             content_sha256 = excluded.content_sha256
-        `).run(`attachment:${sourceId}`, itemId, sourceId, String(input.fileName || fileName), absolutePath, actualSha256)
+        `).run(`attachment:${sourceId}`, itemId, sourceId, String(input.originalPath || input.fileName || fileName), absolutePath, actualSha256)
       }
       this.database.exec('COMMIT')
     } catch (error) {
@@ -2018,6 +4128,49 @@ class WorkspaceService {
       throw error
     }
     return { sourceId, fileName, contentSha256: actualSha256, pathRelative: path.relative(this.current.path, absolutePath) }
+  }
+
+  importExistingPdfFiles(filePaths = []) {
+    this.#requireOpen()
+    const imported = []
+    const skipped = []
+    for (const candidate of Array.isArray(filePaths) ? filePaths.slice(0, 500) : []) {
+      const absolutePath = path.resolve(String(candidate || ''))
+      if (!/\.pdf$/i.test(absolutePath) || !fs.existsSync(absolutePath)) {
+        skipped.push({ filePath: absolutePath, reason: '文件不存在或不是 PDF' })
+        continue
+      }
+      try {
+        const bytes = fs.readFileSync(absolutePath)
+        const sha256 = crypto.createHash('sha256').update(bytes).digest('hex')
+        const duplicate = this.database.prepare(`
+          SELECT id FROM sources
+          WHERE project_id = ? AND content_sha256 = ? AND archived_at IS NULL
+          LIMIT 1
+        `).get(this.current.projectId, sha256)
+        if (duplicate) {
+          skipped.push({ filePath: absolutePath, reason: '内容已经在研究库中' })
+          continue
+        }
+        const sourceId = `source-${crypto.randomUUID()}`
+        this.importSourceFile({
+          id: sourceId,
+          fileName: path.basename(absolutePath),
+          kind: 'PDF',
+          version: 1,
+          bytes,
+          contentSha256: sha256,
+          originalPath: absolutePath,
+        })
+        imported.push({ sourceId, fileName: path.basename(absolutePath) })
+      } catch (error) {
+        skipped.push({
+          filePath: absolutePath,
+          reason: error instanceof Error ? error.message : '导入失败',
+        })
+      }
+    }
+    return { imported, skipped }
   }
 
   readSourceFile(sourceId) {
@@ -2169,6 +4322,192 @@ class WorkspaceService {
     }
   }
 
+  getStructuredReading(input = {}) {
+    this.#requireOpen()
+    const sourceId = String(input.sourceId || '').trim()
+    const source = this.database.prepare(`
+      SELECT id, version, derived_markdown
+      FROM sources
+      WHERE id = ? AND project_id = ? AND archived_at IS NULL
+    `).get(sourceId, this.current.projectId)
+    if (!source) throw new Error('当前研究库中找不到这份资料。')
+    const sourceFingerprint = source.derived_markdown ? structuredSourceFingerprint(source.derived_markdown) : undefined
+    const document = this.database.prepare(`
+      SELECT id, source_fingerprint, current_version_id, created_at, updated_at
+      FROM structured_reading_documents
+      WHERE source_id = ? AND project_id = ?
+    `).get(sourceId, this.current.projectId)
+    if (!document) {
+      return { sourceId, sourceVersion: source.version, sourceFingerprint, stale: false, versions: [] }
+    }
+    const versions = this.database.prepare(`
+      SELECT id, document_id, source_id, version_number, source_fingerprint, source_version,
+             created_by, model, blocks_json, toc_json, diagnostics_json, quality_issues_json,
+             change_summary_json, note, restored_from_version_id, created_at
+      FROM structured_reading_versions
+      WHERE document_id = ? AND project_id = ?
+      ORDER BY version_number DESC
+    `).all(document.id, this.current.projectId).map(structuredReadingVersionFromRow)
+    const stale = Boolean(sourceFingerprint && document.source_fingerprint !== sourceFingerprint)
+    return {
+      documentId: document.id,
+      sourceId,
+      sourceVersion: source.version,
+      sourceFingerprint,
+      stale,
+      currentVersion: stale ? undefined : versions.find(version => version.id === document.current_version_id),
+      versions: versions.map(version => ({
+        id: version.id,
+        versionNumber: version.versionNumber,
+        sourceFingerprint: version.sourceFingerprint,
+        sourceVersion: version.sourceVersion,
+        createdBy: version.createdBy,
+        model: version.model,
+        changeSummary: version.changeSummary,
+        qualityIssueCount: version.qualityIssues.length,
+        note: version.note,
+        restoredFromVersionId: version.restoredFromVersionId,
+        createdAt: version.createdAt,
+      })),
+    }
+  }
+
+  generateStructuredReading(input = {}) {
+    this.#requireOpen()
+    const sourceId = String(input.sourceId || '').trim()
+    const source = this.database.prepare(`
+      SELECT id, version, derived_markdown, source_metadata_json
+      FROM sources
+      WHERE id = ? AND project_id = ? AND archived_at IS NULL
+    `).get(sourceId, this.current.projectId)
+    if (!source) throw new Error('当前研究库中找不到这份资料。')
+    if (!String(source.derived_markdown || '').trim()) throw new Error('当前资料还没有 MinerU 原始 Markdown。')
+    const metadata = JSON.parse(source.source_metadata_json || '{}')
+    let layoutBlocks = []
+    if (metadata.mineruAssetRootRelative) {
+      const workspaceRoot = path.resolve(this.current.path)
+      const workspacePrefix = `${workspaceRoot}${path.sep}`
+      const assetRoot = path.resolve(workspaceRoot, metadata.mineruAssetRootRelative)
+      if (!assetRoot.startsWith(workspacePrefix)) throw new Error('MinerU 资源路径越过研究库边界，已拒绝读取。')
+      layoutBlocks = readMineruContentList(assetRoot).blocks
+    }
+    const createdBy = input.createdBy === 'ai' ? 'ai' : 'rules'
+    const draft = buildStructuredReadingDraft({
+      markdown: source.derived_markdown,
+      layoutBlocks,
+      boundaries: Array.isArray(input.boundaries) ? input.boundaries : [],
+      sourceVersion: source.version,
+      createdBy,
+      model: createdBy === 'ai' ? String(input.model || '').trim() : undefined,
+    })
+    if (Array.isArray(input.boundaries) && input.boundaries.length) {
+      const knownOriginalIds = new Set(draft.blocks.flatMap(block => block.originalBlockIds))
+      const unknown = input.boundaries.find(boundary => !knownOriginalIds.has(String(boundary?.beforeBlockId || '')))
+      if (unknown) throw new Error('章节边界没有对应到当前 MinerU 原始块，已拒绝保存。')
+    }
+    return this.#storeStructuredReadingVersion(sourceId, draft, {
+      note: createdBy === 'ai' ? 'AI 仅识别章节边界；正文来自 MinerU 原始块。' : '本地规则生成；正文来自 MinerU 原始块。',
+    })
+  }
+
+  saveStructuredReadingAdjustment(input = {}) {
+    this.#requireOpen()
+    const sourceId = String(input.sourceId || '').trim()
+    const baseVersionId = String(input.baseVersionId || '').trim()
+    const current = this.getStructuredReading({ sourceId })
+    if (current.stale || !current.currentVersion) throw new Error('MinerU 原始 Markdown 已变化，请先重新生成结构化阅读稿。')
+    if (current.currentVersion.id !== baseVersionId) throw new Error('结构化阅读稿已经产生新版本，请重新载入后再调整。')
+    const adjusted = validateManualAdjustment(current.currentVersion, {
+      orderedBlockIds: input.orderedBlockIds,
+      headingLevels: input.headingLevels,
+    })
+    return this.#storeStructuredReadingVersion(sourceId, adjusted, {
+      note: String(input.note || '用户手动调整结构块。').trim().slice(0, 500),
+    })
+  }
+
+  restoreStructuredReadingVersion(input = {}) {
+    this.#requireOpen()
+    const sourceId = String(input.sourceId || '').trim()
+    const versionId = String(input.versionId || '').trim()
+    const current = this.getStructuredReading({ sourceId })
+    const targetRow = this.database.prepare(`
+      SELECT id, document_id, source_id, version_number, source_fingerprint, source_version,
+             created_by, model, blocks_json, toc_json, diagnostics_json, quality_issues_json,
+             change_summary_json, note, restored_from_version_id, created_at
+      FROM structured_reading_versions
+      WHERE id = ? AND source_id = ? AND project_id = ?
+    `).get(versionId, sourceId, this.current.projectId)
+    if (!targetRow) throw new Error('找不到要恢复的结构化阅读稿版本。')
+    const target = structuredReadingVersionFromRow(targetRow)
+    if (!current.sourceFingerprint || target.sourceFingerprint !== current.sourceFingerprint) {
+      throw new Error('该旧版本对应不同的 MinerU 原始 Markdown，不能直接恢复。')
+    }
+    return this.#storeStructuredReadingVersion(sourceId, { ...target, createdBy: 'restore' }, {
+      note: `恢复自 v${target.versionNumber}；旧版本本身未被覆盖。`,
+      restoredFromVersionId: target.id,
+    })
+  }
+
+  #storeStructuredReadingVersion(sourceId, draft, options = {}) {
+    const timestamp = now()
+    const existing = this.database.prepare(`
+      SELECT id FROM structured_reading_documents
+      WHERE source_id = ? AND project_id = ?
+    `).get(sourceId, this.current.projectId)
+    const documentId = existing?.id || crypto.randomUUID()
+    const versionId = crypto.randomUUID()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      if (!existing) {
+        this.database.prepare(`
+          INSERT INTO structured_reading_documents(
+            id, project_id, source_id, source_fingerprint, current_version_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, NULL, ?, ?)
+        `).run(documentId, this.current.projectId, sourceId, draft.sourceFingerprint, timestamp, timestamp)
+      }
+      const versionNumber = this.database.prepare(`
+        SELECT COALESCE(max(version_number), 0) + 1 AS next_version
+        FROM structured_reading_versions WHERE document_id = ?
+      `).get(documentId).next_version
+      this.database.prepare(`
+        INSERT INTO structured_reading_versions(
+          id, document_id, project_id, source_id, version_number, source_fingerprint,
+          source_version, created_by, model, blocks_json, toc_json, diagnostics_json,
+          quality_issues_json, change_summary_json, note, restored_from_version_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        versionId,
+        documentId,
+        this.current.projectId,
+        sourceId,
+        versionNumber,
+        draft.sourceFingerprint,
+        draft.sourceVersion,
+        draft.createdBy,
+        draft.model || null,
+        JSON.stringify(draft.blocks || []),
+        JSON.stringify(draft.toc || []),
+        JSON.stringify(draft.diagnostics || []),
+        JSON.stringify(draft.qualityIssues || []),
+        JSON.stringify(draft.changeSummary || {}),
+        String(options.note || '').slice(0, 500),
+        options.restoredFromVersionId || null,
+        timestamp,
+      )
+      this.database.prepare(`
+        UPDATE structured_reading_documents
+        SET source_fingerprint = ?, current_version_id = ?, updated_at = ?
+        WHERE id = ? AND project_id = ?
+      `).run(draft.sourceFingerprint, versionId, timestamp, documentId, this.current.projectId)
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getStructuredReading({ sourceId })
+  }
+
   syncLibraryState(input = {}) {
     this.#requireOpen()
     if (input.workspaceId !== this.current.id) throw new Error('研究库已切换，本次旧状态写入已取消。')
@@ -2269,6 +4608,11 @@ class WorkspaceService {
       LIMIT 1
     `).get(this.current.projectId, format, sourceFileSha256)
     if (previous) {
+      const itemIds = this.database.prepare(`
+        SELECT id FROM bibliographic_items
+        WHERE project_id = ? AND import_batch_id = ? AND archived_at IS NULL
+        ORDER BY record_ordinal
+      `).all(this.current.projectId, previous.import_batch_id).map(row => row.id)
       return {
         batchId: previous.import_batch_id,
         format,
@@ -2277,6 +4621,7 @@ class WorkspaceService {
         copiedSourceCount: 0,
         alreadyImported: true,
         warnings: [],
+        itemIds,
       }
     }
 
@@ -2287,20 +4632,22 @@ class WorkspaceService {
     const warnings = []
     let attachmentCount = 0
     let copiedSourceCount = 0
+    const itemIds = []
     this.database.exec('BEGIN IMMEDIATE')
     try {
       for (const record of records) {
         const itemId = crypto.randomUUID()
+        itemIds.push(itemId)
         const normalized = record.normalized || {}
         this.database.prepare(`
           INSERT INTO bibliographic_items(
-            id, project_id, item_type, title, authors_json, issued, container_title,
-            volume, issue, pages, abstract, language, keywords_json, identifiers_json,
+            id, project_id, item_type, title, authors_json, issued, accessed, container_title,
+            publisher, publisher_place, volume, issue, pages, abstract, language, keywords_json, identifiers_json,
             needs_metadata_review, import_format, import_batch_id, source_file_name,
             source_file_sha256, record_ordinal, raw_record_id, raw_record_id_field,
             raw_payload, raw_fields_json, parser_name, parser_version, imported_at,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           itemId,
           this.current.projectId,
@@ -2308,7 +4655,10 @@ class WorkspaceService {
           String(normalized.title || '[无题名记录]'),
           JSON.stringify(normalized.authors || []),
           normalized.issued || null,
+          normalized.accessed || null,
           normalized.containerTitle || null,
+          normalized.publisher || null,
+          normalized.publisherPlace || null,
           normalized.volume || null,
           normalized.issue || null,
           normalized.pages || null,
@@ -2405,6 +4755,7 @@ class WorkspaceService {
       copiedSourceCount,
       alreadyImported: false,
       warnings,
+      itemIds,
     }
   }
 
@@ -2717,7 +5068,11 @@ class WorkspaceService {
   }
 
   #resolveActionEvidence(input = {}) {
-    const evidenceType = validateEnum(input.evidenceType, new Set(['fragment', 'review', 'source', 'bibliography']), '证据类型')
+    const evidenceType = validateEnum(
+      input.evidenceType,
+      new Set(['fragment', 'review', 'source', 'bibliography', 'milestone', 'run']),
+      '证据类型',
+    )
     const entityId = String(input.entityId || '').trim()
     if (!entityId) throw new Error('行动证据缺少内容编号。')
     const suppliedLabel = String(input.label || '').trim().slice(0, 300)
@@ -2767,6 +5122,37 @@ class WorkspaceService {
         excerpt: String(row.content || '').slice(0, 4000),
       }
     }
+    if (evidenceType === 'milestone') {
+      const row = this.database.prepare(`
+        SELECT id, title, description, status, acceptance_criteria_json
+        FROM research_milestones
+        WHERE id = ? AND project_id = ? AND status != 'archived'
+      `).get(entityId, this.current.projectId)
+      if (!row) throw new Error('行动引用的里程碑不属于当前研究库，或已经归档。')
+      const criteria = safeJson(row.acceptance_criteria_json, [])
+      return {
+        evidenceType,
+        entityId,
+        milestoneId: row.id,
+        label: suppliedLabel || row.title,
+        excerpt: suppliedExcerpt || [row.description, ...criteria].filter(Boolean).join('；').slice(0, 4000) || `${row.title}（${row.status}）`,
+      }
+    }
+    if (evidenceType === 'run') {
+      const row = this.database.prepare(`
+        SELECT id, title, purpose, outcome, observations, anomaly, next_step
+        FROM research_runs WHERE id = ? AND project_id = ?
+      `).get(entityId, this.current.projectId)
+      if (!row) throw new Error('行动引用的测试不属于当前研究库。')
+      return {
+        evidenceType,
+        entityId,
+        runId: row.id,
+        label: suppliedLabel || row.title,
+        excerpt: suppliedExcerpt || [row.purpose, row.observations, row.anomaly, row.next_step]
+          .filter(Boolean).join('；').slice(0, 4000) || `${row.title}（${row.outcome}）`,
+      }
+    }
     if (evidenceType === 'source') {
       const sourceId = String(input.sourceId || entityId).trim()
       const row = this.database.prepare(`
@@ -2803,6 +5189,26 @@ class WorkspaceService {
 
   #insertActionEvidence(actionItemId, evidence, timestamp) {
     const excerptSha256 = crypto.createHash('sha256').update(evidence.excerpt).digest('hex')
+    if (evidence.evidenceType === 'milestone' || evidence.evidenceType === 'run') {
+      this.database.prepare(`
+        INSERT INTO action_item_research_evidence(
+          id, action_item_id, evidence_type, entity_id, milestone_id, run_id,
+          label, excerpt, excerpt_sha256, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        crypto.randomUUID(),
+        actionItemId,
+        evidence.evidenceType,
+        evidence.entityId,
+        evidence.milestoneId || null,
+        evidence.runId || null,
+        evidence.label,
+        evidence.excerpt,
+        excerptSha256,
+        timestamp,
+      )
+      return
+    }
     this.database.prepare(`
       INSERT INTO action_item_evidence(
         id, action_item_id, evidence_type, entity_id, fragment_id, review_block_id,
@@ -2826,6 +5232,47 @@ class WorkspaceService {
       evidence.anchor ? JSON.stringify(evidence.anchor) : null,
       timestamp,
     )
+  }
+
+  #actionEvidenceForItem(actionItemId) {
+    const libraryEvidence = this.database.prepare(`
+      SELECT id, evidence_type, entity_id, fragment_id, review_block_id,
+             review_document_id, source_id, item_id, label, excerpt,
+             page_number, anchor_json, created_at
+      FROM action_item_evidence
+      WHERE action_item_id = ? ORDER BY rowid
+    `).all(actionItemId).map(evidence => ({
+      id: evidence.id,
+      evidenceType: evidence.evidence_type,
+      entityId: evidence.entity_id,
+      fragmentId: evidence.fragment_id ?? undefined,
+      reviewBlockId: evidence.review_block_id ?? undefined,
+      reviewDocumentId: evidence.review_document_id ?? undefined,
+      sourceId: evidence.source_id ?? undefined,
+      itemId: evidence.item_id ?? undefined,
+      label: evidence.label,
+      excerpt: evidence.excerpt,
+      pageNumber: evidence.page_number ?? undefined,
+      anchor: evidence.anchor_json ? JSON.parse(evidence.anchor_json) : undefined,
+      createdAt: evidence.created_at,
+    }))
+    const researchEvidence = this.database.prepare(`
+      SELECT id, evidence_type, entity_id, milestone_id, run_id, label, excerpt, created_at
+      FROM action_item_research_evidence
+      WHERE action_item_id = ? ORDER BY rowid
+    `).all(actionItemId).map(evidence => ({
+      id: evidence.id,
+      evidenceType: evidence.evidence_type,
+      entityId: evidence.entity_id,
+      milestoneId: evidence.milestone_id ?? undefined,
+      runId: evidence.run_id ?? undefined,
+      label: evidence.label,
+      excerpt: evidence.excerpt,
+      createdAt: evidence.created_at,
+    }))
+    return [...libraryEvidence, ...researchEvidence]
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map(({ createdAt: _createdAt, ...evidence }) => evidence)
   }
 
   #appendActionPackEvent({ packId, itemId, eventType, actor, note = '', timestamp = now() }) {
@@ -3217,6 +5664,298 @@ class WorkspaceService {
     )
   }
 
+  #resolveResearchTaskSource(sourceType, sourceId, sourceRole = 'primary') {
+    if (sourceType === 'paper') {
+      const row = this.database.prepare(`
+        SELECT b.id, b.title, rs.reading_status, rs.last_page,
+               (SELECT s.id FROM sources s WHERE s.bibliographic_item_id = b.id AND s.archived_at IS NULL ORDER BY s.updated_at DESC LIMIT 1) AS source_id
+        FROM bibliographic_items b
+        LEFT JOIN bibliographic_reading_states rs ON rs.item_id = b.id
+        WHERE b.id = ? AND b.project_id = ? AND b.archived_at IS NULL
+      `).get(sourceId, this.current.projectId)
+      if (!row) throw new Error('任务来源论文不存在或不属于当前课题。')
+      return {
+        title: `继续阅读：${row.title}`,
+        detail: row.last_page ? `上次读到第 ${row.last_page} 页。` : '阅读位置尚未形成页码。',
+        returnTarget: { view: 'reader', itemId: row.id, sourceId: row.source_id || undefined, pageNumber: row.last_page || undefined },
+        sourceSnapshot: { title: row.title, readingStatus: row.reading_status || 'unread', lastPage: row.last_page || undefined },
+      }
+    }
+    if (sourceType === 'annotation') {
+      const row = this.database.prepare(`
+        SELECT a.id, a.category, a.anchor_json, s.id AS source_id, s.name AS source_name,
+               b.id AS item_id, b.title AS paper_title,
+               quote.content AS quote_text, note.content AS note_text
+        FROM annotations a
+        LEFT JOIN sources s ON s.id = a.source_id
+        LEFT JOIN bibliographic_items b ON b.id = s.bibliographic_item_id
+        LEFT JOIN note_fragments quote ON quote.annotation_id = a.id AND quote.origin = 'source_evidence'
+        LEFT JOIN note_fragments note ON note.id = a.current_note_fragment_id AND note.origin = 'user'
+        WHERE a.id = ? AND a.project_id = ? AND a.archived_at IS NULL
+        ORDER BY quote.created_at LIMIT 1
+      `).get(sourceId, this.current.projectId)
+      if (!row) throw new Error('任务来源批注不存在或不属于当前课题。')
+      const anchor = safeJson(row.anchor_json, {})
+      return {
+        title: `处理批注：${compactEvidenceText(row.note_text || row.quote_text || row.category, 160)}`,
+        detail: row.note_text || row.quote_text || '',
+        returnTarget: { view: 'reader', annotationId: row.id, sourceId: row.source_id || undefined, itemId: row.item_id || undefined, pageNumber: anchor.pageNumber },
+        sourceSnapshot: { category: row.category, quote: row.quote_text || '', note: row.note_text || '', anchor },
+      }
+    }
+    if (sourceType === 'run' || sourceType === 'anomaly') {
+      const row = this.database.prepare(`
+        SELECT id, title, outcome, observations, anomaly, next_step, started_at
+        FROM research_runs WHERE id = ? AND project_id = ?
+      `).get(sourceId, this.current.projectId)
+      if (!row) throw new Error('任务来源 Run 不存在或不属于当前课题。')
+      const anomaly = sourceType === 'anomaly' || sourceRole === 'anomaly'
+      return {
+        title: anomaly ? `处理异常：${row.title}` : row.next_step || `继续 Run：${row.title}`,
+        detail: anomaly ? row.anomaly : row.observations || `来自 Run“${row.title}”的下一步。`,
+        returnTarget: { view: 'research-workspace', runId: row.id },
+        sourceSnapshot: { title: row.title, outcome: row.outcome, anomaly: row.anomaly, nextStep: row.next_step, startedAt: row.started_at },
+      }
+    }
+    if (sourceType === 'milestone') {
+      const row = this.database.prepare(`
+        SELECT id, title, description, status, acceptance_criteria_json
+        FROM research_milestones WHERE id = ? AND project_id = ?
+      `).get(sourceId, this.current.projectId)
+      if (!row) throw new Error('任务来源里程碑不存在或不属于当前课题。')
+      return {
+        title: row.title,
+        detail: row.description || safeJson(row.acceptance_criteria_json, []).join('；'),
+        returnTarget: { view: 'research-workspace', milestoneId: row.id },
+        sourceSnapshot: { title: row.title, status: row.status, acceptanceCriteria: safeJson(row.acceptance_criteria_json, []) },
+      }
+    }
+    if (sourceType === 'review_document') {
+      const row = this.database.prepare(`
+        SELECT id, title, status, updated_at FROM review_documents
+        WHERE id = ? AND project_id = ?
+      `).get(sourceId, this.current.projectId)
+      if (!row) throw new Error('任务来源复查文档不存在或不属于当前课题。')
+      return {
+        title: `复查文档：${row.title}`,
+        detail: '检查证据、用户笔记与 AI 整理后再形成正式记录。',
+        returnTarget: { view: 'dashboard', reviewDocumentId: row.id },
+        sourceSnapshot: { title: row.title, status: row.status, updatedAt: row.updated_at },
+      }
+    }
+    if (sourceType === 'ai_suggestion') {
+      const row = this.database.prepare(`
+        SELECT ai.id, ai.title, ai.rationale, ai.status, ai.action_type,
+               ap.id AS pack_id, ap.title AS pack_title, ap.created_by
+        FROM action_items ai JOIN action_packs ap ON ap.id = ai.pack_id
+        WHERE ai.id = ? AND ap.project_id = ?
+      `).get(sourceId, this.current.projectId)
+      if (!row) throw new Error('任务来源 AI 建议不存在或不属于当前课题。')
+      return {
+        title: row.title,
+        detail: row.rationale,
+        returnTarget: { view: 'actions', actionItemId: row.id, actionPackId: row.pack_id },
+        sourceSnapshot: { title: row.title, rationale: row.rationale, actionType: row.action_type, status: row.status, packTitle: row.pack_title },
+      }
+    }
+    throw new Error('科研任务来源类型无效。')
+  }
+
+  #syncLegacyResearchTasks() {
+    const seeds = []
+    for (const row of this.database.prepare(`
+      SELECT ai.id, ai.title, ai.rationale, ai.status, ai.action_type, ai.created_at, ai.updated_at,
+             ap.id AS pack_id, ap.title AS pack_title, ap.created_by
+      FROM action_items ai JOIN action_packs ap ON ap.id = ai.pack_id
+      WHERE ap.project_id = ?
+    `).all(this.current.projectId)) {
+      seeds.push({
+        sourceType: 'ai_suggestion', sourceId: row.id, sourceRole: 'primary', title: row.title, detail: row.rationale,
+        status: taskStatusFromActionItem(row.status), origin: row.created_by, approvalStatus: taskApprovalFromActionItem(row.status),
+        isFormal: ['confirmed', 'completed'].includes(row.status), syncStatus: true,
+        returnTarget: { view: 'actions', actionItemId: row.id, actionPackId: row.pack_id },
+        sourceSnapshot: { title: row.title, rationale: row.rationale, actionType: row.action_type, status: row.status, packTitle: row.pack_title },
+        createdAt: row.created_at, updatedAt: row.updated_at,
+      })
+    }
+    for (const row of this.database.prepare(`
+      SELECT id, title, description, status, acceptance_criteria_json, created_at, updated_at
+      FROM research_milestones WHERE project_id = ?
+    `).all(this.current.projectId)) {
+      seeds.push({
+        sourceType: 'milestone', sourceId: row.id, sourceRole: 'primary', title: row.title,
+        detail: row.description || safeJson(row.acceptance_criteria_json, []).join('；'), status: taskStatusFromMilestone(row.status),
+        origin: 'user', approvalStatus: 'not_required', isFormal: true, syncStatus: true,
+        returnTarget: { view: 'research-workspace', milestoneId: row.id },
+        sourceSnapshot: { title: row.title, status: row.status, acceptanceCriteria: safeJson(row.acceptance_criteria_json, []) },
+        createdAt: row.created_at, updatedAt: row.updated_at,
+      })
+    }
+    for (const row of this.database.prepare(`
+      SELECT id, title, outcome, observations, anomaly, next_step, started_at, created_at, updated_at
+      FROM research_runs WHERE project_id = ?
+    `).all(this.current.projectId)) {
+      if (row.next_step) seeds.push({
+        sourceType: 'run', sourceId: row.id, sourceRole: 'next_step', title: row.next_step,
+        detail: `来自 Run“${row.title}”的下一步。`,
+        status: row.outcome === 'running' ? 'today' : row.outcome === 'planned' ? 'later' : 'inbox',
+        origin: 'user', approvalStatus: 'not_required', isFormal: true, syncStatus: false,
+        returnTarget: { view: 'research-workspace', runId: row.id },
+        sourceSnapshot: { title: row.title, outcome: row.outcome, nextStep: row.next_step, startedAt: row.started_at },
+        createdAt: row.created_at, updatedAt: row.updated_at,
+      })
+      if (row.anomaly) seeds.push({
+        sourceType: 'anomaly', sourceId: row.id, sourceRole: 'anomaly', title: `处理异常：${row.title}`, detail: row.anomaly,
+        status: 'waiting', origin: 'user', approvalStatus: 'not_required', isFormal: true, syncStatus: false,
+        waitCondition: '需要人工定位异常原因或记录合法科研结果。',
+        returnTarget: { view: 'research-workspace', runId: row.id },
+        sourceSnapshot: { title: row.title, outcome: row.outcome, anomaly: row.anomaly, startedAt: row.started_at },
+        createdAt: row.created_at, updatedAt: row.updated_at,
+      })
+    }
+    for (const row of this.database.prepare(`
+      SELECT b.id, b.title, b.created_at, b.updated_at, rs.reading_status, rs.last_page,
+             (SELECT s.id FROM sources s WHERE s.bibliographic_item_id = b.id AND s.archived_at IS NULL ORDER BY s.updated_at DESC LIMIT 1) AS source_id
+      FROM bibliographic_items b
+      JOIN bibliographic_reading_states rs ON rs.item_id = b.id
+      WHERE b.project_id = ? AND b.archived_at IS NULL AND rs.reading_status != 'unread'
+    `).all(this.current.projectId)) {
+      seeds.push({
+        sourceType: 'paper', sourceId: row.id, sourceRole: 'continue_reading', title: `继续阅读：${row.title}`,
+        detail: row.last_page ? `上次读到第 ${row.last_page} 页。` : '阅读位置尚未形成页码。', status: taskStatusFromReading(row.reading_status),
+        origin: 'user', approvalStatus: 'not_required', isFormal: true, syncStatus: true,
+        returnTarget: { view: 'reader', itemId: row.id, sourceId: row.source_id || undefined, pageNumber: row.last_page || undefined },
+        sourceSnapshot: { title: row.title, readingStatus: row.reading_status, lastPage: row.last_page || undefined },
+        createdAt: row.created_at, updatedAt: row.updated_at,
+      })
+    }
+    for (const row of this.database.prepare(`
+      SELECT id, title, status, created_at, updated_at FROM review_documents WHERE project_id = ?
+    `).all(this.current.projectId)) {
+      seeds.push({
+        sourceType: 'review_document', sourceId: row.id, sourceRole: 'review', title: `复查文档：${row.title}`,
+        detail: '检查证据、用户笔记与 AI 整理后再形成正式记录。', status: row.status === 'draft' ? 'inbox' : 'completed',
+        origin: 'user', approvalStatus: 'not_required', isFormal: true, syncStatus: true,
+        returnTarget: { view: 'dashboard', reviewDocumentId: row.id },
+        sourceSnapshot: { title: row.title, status: row.status }, createdAt: row.created_at, updatedAt: row.updated_at,
+      })
+    }
+    if (!seeds.length) return
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      for (const seed of seeds) this.#upsertLegacyResearchTask(seed)
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  #upsertLegacyResearchTask(seed) {
+    const existing = this.database.prepare(`
+      SELECT * FROM research_tasks
+      WHERE project_id = ? AND source_type = ? AND source_id = ? AND source_role = ?
+    `).get(this.current.projectId, seed.sourceType, seed.sourceId, seed.sourceRole)
+    if (existing) {
+      this.database.prepare(`
+        UPDATE research_tasks SET
+          title = ?, detail = ?, status = ?, origin = ?, approval_status = ?, is_formal = ?,
+          wait_condition = CASE WHEN wait_condition = '' THEN ? ELSE wait_condition END,
+          return_target_json = ?, source_snapshot_json = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        seed.title.slice(0, 240), String(seed.detail || '').slice(0, 10000), seed.syncStatus ? seed.status : existing.status,
+        seed.origin, seed.approvalStatus, seed.isFormal ? 1 : 0, String(seed.waitCondition || '').slice(0, 4000),
+        JSON.stringify(seed.returnTarget || {}), JSON.stringify(seed.sourceSnapshot || {}), seed.updatedAt || now(), existing.id,
+      )
+      return existing.id
+    }
+    const taskId = legacyTaskId(seed.sourceType, seed.sourceId, seed.sourceRole)
+    this.database.prepare(`
+      INSERT INTO research_tasks(
+        id, project_id, title, detail, status, source_type, source_id, source_role,
+        origin, approval_status, is_formal, wait_condition, deferred_until,
+        return_target_json, source_snapshot_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+    `).run(
+      taskId, this.current.projectId, seed.title.slice(0, 240), String(seed.detail || '').slice(0, 10000), seed.status,
+      seed.sourceType, seed.sourceId, seed.sourceRole, seed.origin, seed.approvalStatus, seed.isFormal ? 1 : 0,
+      String(seed.waitCondition || '').slice(0, 4000), JSON.stringify(seed.returnTarget || {}), JSON.stringify(seed.sourceSnapshot || {}),
+      seed.createdAt || now(), seed.updatedAt || now(),
+    )
+    this.#appendResearchTaskEvent({
+      taskId, eventType: 'legacy_synced', toStatus: seed.status, actor: 'system',
+      note: `兼容映射 ${seed.sourceType}:${seed.sourceId}:${seed.sourceRole}`, timestamp: seed.updatedAt || now(),
+    })
+    return taskId
+  }
+
+  #writeBackResearchTaskSource(task, nextStatus, timestamp) {
+    if (!task.source_id || task.source_type === 'manual' || task.source_type === 'annotation' || task.source_type === 'run' || task.source_type === 'anomaly') return
+    if (task.source_type === 'ai_suggestion') {
+      if (nextStatus === 'completed') {
+        this.completeActionItem({ itemId: task.source_id })
+      } else if (nextStatus === 'abandoned') {
+        const item = this.database.prepare(`
+          SELECT ai.pack_id, ai.status FROM action_items ai
+          JOIN action_packs ap ON ap.id = ai.pack_id
+          WHERE ai.id = ? AND ap.project_id = ?
+        `).get(task.source_id, this.current.projectId)
+        if (!item) throw new Error('AI 建议来源已不可用。')
+        if (item.status !== 'completed') {
+          this.database.prepare("UPDATE action_items SET status = 'dismissed', updated_at = ? WHERE id = ?").run(timestamp, task.source_id)
+          this.#appendActionPackEvent({ packId: item.pack_id, itemId: task.source_id, eventType: 'item_dismissed', actor: 'user', note: '从统一科研任务标记为已放弃。', timestamp })
+          this.#refreshActionPackStatus(item.pack_id, timestamp)
+        }
+      }
+      return
+    }
+    if (task.source_type === 'milestone') {
+      const milestoneStatus = milestoneStatusFromTask(nextStatus)
+      this.database.prepare(`
+        UPDATE research_milestones
+        SET status = ?, completed_at = CASE WHEN ? = 'completed' THEN COALESCE(completed_at, ?) ELSE completed_at END,
+            updated_at = ?
+        WHERE id = ? AND project_id = ?
+      `).run(milestoneStatus, milestoneStatus, timestamp, timestamp, task.source_id, this.current.projectId)
+      return
+    }
+    if (task.source_type === 'paper' && nextStatus === 'completed') {
+      this.updateReadingState({ itemId: task.source_id, readingStatus: 'finished' })
+      return
+    }
+    if (task.source_type === 'review_document' && nextStatus === 'completed') {
+      this.database.prepare(`
+        UPDATE review_documents SET status = CASE WHEN status = 'draft' THEN 'reviewed' ELSE status END, updated_at = ?
+        WHERE id = ? AND project_id = ?
+      `).run(timestamp, task.source_id, this.current.projectId)
+    }
+  }
+
+  #appendResearchTaskEvent({ taskId, eventType, fromStatus, toStatus, actor, note = '', timestamp = now() }) {
+    this.database.prepare(`
+      INSERT INTO research_task_events(
+        id, task_id, project_id, event_type, from_status, to_status, actor, note, occurred_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      crypto.randomUUID(), taskId, this.current.projectId, eventType,
+      fromStatus || null, toStatus || null, actor, String(note || '').slice(0, 2000), timestamp,
+    )
+  }
+
+  #appendResearchResumeEvent(eventType, state, timestamp = now()) {
+    this.database.prepare(`
+      INSERT INTO research_resume_events(id, project_id, event_type, state_json, occurred_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      crypto.randomUUID(),
+      this.current.projectId,
+      eventType,
+      JSON.stringify(state),
+      timestamp,
+    )
+  }
+
   #requireOpen() {
     if (!this.database || !this.current) throw new Error('请先创建或打开研究库。')
   }
@@ -3600,7 +6339,7 @@ function personNameText(person) {
 }
 
 function normalizeSourceReaderState(value, kind) {
-  const allowedModes = new Set(['original', 'markdown', 'parallel'])
+  const allowedModes = new Set(['original', 'markdown', 'parallel', 'bilingual'])
   const requestedMode = allowedModes.has(value?.viewMode) ? value.viewMode : 'original'
   const viewMode = kind === 'PDF' ? requestedMode : 'markdown'
   const requestedZoom = Number(value?.zoom)
@@ -3755,6 +6494,46 @@ function reviewDeepLink(citation) {
   return `research-reader://open?${params.toString()}`
 }
 
+function bibliographicSummaryFromRow(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    itemType: row.item_type,
+    authors: JSON.parse(row.authors_json || '[]'),
+    issued: row.issued ?? undefined,
+    accessed: row.accessed ?? undefined,
+    containerTitle: row.container_title ?? undefined,
+    publisher: row.publisher ?? undefined,
+    publisherPlace: row.publisher_place ?? undefined,
+    volume: row.volume ?? undefined,
+    issue: row.issue ?? undefined,
+    pages: row.pages ?? undefined,
+    language: row.language ?? undefined,
+    identifiers: JSON.parse(row.identifiers_json || '{}'),
+  }
+}
+
+function structuredReadingVersionFromRow(row) {
+  return {
+    id: row.id,
+    documentId: row.document_id,
+    sourceId: row.source_id,
+    versionNumber: row.version_number,
+    sourceFingerprint: row.source_fingerprint,
+    sourceVersion: row.source_version,
+    createdBy: row.created_by,
+    model: row.model ?? undefined,
+    blocks: JSON.parse(row.blocks_json || '[]'),
+    toc: JSON.parse(row.toc_json || '[]'),
+    diagnostics: JSON.parse(row.diagnostics_json || '[]'),
+    qualityIssues: JSON.parse(row.quality_issues_json || '[]'),
+    changeSummary: JSON.parse(row.change_summary_json || '{}'),
+    note: row.note || '',
+    restoredFromVersionId: row.restored_from_version_id ?? undefined,
+    createdAt: row.created_at,
+  }
+}
+
 function renderReviewMarkdown(document) {
   const labels = {
     heading: '结构',
@@ -3765,7 +6544,7 @@ function renderReviewMarkdown(document) {
   const lines = [
     '---',
     `review_document_id: "${document.id}"`,
-    `exported_from: "小何的科研阅读助手"`,
+    `exported_from: "H’s 科研助手"`,
     '---',
     '',
     `# ${document.title}`,
@@ -3780,6 +6559,10 @@ function renderReviewMarkdown(document) {
     if (block.citations.length) {
       lines.push(...block.citations.map(citation => `- [${citation.label}](${reviewDeepLink(citation)})`), '')
     }
+  }
+  if (document.items.length) {
+    lines.push('## 参考文献', '')
+    lines.push(...document.items.map(item => item.citation.text), '')
   }
   return `${lines.join('\n')}\n`
 }
@@ -3827,6 +6610,10 @@ async function renderReviewDocx(document) {
       }))
     }
   }
+  if (document.items.length) {
+    children.push(new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun({ text: '参考文献', bold: true })] }))
+    for (const item of document.items) children.push(new Paragraph({ children: [new TextRun(item.citation.text)] }))
+  }
   const doc = new Document({ sections: [{ properties: {}, children }] })
   return Packer.toBuffer(doc)
 }
@@ -3856,6 +6643,22 @@ function mineruImageMimeType(filePath) {
 
 function markdownBlockquote(value) {
   return String(value || '').split(/\r?\n/).map(line => `> ${line}`)
+}
+
+function reviewBlockPortableLabel(blockType) {
+  return {
+    heading: '复查区块', source_evidence: '原文证据', user_note: '用户笔记', ai_organization: 'AI 整理（已确认）',
+  }[blockType] || '复查内容'
+}
+
+function uniquePortableReferences(references) {
+  const seen = new Set()
+  return references.filter(reference => {
+    const key = `${reference.id || ''}:${reference.pageNumber || ''}:${reference.originalFile || ''}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function readMineruContentList(assetRoot) {

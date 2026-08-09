@@ -17,11 +17,26 @@ export type MineruLayoutBlock = {
 }
 export function markdownReadingBlocks(markdown?: string, mineruLayoutBlocks?: MineruLayoutBlock[]): {
   fingerprint: string
+  readingOrderChanged: boolean
+  diagnostics: Array<{
+    pageNumber: number
+    layout: 'single-column' | 'two-column' | 'uncertain'
+    confidence: number
+    layoutBlockCount: number
+    matchedBlockCount: number
+    matchCoverage: number
+    gutter?: number
+    reordered: boolean
+    reason: string
+  }>
   blocks: Array<{
     id: string
     content: string
     pageNumber?: number
     rects?: Array<{ x: number; y: number; width: number; height: number }>
+    bbox?: [number, number, number, number]
+    layoutBlockId?: string
+    matchConfidence?: number
   }>
 }
 export function locateQuoteInMarkdown(markdown?: string, quote?: string, mineruLayoutBlocks?: MineruLayoutBlock[]): MarkdownBlockTarget

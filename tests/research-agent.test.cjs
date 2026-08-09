@@ -65,6 +65,22 @@ test('科研 Agent 优先排序带页码的原文证据和用户笔记', async (
   assert.deepEqual(merged.map(result => result.id), ['evidence', 'note', 'doc'])
 })
 
+test('科研 Agent 把里程碑和测试记录作为项目证据而不是论文结论', async () => {
+  const { researchWorkspaceEvidence, buildResearchAgentRequest } = await import('../src/research-agent.mjs')
+  const workspace = {
+    project: { name: '移动机器人探索', mode: 'exploration', stage: '探索中' },
+    milestones: [{ id: 'm1', title: '完成 ROS 仿真基线', status: 'active', description: '形成可复查的基线结果', acceptanceCriteria: ['保存参数快照', '关联轨迹图'], updatedAt: '2026-08-08T10:00:00.000Z' }],
+    runs: [{ id: 'r1', title: '速度参数测试', outcome: 'failed', purpose: '验证速度变化', observations: '转弯时振荡', anomaly: '轨迹超调', nextStep: '降低角速度限制', updatedAt: '2026-08-08T11:00:00.000Z' }],
+  }
+  const evidence = researchWorkspaceEvidence(workspace)
+  assert.deepEqual(evidence.map(item => item.origin), ['milestone', 'run'])
+  assert.match(evidence[1].excerpt, /转弯时振荡/)
+  const request = buildResearchAgentRequest({ question: '下一步做什么？', scopeLabel: '当前课题', evidence, researchContext: workspace })
+  const payload = JSON.parse(request.user)
+  assert.equal(payload.researchContext.projectMode, 'exploration')
+  assert.match(request.system, /不能冒充论文结论/)
+})
+
 test('科研 Agent 丢弃无引用和未知引用的 AI 结论', async () => {
   const { parseResearchAgentAnswer } = await import('../src/research-agent.mjs')
   const sections = parseResearchAgentAnswer(JSON.stringify({

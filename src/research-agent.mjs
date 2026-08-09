@@ -76,9 +76,67 @@ export function readerContextEvidence(readerContext, scope) {
   return []
 }
 
+function compactResearchText(parts, maximumLength = 1400) {
+  return parts
+    .map(value => String(value || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' · ')
+    .slice(0, maximumLength)
+}
+
+export function researchWorkspaceEvidence(workspace, limit = 12) {
+  if (!workspace || typeof workspace !== 'object') return []
+  const entries = []
+  const milestones = Array.isArray(workspace.milestones) ? workspace.milestones : []
+  for (const milestone of milestones
+    .filter(item => item && item.status !== 'archived')
+    .sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || '')))) {
+    const criteria = Array.isArray(milestone.acceptanceCriteria)
+      ? milestone.acceptanceCriteria.map(item => typeof item === 'string' ? item : item?.text || item?.label).filter(Boolean)
+      : []
+    entries.push({
+      id: `research-milestone:${milestone.id}`,
+      kind: 'research',
+      entityId: String(milestone.id || ''),
+      origin: 'milestone',
+      originLabel: '用户确认的里程碑',
+      title: String(milestone.title || '未命名里程碑'),
+      subtitle: `状态：${milestone.status || 'planned'}`,
+      excerpt: compactResearchText([
+        milestone.description,
+        criteria.length ? `验收条件：${criteria.join('；')}` : '',
+      ]),
+    })
+  }
+  const runs = Array.isArray(workspace.runs) ? workspace.runs : []
+  for (const run of runs
+    .filter(item => item && item.status !== 'archived')
+    .sort((left, right) => String(right.updatedAt || right.occurredAt || '').localeCompare(String(left.updatedAt || left.occurredAt || '')))) {
+    entries.push({
+      id: `research-run:${run.id}`,
+      kind: 'research',
+      entityId: String(run.id || ''),
+      origin: 'run',
+      originLabel: '用户保存的测试记录',
+      title: String(run.title || '未命名测试'),
+      subtitle: `结果：${run.outcome || run.status || 'planned'}`,
+      excerpt: compactResearchText([
+        run.purpose && `目的：${run.purpose}`,
+        run.hypothesis && `待验证：${run.hypothesis}`,
+        run.observations && `观察：${run.observations}`,
+        run.anomaly && `异常：${run.anomaly}`,
+        run.nextStep && `下一步：${run.nextStep}`,
+      ]),
+    })
+  }
+  return entries.filter(entry => entry.entityId && entry.excerpt).slice(0, Math.max(1, Number(limit) || 12))
+}
+
 function originWeight(origin, pageNumber) {
   if (origin === 'source_evidence') return pageNumber ? 14 : 10
   if (origin === 'user') return pageNumber ? 12 : 9
+  if (origin === 'run') return 11
+  if (origin === 'milestone') return 9
   if (origin === 'bibliography') return 7
   if (origin === 'mineru') return 6
   if (origin === 'document') return 5
@@ -106,7 +164,7 @@ export function mergeAgentSearchResponses(responses, terms, limit = 12) {
     .slice(0, Math.max(1, limit))
 }
 
-export function buildResearchAgentRequest({ question, evidence, scopeLabel, readerContext, history = [] }) {
+export function buildResearchAgentRequest({ question, evidence, scopeLabel, readerContext, researchContext, history = [] }) {
   const contexts = (Array.isArray(evidence) ? evidence : []).map((entry, index) => ({
     evidenceId: `E${index + 1}`,
     title: entry.title,
@@ -121,6 +179,7 @@ export function buildResearchAgentRequest({ question, evidence, scopeLabel, read
     system: [
       '你是本地科研证据助手，只能依据给定 evidence 回答。',
       '把原文证据、用户笔记和题录信息区分开；用户笔记不能冒充论文结论。',
+      '里程碑和测试记录是用户项目事实，只能证明项目状态、实际操作和用户观察；不能冒充论文结论或未经确认的科学结论。',
       '会话历史只用于理解追问，不能作为证据；本轮结论仍必须引用本轮 evidence。',
       '阅读进度、当前页和当前视图只是上下文元数据，除非对应内容已列入 evidence，否则不能据此推断论文结论。',
       '每个回答区块至少引用一个 evidenceId；没有证据支持的内容不要输出。',
@@ -138,6 +197,13 @@ export function buildResearchAgentRequest({ question, evidence, scopeLabel, read
         readingStatus: readerContext.readingStatus || '',
         annotationCount: Number(readerContext.annotationCount) || 0,
         hasSelection: Boolean(readerContext.selection?.text),
+      } : null,
+      researchContext: researchContext ? {
+        projectName: String(researchContext.project?.name || ''),
+        projectMode: String(researchContext.project?.mode || ''),
+        researchQuestion: String(researchContext.project?.researchQuestion || '').slice(0, 2000),
+        currentHypothesis: String(researchContext.project?.currentHypothesis || '').slice(0, 2000),
+        stage: String(researchContext.project?.stage || ''),
       } : null,
       history: (Array.isArray(history) ? history : []).slice(-6).map(turn => ({
         role: turn?.role === 'assistant' ? 'assistant' : 'user',

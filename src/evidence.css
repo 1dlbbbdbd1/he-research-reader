@@ -1,6 +1,6 @@
 .evidence-workspace {
-  --evidence-blue: #51718e;
-  --evidence-blue-soft: #edf3f7;
+  --evidence-blue: var(--ui-accent, #51718e);
+  --evidence-blue-soft: var(--ui-accent-soft, #edf3f7);
   --evidence-user: #706a62;
   --evidence-user-soft: #f2f0ec;
   --evidence-ai: #746b8f;

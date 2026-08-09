@@ -6,6 +6,8 @@ release/
 release-latest/
 release-offline*/
 release-current*/
+release-mature/
+AI_PROGRESS.local.md
 design/logo-explorations/
 .npm-cache/
 .tools/

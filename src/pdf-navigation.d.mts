@@ -12,7 +12,7 @@ export type PdfOutlineEntry = {
 }
 
 export type ReaderSourceState = {
-  viewMode: 'original' | 'markdown' | 'parallel'
+  viewMode: 'original' | 'markdown' | 'parallel' | 'bilingual'
   zoom: number
 }
 

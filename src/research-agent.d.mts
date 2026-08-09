@@ -24,6 +24,10 @@ export function readerContextEvidence<T = AgentSearchResult>(readerContext: {
   pageText?: string
   selection?: { text: string; anchor?: unknown }
 } | undefined, scope: 'selection' | 'page' | 'current' | 'selected' | 'library'): T[]
+export function researchWorkspaceEvidence<T = AgentSearchResult>(workspace: {
+  milestones?: Array<Record<string, unknown>>
+  runs?: Array<Record<string, unknown>>
+} | undefined, limit?: number): T[]
 export function mergeAgentSearchResponses<T extends AgentSearchResult>(
   responses: Array<{ results?: T[] }>,
   terms: string[],
@@ -34,6 +38,7 @@ export function buildResearchAgentRequest(input: {
   evidence: AgentSearchResult[]
   scopeLabel: string
   readerContext?: Record<string, unknown>
+  researchContext?: Record<string, unknown>
   history?: Array<{ role: 'user' | 'assistant'; content: string }>
 }): {
   contexts: Array<{

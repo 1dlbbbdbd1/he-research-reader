@@ -140,12 +140,511 @@ type WorkspaceDialogResult = {
   creationRequestId?: string
   directory?: string
   suggestedName?: string
+  existingPaperCount?: number
+  existingPaperNames?: string[]
+  importedPaperCount?: number
+  skippedPaperCount?: number
+}
+
+type DesktopResearchRecordType = 'log' | 'experiment' | 'dataset' | 'decision' | 'milestone'
+
+type DesktopResearchRecordStatus = 'planned' | 'active' | 'completed' | 'blocked' | 'archived'
+
+type DesktopResearchProjectMode = 'exploration' | 'execution'
+
+type DesktopResearchRunOutcome = 'planned' | 'running' | 'success' | 'failure' | 'invalid' | 'interrupted'
+
+type DesktopResearchArtifactRole =
+  | 'raw_data' | 'processed_data' | 'figure' | 'log' | 'script' | 'config'
+  | 'model' | 'video' | 'image' | 'document' | 'directory' | 'other'
+
+type DesktopResearchProject = {
+  id: string
+  name: string
+  researchQuestion: string
+  currentHypothesis: string
+  stage: string
+  mode: DesktopResearchProjectMode
+  updatedAt: string
+}
+
+type DesktopResearchRecord = {
+  id: string
+  recordType: DesktopResearchRecordType
+  title: string
+  content: string
+  status: DesktopResearchRecordStatus
+  occurredAt: string
+  filePath?: string
+  sourceIds: string[]
+  tags: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+type DesktopResearchWorkspace = {
+  project: DesktopResearchProject
+  records: DesktopResearchRecord[]
+  milestones: DesktopResearchMilestone[]
+  runs: DesktopResearchRun[]
+  artifacts: DesktopResearchArtifact[]
+  runTemplates: DesktopResearchRunTemplate[]
+  reports: DesktopResearchReport[]
+  claims: DesktopResearchClaim[]
+  history: DesktopResearchProjectHistoryEntry[]
+}
+
+type DesktopResearchResumeView =
+  | 'today' | 'research-workspace' | 'research-review' | 'sources'
+  | 'reader' | 'dashboard' | 'evidence' | 'actions'
+
+type DesktopResearchResumeState = {
+  projectId: string
+  activeView: DesktopResearchResumeView
+  sourceId?: string
+  pageNumber?: number
+  readerMode?: 'original' | 'markdown' | 'parallel' | 'bilingual'
+  activeRunId?: string
+  lastOpenedAt?: string
+  lastActiveAt?: string
+  previousActiveAt?: string
+  firstVisit?: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+type DesktopResearchResumeInput = {
+  projectId?: string
+  activeView?: DesktopResearchResumeView
+  sourceId?: string | null
+  pageNumber?: number | null
+  readerMode?: DesktopResearchResumeState['readerMode'] | null
+  activeRunId?: string | null
+}
+
+type DesktopResearchTaskStatus = 'inbox' | 'today' | 'later' | 'waiting' | 'completed' | 'abandoned' | 'deferred'
+type DesktopResearchTaskSourceType = 'manual' | 'paper' | 'annotation' | 'ai_suggestion' | 'run' | 'anomaly' | 'milestone' | 'review_document'
+
+type DesktopResearchTask = {
+  id: string
+  title: string
+  detail: string
+  status: DesktopResearchTaskStatus
+  sourceType: DesktopResearchTaskSourceType
+  sourceId?: string
+  sourceRole: string
+  origin: 'user' | 'ai' | 'system'
+  approvalStatus: 'not_required' | 'proposed' | 'confirmed' | 'rejected'
+  isFormal: boolean
+  waitCondition: string
+  deferredUntil?: string
+  returnTarget: {
+    view?: DesktopResearchResumeView
+    sourceId?: string
+    itemId?: string
+    pageNumber?: number
+    annotationId?: string
+    runId?: string
+    milestoneId?: string
+    reviewDocumentId?: string
+    actionPackId?: string
+    actionItemId?: string
+  }
+  sourceSnapshot: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+  events: Array<{
+    id: string
+    eventType: 'created' | 'legacy_synced' | 'confirmed' | 'rejected' | 'status_changed' | 'source_written_back'
+    fromStatus?: DesktopResearchTaskStatus
+    toStatus?: DesktopResearchTaskStatus
+    actor: 'user' | 'ai' | 'system'
+    note: string
+    occurredAt: string
+  }>
+}
+
+type DesktopResearchTaskList = {
+  tasks: DesktopResearchTask[]
+  summary: Record<DesktopResearchTaskStatus, number>
+}
+
+type DesktopResearchTaskInput = {
+  projectId?: string
+  title?: string
+  detail?: string
+  status?: DesktopResearchTaskStatus
+  sourceType?: DesktopResearchTaskSourceType
+  sourceId?: string
+  sourceRole?: string
+  origin?: 'user' | 'ai' | 'system'
+  waitCondition?: string
+  deferredUntil?: string
+}
+
+type DesktopResearchEvidenceRefType = 'bibliography' | 'source' | 'run' | 'artifact' | 'milestone'
+
+type DesktopResearchEvidenceRef = {
+  type: DesktopResearchEvidenceRefType
+  id: string
+  label?: string
+}
+
+type DesktopResearchReportType = 'weekly' | 'meeting' | 'stage_review'
+
+type DesktopResearchReportStatus = 'draft' | 'confirmed'
+
+type DesktopResearchReportRevision = {
+  id: string
+  revisionNumber: number
+  snapshot: {
+    title: string
+    type: DesktopResearchReportType
+    period: string
+    markdown: string
+    sourceRefs: DesktopResearchEvidenceRef[]
+    status: DesktopResearchReportStatus
+    confirmedAt?: string
+    updatedAt: string
+  }
+  createdAt: string
+}
+
+type DesktopResearchReport = {
+  id: string
+  title: string
+  type: DesktopResearchReportType
+  period: string
+  markdown: string
+  sourceRefs: DesktopResearchEvidenceRef[]
+  status: DesktopResearchReportStatus
+  revisionNumber: number
+  revisions: DesktopResearchReportRevision[]
+  createdAt: string
+  updatedAt: string
+  confirmedAt?: string
+}
+
+type DesktopResearchReportInput = {
+  id?: string
+  projectId?: string
+  title?: string
+  type?: DesktopResearchReportType
+  period?: string
+  markdown?: string
+  sourceRefs?: DesktopResearchEvidenceRef[]
+  status?: 'draft'
+}
+
+type DesktopResearchClaimStatus = 'draft' | 'confirmed'
+
+type DesktopResearchClaimRevision = {
+  id: string
+  revisionNumber: number
+  snapshot: {
+    section: string
+    text: string
+    status: DesktopResearchClaimStatus
+    requiredEvidence: string[]
+    evidenceRefs: DesktopResearchEvidenceRef[]
+    confirmedAt?: string
+    archivedAt?: string
+    updatedAt: string
+  }
+  createdAt: string
+}
+
+type DesktopResearchClaim = {
+  id: string
+  section: string
+  text: string
+  status: DesktopResearchClaimStatus
+  requiredEvidence: string[]
+  evidenceRefs: DesktopResearchEvidenceRef[]
+  revisionNumber: number
+  revisions: DesktopResearchClaimRevision[]
+  createdAt: string
+  updatedAt: string
+  confirmedAt?: string
+  archivedAt?: string
+}
+
+type DesktopResearchClaimInput = {
+  id?: string
+  projectId?: string
+  section?: string
+  text?: string
+  status?: DesktopResearchClaimStatus
+  requiredEvidence?: string[]
+  evidenceRefs?: DesktopResearchEvidenceRef[]
+}
+
+type DesktopResearchWorkspaceInput = {
+  projectId?: string
+  name?: string
+  researchQuestion?: string
+  currentHypothesis?: string
+  stage?: string
+  mode?: DesktopResearchProjectMode
+  createdBy?: 'user' | 'ai' | 'system'
+}
+
+type DesktopResearchRecordInput = {
+  id?: string
+  projectId?: string
+  recordType: DesktopResearchRecordType
+  title: string
+  content?: string
+  status?: DesktopResearchRecordStatus
+  occurredAt?: string
+  filePath?: string
+  sourceIds?: string[]
+  tags?: string[]
+}
+
+type DesktopResearchMilestone = {
+  id: string
+  title: string
+  description: string
+  status: DesktopResearchRecordStatus
+  acceptanceCriteria: string[]
+  dueAt?: string
+  completedAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
+type DesktopResearchVariableChange = {
+  name: string
+  previousValue?: string
+  currentValue: string
+  unit?: string
+}
+
+type DesktopResearchRunTemplateDefaults = {
+  purpose?: string
+  hypothesis?: string
+  changedVariables?: DesktopResearchVariableChange[]
+  command?: string
+  environment?: string
+  procedure?: string
+  observations?: string
+  anomaly?: string
+  nextStep?: string
+}
+
+type DesktopResearchRunTemplate = {
+  id: string
+  projectId?: string
+  name: string
+  category: string
+  description: string
+  defaults: DesktopResearchRunTemplateDefaults
+  builtIn: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+type DesktopResearchRun = {
+  id: string
+  milestoneId?: string
+  templateId?: string
+  title: string
+  purpose: string
+  hypothesis: string
+  changedVariables: DesktopResearchVariableChange[]
+  command: string
+  environment: string
+  procedure: string
+  outcome: DesktopResearchRunOutcome
+  observations: string
+  anomaly: string
+  nextStep: string
+  nextStepTaskStatus?: DesktopResearchTaskStatus
+  anomalyTaskStatus?: DesktopResearchTaskStatus
+  sourceIds: string[]
+  startedAt: string
+  endedAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
+type DesktopResearchArtifact = {
+  id: string
+  runId: string
+  label: string
+  role: DesktopResearchArtifactRole
+  filePath: string
+  resolvedPath: string
+  kind: 'file' | 'directory'
+  existsState: 'found' | 'missing' | 'denied'
+  sizeBytes?: number
+  modifiedAt?: string
+  contentSha256?: string
+  metadata: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+type DesktopResearchProjectHistoryEntry = {
+  id: string
+  changedFields: string[]
+  snapshot: {
+    name: string
+    researchQuestion: string
+    currentHypothesis: string
+    stage: string
+    mode: DesktopResearchProjectMode
+  }
+  createdAt: string
+  createdBy: 'user' | 'ai' | 'system'
+}
+
+type DesktopResearchMilestoneInput = {
+  id?: string
+  projectId?: string
+  title?: string
+  description?: string
+  status?: DesktopResearchRecordStatus
+  acceptanceCriteria?: string[]
+  dueAt?: string
+}
+
+type DesktopResearchRunTemplateInput = {
+  id?: string
+  projectId?: string
+  name?: string
+  category?: string
+  description?: string
+  defaults?: DesktopResearchRunTemplateDefaults
+  archived?: boolean
+}
+
+type DesktopResearchRunInput = {
+  id?: string
+  projectId?: string
+  milestoneId?: string
+  templateId?: string
+  title?: string
+  purpose?: string
+  hypothesis?: string
+  changedVariables?: DesktopResearchVariableChange[]
+  command?: string
+  environment?: string
+  procedure?: string
+  outcome?: DesktopResearchRunOutcome
+  observations?: string
+  anomaly?: string
+  nextStep?: string
+  sourceIds?: string[]
+  startedAt?: string
+  endedAt?: string
+}
+
+type DesktopResearchArtifactInput = {
+  id?: string
+  projectId?: string
+  runId?: string
+  label?: string
+  role?: DesktopResearchArtifactRole
+  filePath?: string
+}
+
+type DesktopReadingTranslationSegment = {
+  sourceId: string
+  segmentId: string
+  sourceHash: string
+  baseSourceHash: string
+  sourceText: string
+  translatedText: string
+  sourceLanguage: string
+  targetLanguage: string
+  provider: string
+  model?: string
+  status: 'pending' | 'translated' | 'failed'
+  error?: string
+  attempts: number
+  locked: boolean
+  lockedAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
+type DesktopReadingTranslationTerm = {
+  id: string
+  sourceId: string
+  sourceTerm: string
+  targetTerm: string
+  note: string
+  createdAt: string
+  updatedAt: string
 }
 
 type WorkspaceLibraryState = {
   sources: Array<Record<string, unknown>>
   annotations: Array<Record<string, unknown>>
   bibliographicItems: Array<Record<string, unknown>>
+  researchWorkspace: DesktopResearchWorkspace
+}
+
+type DesktopStructuredReadingBlock = {
+  id: string
+  originalBlockIds: string[]
+  content: string
+  sourceSlices: Array<{ originalBlockId: string; content: string }>
+  contentFingerprint: string
+  kind: 'heading' | 'paragraph' | 'figure' | 'figure_caption' | 'table' | 'code' | 'formula'
+  headingLevel?: number
+  inferredHeading?: string
+  pageNumber?: number
+  pageRange?: [number, number]
+  bbox?: [number, number, number, number]
+  layoutBlockId?: string
+  confidence?: number
+  sourceVersion: number
+  transformation?: 'cross-page-merge'
+  relation?: { type: 'caption-of'; targetBlockId: string }
+}
+
+type DesktopStructuredReadingVersion = {
+  id: string
+  documentId: string
+  sourceId: string
+  versionNumber: number
+  sourceFingerprint: string
+  sourceVersion: number
+  createdBy: 'rules' | 'ai' | 'user' | 'restore'
+  model?: string
+  blocks: DesktopStructuredReadingBlock[]
+  toc: Array<{ blockId: string; title: string; level: number; pageNumber?: number }>
+  diagnostics: Array<{ pageNumber: number; layout: 'single-column' | 'two-column' | 'uncertain'; confidence: number; coverage: number; reordered: boolean }>
+  qualityIssues: Array<{ code: string; severity: 'info' | 'warning'; message: string; blockId?: string; pageNumber?: number }>
+  changeSummary: Record<string, number | boolean>
+  note: string
+  restoredFromVersionId?: string
+  createdAt: string
+}
+
+type DesktopStructuredReadingState = {
+  documentId?: string
+  sourceId: string
+  sourceVersion: number
+  sourceFingerprint?: string
+  stale: boolean
+  currentVersion?: DesktopStructuredReadingVersion
+  versions: Array<{
+    id: string
+    versionNumber: number
+    sourceFingerprint: string
+    sourceVersion: number
+    createdBy: 'rules' | 'ai' | 'user' | 'restore'
+    model?: string
+    changeSummary: Record<string, number | boolean>
+    qualityIssueCount: number
+    note: string
+    restoredFromVersionId?: string
+    createdAt: string
+  }>
 }
 
 type DesktopUISettings = {
@@ -280,6 +779,36 @@ type DesktopPaperReadingCardSnapshot = {
   }
 }
 
+type DesktopZoteroMetadataRecord = {
+  itemKey: string
+  libraryId?: string
+  version?: string | number
+  localItemId?: string
+  rawRecordId?: string
+  rawRecordIdField?: string
+  importFormat?: 'ris' | 'bibtex' | 'endnote-xml'
+  collections?: string[]
+  attachmentKeys?: string[]
+}
+
+type DesktopZoteroSyncPlanEntry = DesktopZoteroMetadataRecord & {
+  localItemId?: string
+  fingerprint: string
+  reason?: 'duplicate-external-key' | 'local-item-not-found' | 'external-key-already-bound'
+}
+
+type DesktopZoteroSyncPlan = {
+  adapter: 'zotero-export-metadata-v1'
+  sourceFingerprint: string
+  writesZoteroDatabase: false
+  counts: { added: number; updated: number; unchanged: number; unmatched: number; conflicts: number }
+  added: DesktopZoteroSyncPlanEntry[]
+  updated: DesktopZoteroSyncPlanEntry[]
+  unchanged: DesktopZoteroSyncPlanEntry[]
+  unmatched: DesktopZoteroSyncPlanEntry[]
+  conflicts: DesktopZoteroSyncPlanEntry[]
+}
+
 type ReviewInputFragment = {
   id: string
   bibliographicItemId: string
@@ -324,10 +853,12 @@ type ReviewDocumentView = {
 }
 
 type ActionEvidenceInput = {
-  evidenceType: 'fragment' | 'review' | 'source' | 'bibliography'
+  evidenceType: 'fragment' | 'review' | 'source' | 'bibliography' | 'milestone' | 'run'
   entityId: string
   sourceId?: string
   itemId?: string
+  milestoneId?: string
+  runId?: string
   reviewDocumentId?: string
   label: string
   excerpt: string
@@ -374,13 +905,15 @@ type ActionPackView = {
     updatedAt: string
     evidence: Array<{
       id: string
-      evidenceType: 'fragment' | 'review' | 'source' | 'bibliography'
+      evidenceType: 'fragment' | 'review' | 'source' | 'bibliography' | 'milestone' | 'run'
       entityId: string
       fragmentId?: string
       reviewBlockId?: string
       reviewDocumentId?: string
       sourceId?: string
       itemId?: string
+      milestoneId?: string
+      runId?: string
       label: string
       excerpt: string
       pageNumber?: number
@@ -475,13 +1008,129 @@ interface Window {
       ai: DesktopAppSettings['ai']
       ui: DesktopUISettings
     }): Promise<DesktopAppSettings>
+    writeClipboardText(input: { text: string }): Promise<{ written: true; characterCount: number }>
     listRecentWorkspaces(): Promise<WorkspaceSummary[]>
     getCurrentWorkspace(): Promise<WorkspaceSummary | undefined>
     createWorkspace(input: { name: string }): Promise<WorkspaceDialogResult>
     openWorkspace(): Promise<WorkspaceDialogResult>
-    createWorkspaceInSelectedFolder(input: { creationRequestId: string; name: string }): Promise<WorkspaceDialogResult>
+    createWorkspaceInSelectedFolder(input: { creationRequestId: string; name: string; manageExistingPapers?: boolean }): Promise<WorkspaceDialogResult>
     switchWorkspace(input: { id: string }): Promise<WorkspaceSummary>
     loadWorkspaceLibrary(): Promise<WorkspaceLibraryState>
+    getStructuredReading(input: { sourceId: string }): Promise<DesktopStructuredReadingState>
+    generateStructuredReading(input: {
+      sourceId: string
+      createdBy?: 'rules' | 'ai'
+      model?: string
+      boundaries?: Array<{ beforeBlockId: string; section: string }>
+    }): Promise<DesktopStructuredReadingState>
+    saveStructuredReadingAdjustment(input: {
+      sourceId: string
+      baseVersionId: string
+      orderedBlockIds: string[]
+      headingLevels: Record<string, number>
+      note?: string
+    }): Promise<DesktopStructuredReadingState>
+    restoreStructuredReadingVersion(input: { sourceId: string; versionId: string }): Promise<DesktopStructuredReadingState>
+    getResearchResume(): Promise<DesktopResearchResumeState>
+    beginResearchSession(): Promise<DesktopResearchResumeState>
+    saveResearchResume(input: DesktopResearchResumeInput): Promise<DesktopResearchResumeState>
+    listResearchTasks(input?: { status?: DesktopResearchTaskStatus }): Promise<DesktopResearchTaskList>
+    createResearchTask(input: DesktopResearchTaskInput): Promise<{ task: DesktopResearchTask; alreadyExists: boolean }>
+    updateResearchTask(input: {
+      taskId: string
+      status?: DesktopResearchTaskStatus
+      decision?: 'confirm' | 'reject'
+      waitCondition?: string
+      deferredUntil?: string
+      note?: string
+    }): Promise<DesktopResearchTaskList>
+    getResearchWorkspace(): Promise<DesktopResearchWorkspace>
+    saveResearchWorkspace(input: DesktopResearchWorkspaceInput): Promise<DesktopResearchWorkspace>
+    saveResearchProject(input: DesktopResearchWorkspaceInput): Promise<DesktopResearchWorkspace>
+    saveResearchRecord(input: DesktopResearchRecordInput): Promise<DesktopResearchWorkspace>
+    saveResearchMilestone(input: DesktopResearchMilestoneInput): Promise<DesktopResearchWorkspace>
+    saveResearchRun(input: DesktopResearchRunInput): Promise<DesktopResearchWorkspace>
+    saveResearchRunTemplate(input: DesktopResearchRunTemplateInput): Promise<DesktopResearchWorkspace>
+    saveResearchArtifact(input: DesktopResearchArtifactInput): Promise<DesktopResearchWorkspace>
+    selectResearchArtifactPath(input?: { kind?: 'file' | 'directory' }): Promise<{
+      canceled: boolean
+      filePath?: string
+    }>
+    listResearchReports(): Promise<DesktopResearchReport[]>
+    getResearchReport(input: { id: string }): Promise<DesktopResearchReport>
+    saveResearchReport(input: DesktopResearchReportInput): Promise<DesktopResearchReport>
+    confirmResearchReport(input: { id: string; projectId?: string }): Promise<DesktopResearchReport>
+    exportResearchReport(input: {
+      id: string
+      destination?: 'exports' | 'save_as'
+    }): Promise<{
+      canceled?: boolean
+      reportId?: string
+      filePath?: string
+      fileSha256?: string
+      format?: 'markdown'
+      exportedAt?: string
+    }>
+    getZoteroSyncCapabilities(): Promise<{
+      adapter: 'zotero-export-metadata-v1'
+      imports: Array<'ris' | 'bibtex' | 'endnote-xml'>
+      metadata: string[]
+      writesZoteroDatabase: false
+      supports: string[]
+      intentionallyUnsupported: string[]
+    }>
+    previewZoteroMetadataSync(input: { records: DesktopZoteroMetadataRecord[] }): Promise<DesktopZoteroSyncPlan>
+    applyZoteroMetadataSync(input: { records: DesktopZoteroMetadataRecord[] }): Promise<DesktopZoteroSyncPlan & { runId: string; appliedAt: string }>
+    exportPortableMarkdown(input: {
+      kind: 'reading_card' | 'review_document' | 'experiment_retrospective' | 'research_report'
+      id: string
+    }): Promise<{
+      canceled?: boolean
+      kind?: string
+      entityId?: string
+      filePath?: string
+      fileName?: string
+      fileSha256?: string
+      exportedAt?: string
+      sourceOfTruth?: 'sqlite'
+      direction?: 'one-way-snapshot'
+      overwritten?: boolean
+    }>
+    listResearchClaims(input?: { includeArchived?: boolean }): Promise<DesktopResearchClaim[]>
+    saveResearchClaim(input: DesktopResearchClaimInput): Promise<DesktopResearchClaim>
+    archiveResearchClaim(input: { id: string; projectId?: string }): Promise<{
+      id: string
+      archivedAt: string
+      alreadyArchived: boolean
+    }>
+    getReadingTranslationSegments(input: {
+      sourceId: string
+      segments: Array<{ segmentId: string; sourceHash: string }>
+    }): Promise<{
+      sourceId: string
+      segments: DesktopReadingTranslationSegment[]
+      misses: Array<{ segmentId: string; sourceHash: string }>
+    }>
+    saveReadingTranslationSegment(input: {
+      sourceId: string
+      segmentId: string
+      sourceHash: string
+      baseSourceHash?: string
+      sourceText: string
+      translatedText?: string
+      sourceLanguage?: string
+      targetLanguage?: string
+      provider: string
+      model?: string
+      status: 'pending' | 'translated' | 'failed'
+      error?: string
+      attempts?: number
+      locked?: boolean
+      unlock?: boolean
+    }): Promise<DesktopReadingTranslationSegment>
+    listReadingTranslationTerms(input: { sourceId: string }): Promise<DesktopReadingTranslationTerm[]>
+    saveReadingTranslationTerm(input: { sourceId: string; sourceTerm: string; targetTerm: string; note?: string }): Promise<DesktopReadingTranslationTerm[]>
+    deleteReadingTranslationTerm(input: { sourceId: string; termId: string }): Promise<DesktopReadingTranslationTerm[]>
     searchWorkspaceLibrary(input: {
       query?: string
       filters?: DesktopLibrarySearchFilters
@@ -577,6 +1226,7 @@ interface Window {
       blockCount: number
     }>>
     getReviewDocument(input: { documentId: string }): Promise<ReviewDocumentView>
+    confirmReviewDocument(input: { documentId: string }): Promise<ReviewDocumentView>
     getEvidenceGraph(input?: { itemIds?: string[]; documentId?: string }): Promise<EvidenceGraphView>
     createEvidenceRelation(input: {
       fromFragmentId: string
@@ -672,6 +1322,7 @@ interface Window {
         copiedSourceCount: number
         alreadyImported: boolean
         warnings: Array<{ ordinal: number; code: string; message: string }>
+        itemIds: string[]
       }
     }>
   }

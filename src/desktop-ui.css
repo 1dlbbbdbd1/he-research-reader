@@ -65,6 +65,71 @@ select {
   overflow: visible;
 }
 
+/* User-selected surface and accent are first-class application tokens. */
+.app-shell,
+.app-shell:not(.reader-active),
+.app-shell:not(.reader-active) > main,
+.app-shell:not(.reader-active) .library-page,
+.app-shell:not(.reader-active) .review-workspace {
+  background-color: var(--ui-page, #f5f5f3);
+}
+
+.app-shell:not(.reader-active) .sidebar {
+  background-color: var(--ui-sidebar, #f0f0ee);
+}
+
+.app-shell:not(.reader-active) .topbar,
+.app-shell:not(.reader-active) .source-table,
+.app-shell:not(.reader-active) .library-paper-table,
+.app-shell:not(.reader-active) .review-builder,
+.app-shell:not(.reader-active) .review-document,
+.app-shell:not(.reader-active) .agent-modal,
+.app-shell:not(.reader-active) .annotation-modal {
+  background-color: var(--ui-paper, #fff);
+}
+
+.app-shell .primary-button,
+.app-shell .agent-button,
+.app-shell .workspace-primary,
+.app-shell .review-primary-action,
+.app-shell .library-import-primary {
+  color: var(--ui-accent-contrast, #fff);
+  background-color: var(--ui-accent, #42474b);
+}
+
+.app-shell .primary-button:hover,
+.app-shell .agent-button:hover,
+.app-shell .workspace-primary:hover,
+.app-shell .review-primary-action:hover,
+.app-shell .library-import-primary:hover {
+  filter: brightness(.9);
+}
+
+.app-shell:not(.reader-active) .nav-item:hover,
+.app-shell:not(.reader-active) .nav-item.active {
+  color: var(--ui-accent, #42474b);
+  background-color: var(--ui-accent-soft, #e9ebec);
+  box-shadow: inset 2px 0 0 var(--ui-accent, #42474b);
+}
+
+.app-shell .text-button,
+.app-shell a:focus-visible,
+.app-shell button:focus-visible,
+.app-shell input:focus-visible,
+.app-shell textarea:focus-visible,
+.app-shell select:focus-visible {
+  accent-color: var(--ui-accent, #42474b);
+}
+
+.app-shell button:focus-visible,
+.app-shell a:focus-visible,
+.app-shell input:focus-visible,
+.app-shell textarea:focus-visible,
+.app-shell select:focus-visible {
+  outline: 2px solid var(--ui-accent, #42474b);
+  outline-offset: 2px;
+}
+
 .app-shell:not(.reader-active) .topbar {
   height: var(--desktop-toolbar-height);
 }
@@ -684,6 +749,28 @@ select {
   .research-reader.agent-inspector-open { --reader-library-width: 0px; --reader-inspector-width: 390px; }
   .research-reader-toolbar { grid-template-columns: minmax(180px, 1fr) auto minmax(150px, 1fr); }
 }
+
+/* Final theme bridge: loaded last so user choices win over legacy screen defaults. */
+.app-shell,
+.app-shell:not(.reader-active),
+.app-shell:not(.reader-active) > main,
+.app-shell:not(.reader-active) .library-page,
+.app-shell:not(.reader-active) .review-workspace { background-color: var(--ui-page, #f5f5f3); }
+.app-shell:not(.reader-active) .sidebar { background-color: var(--ui-sidebar, #f0f0ee); }
+.app-shell:not(.reader-active) .topbar,
+.app-shell:not(.reader-active) .source-table,
+.app-shell:not(.reader-active) .library-paper-table,
+.app-shell:not(.reader-active) .review-builder,
+.app-shell:not(.reader-active) .review-document,
+.app-shell:not(.reader-active) .agent-modal,
+.app-shell:not(.reader-active) .annotation-modal { background-color: var(--ui-paper, #fff); }
+.app-shell .primary-button,
+.app-shell .agent-button,
+.app-shell .workspace-primary,
+.app-shell .review-primary-action,
+.app-shell .library-import-primary { color: var(--ui-accent-contrast, #fff); background-color: var(--ui-accent, #42474b); }
+.app-shell:not(.reader-active) .nav-item:hover,
+.app-shell:not(.reader-active) .nav-item.active { color: var(--ui-accent, #42474b); background-color: var(--ui-accent-soft, #e9ebec); box-shadow: inset 2px 0 0 var(--ui-accent, #42474b); }
 
 @media (max-width: 920px) {
   :root { --desktop-sidebar-width: 64px; }

@@ -3,8 +3,8 @@
   --action-muted: #6f716d;
   --action-rule: #dedfdb;
   --action-paper: #fbfbfa;
-  --action-blue: #496b84;
-  --action-blue-soft: #edf3f7;
+  --action-blue: var(--ui-accent, #496b84);
+  --action-blue-soft: var(--ui-accent-soft, #edf3f7);
   --action-green: #557260;
   --action-green-soft: #edf4ef;
   --action-amber: #94652f;
@@ -24,7 +24,7 @@
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--action-rule);
-  background: #f3f3f1;
+  background: var(--ui-sidebar, #f3f3f1);
 }
 
 .action-pack-list > header {
