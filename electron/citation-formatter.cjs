@@ -1,4 +1,12 @@
+const crypto = require('node:crypto')
+
 const STANDARD = 'GB/T 7714—2015'
+const CITATION_STYLES = Object.freeze([
+  { id: 'gb-t-7714-2015', label: STANDARD },
+  { id: 'apa-7', label: 'APA 7th' },
+  { id: 'ieee', label: 'IEEE' },
+  { id: 'bibtex', label: 'BibTeX' },
+])
 
 const TYPE_ALIASES = new Map([
   ['article-journal', 'journal'], ['article-magazine', 'journal'], ['journalarticle', 'journal'], ['journal article', 'journal'], ['jour', 'journal'],
@@ -86,6 +94,35 @@ function formatAuthors(item) {
   if (!authors.length) return '佚名'
   if (authors.length <= 3) return authors.join(', ')
   return `${authors.slice(0, 3).join(', ')}, ${chinese ? '等' : 'et al'}`
+}
+
+function people(item) {
+  return (Array.isArray(item.authors) ? item.authors : []).map(person => {
+    const literal = clean(person?.literal)
+    const parsed = clean(person?.family) || clean(person?.given)
+      ? { family: clean(person.family), given: clean(person.given) }
+      : parseEnglishLiteral(literal)
+    return { family: parsed.family || literal, given: parsed.given }
+  }).filter(person => person.family || person.given)
+}
+
+function initialsWithPeriods(given) {
+  return clean(given).split(/[\s-]+/).map(part => part.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 1).toUpperCase()).filter(Boolean).map(value => `${value}.`).join(' ')
+}
+
+function formatApaAuthors(item) {
+  const authors = people(item).map(person => `${person.family}, ${initialsWithPeriods(person.given)}`.trim().replace(/,$/, ''))
+  if (!authors.length) return 'Anonymous'
+  if (authors.length === 1) return authors[0]
+  if (authors.length <= 20) return `${authors.slice(0, -1).join(', ')}, & ${authors.at(-1)}`
+  return `${authors.slice(0, 19).join(', ')}, … ${authors.at(-1)}`
+}
+
+function formatIeeeAuthors(item) {
+  const authors = people(item).map(person => [initialsWithPeriods(person.given), person.family].filter(Boolean).join(' '))
+  if (!authors.length) return 'Anonymous'
+  if (authors.length <= 6) return authors.length === 1 ? authors[0] : `${authors.slice(0, -1).join(', ')}, and ${authors.at(-1)}`
+  return `${authors[0]} et al.`
 }
 
 function firstIdentifier(identifiers, name) {
@@ -189,6 +226,91 @@ function formatGB7714(item = {}, options = {}) {
   }
 }
 
+function formatAPA(item = {}) {
+  const normalizedType = normalizeType(item.itemType)
+  const missing = missingMetadata(item, normalizedType)
+  const authors = formatApaAuthors(item)
+  const year = yearOf(item.issued) || 'n.d.'
+  const title = clean(item.title) || '[Untitled]'
+  const doi = normalizeDoi(firstIdentifier(item.identifiers, 'DOI') || item.doi)
+  const url = firstIdentifier(item.identifiers, 'URL') || clean(item.url)
+  const parts = [`${authors} (${year}). ${title}.`]
+  if (normalizedType === 'journal') {
+    const journal = clean(item.containerTitle)
+    const volumeIssue = `${clean(item.volume)}${clean(item.issue) ? `(${clean(item.issue)})` : ''}`
+    const publication = [journal, volumeIssue].filter(Boolean).join(', ')
+    const pages = clean(item.pages)
+    if (publication || pages) parts.push(`${publication}${pages ? `${publication ? ', ' : ''}${pages}` : ''}.`)
+  } else if (['book', 'conference', 'thesis', 'report'].includes(normalizedType)) {
+    const publisher = clean(item.publisher)
+    if (publisher) parts.push(`${publisher}.`)
+  }
+  if (doi) parts.push(`https://doi.org/${doi}`)
+  else if (url) parts.push(url)
+  return { standard: 'APA 7th', styleId: 'apa-7', documentType: TYPE_CODES[normalizedType], text: parts.join(' ').replace(/\s+/g, ' ').trim(), missingFields: missing, incomplete: missing.length > 0 }
+}
+
+function formatIEEE(item = {}, options = {}) {
+  const normalizedType = normalizeType(item.itemType)
+  const missing = missingMetadata(item, normalizedType)
+  const prefix = Number.isInteger(options.sequence) && options.sequence > 0 ? `[${options.sequence}] ` : ''
+  const authors = formatIeeeAuthors(item)
+  const title = clean(item.title) || '[Untitled]'
+  const parts = [`${prefix}${authors}, “${title},”`]
+  if (normalizedType === 'journal') {
+    if (clean(item.containerTitle)) parts.push(clean(item.containerTitle))
+    if (clean(item.volume)) parts.push(`vol. ${clean(item.volume)}`)
+    if (clean(item.issue)) parts.push(`no. ${clean(item.issue)}`)
+    if (clean(item.pages)) parts.push(`pp. ${clean(item.pages)}`)
+    if (yearOf(item.issued)) parts.push(yearOf(item.issued))
+  } else {
+    if (clean(item.containerTitle)) parts.push(`in ${clean(item.containerTitle)}`)
+    if (clean(item.publisher)) parts.push(clean(item.publisher))
+    if (yearOf(item.issued)) parts.push(yearOf(item.issued))
+  }
+  const doi = normalizeDoi(firstIdentifier(item.identifiers, 'DOI') || item.doi)
+  const url = firstIdentifier(item.identifiers, 'URL') || clean(item.url)
+  if (doi) parts.push(`doi: ${doi}`)
+  else if (url) parts.push(`[Online]. Available: ${url}`)
+  const [head, ...details] = parts.filter(Boolean)
+  return { standard: 'IEEE', styleId: 'ieee', documentType: TYPE_CODES[normalizedType], text: `${head}${details.length ? ` ${details.join(', ')}` : ''}.`.replace(/\.\.$/, '.'), missingFields: missing, incomplete: missing.length > 0 }
+}
+
+function bibtexEscape(value) {
+  return clean(value).replace(/([{}])/g, '\\$1').replace(/&/g, '\\&').replace(/%/g, '\\%')
+}
+
+function bibtexKey(item) {
+  const first = people(item)[0]?.family || 'ref'
+  const ascii = first.normalize('NFKD').replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+  const titleWord = clean(item.title).normalize('NFKD').split(/\s+/).map(word => word.replace(/[^a-zA-Z0-9]/g, '')).find(Boolean)?.toLowerCase() || ''
+  const year = yearOf(item.issued).replace(/\D/g, '')
+  const readable = `${ascii || 'ref'}${year}${titleWord}`.slice(0, 48)
+  if (readable !== 'ref') return readable
+  return `ref${crypto.createHash('sha256').update(JSON.stringify(item)).digest('hex').slice(0, 10)}`
+}
+
+function formatBibTeX(item = {}) {
+  const normalizedType = normalizeType(item.itemType)
+  const entryType = { journal: 'article', book: 'book', conference: 'inproceedings', thesis: 'phdthesis', report: 'techreport', web: 'online', unknown: 'misc' }[normalizedType]
+  const fields = []
+  const authorText = people(item).map(person => [person.family, person.given].filter(Boolean).join(', ')).join(' and ')
+  const add = (name, value) => { if (clean(value)) fields.push(`  ${name} = {${bibtexEscape(value)}}`) }
+  add('author', authorText)
+  add('title', item.title)
+  add(normalizedType === 'journal' ? 'journal' : normalizedType === 'conference' ? 'booktitle' : 'publisher', normalizedType === 'journal' || normalizedType === 'conference' ? item.containerTitle : item.publisher)
+  add('year', yearOf(item.issued))
+  add('volume', item.volume)
+  add('number', item.issue)
+  add('pages', item.pages)
+  const doi = normalizeDoi(firstIdentifier(item.identifiers, 'DOI') || item.doi)
+  const url = firstIdentifier(item.identifiers, 'URL') || clean(item.url)
+  add('doi', doi)
+  add('url', url)
+  const missing = missingMetadata(item, normalizedType)
+  return { standard: 'BibTeX', styleId: 'bibtex', documentType: entryType, text: `@${entryType}{${bibtexKey(item)},\n${fields.join(',\n')}\n}`, missingFields: missing, incomplete: missing.length > 0 }
+}
+
 class GB7714Formatter {
   format(item, options) {
     return formatGB7714(item, options)
@@ -201,15 +323,23 @@ class CitationFormatter {
   }
 
   format(item, options = {}) {
-    if (options.style && options.style !== 'gb-t-7714-2015') throw new Error(`不支持的引用格式：${options.style}`)
-    return this.formatter.format(item, options)
+    const style = options.style || 'gb-t-7714-2015'
+    if (style === 'gb-t-7714-2015') return this.formatter.format(item, options)
+    if (style === 'apa-7') return formatAPA(item, options)
+    if (style === 'ieee') return formatIEEE(item, options)
+    if (style === 'bibtex') return formatBibTeX(item, options)
+    throw new Error(`不支持的引用格式：${style}`)
   }
 }
 
 module.exports = {
   CitationFormatter,
+  CITATION_STYLES,
   GB7714Formatter,
   STANDARD,
   formatGB7714,
+  formatAPA,
+  formatBibTeX,
+  formatIEEE,
   normalizeType,
 }

@@ -39,6 +39,13 @@ export function buildResearchAgentRequest(input: {
   scopeLabel: string
   readerContext?: Record<string, unknown>
   researchContext?: Record<string, unknown>
+  memory?: Array<{
+    kind: string
+    content: string
+    sourceType: string
+    importance: number
+    reviewState: string
+  }>
   history?: Array<{ role: 'user' | 'assistant'; content: string }>
 }): {
   contexts: Array<{

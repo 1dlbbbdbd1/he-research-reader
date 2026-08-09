@@ -1,0 +1,129 @@
+.app-shell[data-theme='dark'] {
+  color-scheme: dark;
+  --ui-page: #101621 !important;
+  --ui-sidebar: #111827 !important;
+  --ui-paper: #171e2b !important;
+  --reader-paper: #171e2b;
+  --reader-chrome: #111722;
+  --reader-border: #30394a;
+  color: #e9edf5;
+  background: #101621;
+}
+
+.app-shell[data-theme='dark'] > main,
+.app-shell[data-theme='dark'] .page,
+.app-shell[data-theme='dark'] .library-page,
+.app-shell[data-theme='dark'] .today-research,
+.app-shell[data-theme='dark'] .research-command-center,
+.app-shell[data-theme='dark'] .research-review-workspace,
+.app-shell[data-theme='dark'] .review-workspace,
+.app-shell[data-theme='dark'] .evidence-workspace,
+.app-shell[data-theme='dark'] .research-tasks-workspace {
+  color: #e9edf5;
+  background-color: #101621;
+}
+
+.app-shell[data-theme='dark'] .sidebar {
+  background: #0b1220;
+  color: #dfe6f2;
+}
+
+.app-shell[data-theme='dark'] .topbar {
+  border-color: #2b3443;
+  background: #121925;
+}
+
+.app-shell[data-theme='dark'] .crumb,
+.app-shell[data-theme='dark'] .crumb strong {
+  color: #bdc6d6;
+}
+
+.app-shell[data-theme='dark'] :is(
+  .card,
+  .metrics,
+  .source-table,
+  .paper-library-table,
+  .agent-modal,
+  .annotation-modal,
+  .settings-modal,
+  .citation-dialog,
+  .research-reader-toolbar,
+  .reader-library,
+  .reader-inspector,
+  [class$='-card'],
+  [class$='-panel'],
+  [class$='-inspector']
+) {
+  border-color: #30394a;
+  background-color: #171e2b;
+  color: #e9edf5;
+}
+
+.app-shell[data-theme='dark'] :is(h1,h2,h3,h4,strong,label,legend,dt,dd) {
+  color: #eef2f8;
+}
+
+.app-shell[data-theme='dark'] :is(p,small,.muted,.eyebrow,.section-kicker) {
+  color: #aeb8c9;
+}
+
+.app-shell[data-theme='dark'] :is(input,textarea,select) {
+  border-color: #3a4456;
+  background: #121925;
+  color: #eef2f8;
+}
+
+.app-shell[data-theme='dark'] :is(.table-head,.source-toolbar,.reader-library-tabs,.reader-inspector-tabs) {
+  border-color: #30394a;
+  background: #141b27;
+  color: #b7c0d0;
+}
+
+.app-shell[data-theme='dark'] :is(.table-row,.claim,.action,.reader-pane-heading,.reader-paper-list>button,.reader-outline-list>button) {
+  border-color: #2b3443;
+  color: #dfe5ef;
+}
+
+.app-shell[data-theme='dark'] :is(.reader-paper-list>button:hover,.reader-paper-list>button.active,.reader-outline-list>button:hover,.reader-outline-list>button.active,.reader-library-tabs button.active) {
+  background: #252e3e;
+  color: #f1f4f9;
+}
+
+.app-shell[data-theme='dark'] .reader-document {
+  background: #0d131d;
+}
+
+.app-shell[data-theme='dark'] :is(.structured-document,.extracted-document,.bilingual-document,.reading-draft,.reader-figure-item) {
+  border-color: #343e50;
+  background: #171e2b;
+  color: #e8edf6;
+}
+
+.app-shell[data-theme='dark'] :is(.reader-figure-item pre,.reader-figure-item img) {
+  background: #222b3a;
+  color: #dce3ee;
+}
+
+.app-shell[data-theme='dark'] .modal-backdrop {
+  background: rgba(3, 7, 14, .76);
+}
+
+.theme-swatch {
+  border: 1px solid #ccd2dc;
+  background: linear-gradient(135deg,#ffffff 0 50%,#eef1f6 50%);
+}
+
+.theme-swatch.dark {
+  border-color: #424c5d;
+  background: linear-gradient(135deg,#111827 0 50%,#252f3f 50%);
+}
+
+.reading-settings-preview.dark {
+  border-color: #3a4456;
+  background: #171e2b !important;
+  color: #e9edf5;
+}
+
+.reading-settings-preview.dark :is(h3,p,span) {
+  color: #dfe5ef;
+}

@@ -1,0 +1,13 @@
+{
+  "id": "llm",
+  "name": "LLM Provider Registry",
+  "version": "1.0.0",
+  "description": "连接主进程中的多供应商 LLM 注册表，不向 Renderer 暴露密钥。",
+  "category": "llm",
+  "interfaceVersion": 1,
+  "trust": "built-in",
+  "adapter": "llm-provider-registry",
+  "capabilities": ["llm.complete", "llm.test-connection"],
+  "permissions": ["llm:invoke"],
+  "defaultInstalled": true
+}

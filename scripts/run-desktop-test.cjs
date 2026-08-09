@@ -15,14 +15,27 @@ function bilingualSourceHash(value) {
 
 const projectRoot = path.resolve(__dirname, '..')
 const smokeMode = process.argv.includes('--smoke')
-const mode = smokeMode ? 'smoke' : 'interactive'
+const packagedMode = process.argv.includes('--packaged')
+const mode = packagedMode ? (smokeMode ? 'packaged-smoke' : 'packaged-interactive') : (smokeMode ? 'smoke' : 'interactive')
 const runId = `${Date.now()}-${process.pid}-${randomBytes(3).toString('hex')}`
 const runRoot = path.join(projectRoot, '.reader-cache', `desktop-${mode}-${runId}`)
 const userDataPath = path.join(runRoot, 'user-data')
-const electronExecutable = path.join(projectRoot, 'node_modules', 'electron', 'dist', 'electron.exe')
+const requestedExecutable = process.argv.find(value => value.startsWith('--executable='))?.slice('--executable='.length)
+const electronExecutable = packagedMode
+  ? path.resolve(requestedExecutable || path.join(projectRoot, 'release', 'win-unpacked', 'H’s 科研助手.exe'))
+  : path.join(projectRoot, 'node_modules', 'electron', 'dist', 'electron.exe')
 const mainScript = path.join(projectRoot, 'electron', 'main.cjs')
+const launchArguments = packagedMode ? [
+  `--user-data-dir=${userDataPath}`,
+  '--research-reader-packaged-smoke',
+  `--research-reader-test-root=${runRoot}`,
+  `--research-reader-test-user-data=${userDataPath}`,
+] : [mainScript]
 
-for (const requiredPath of [electronExecutable, mainScript, path.join(projectRoot, 'dist', 'index.html')]) {
+const requiredPaths = packagedMode
+  ? [electronExecutable]
+  : [electronExecutable, mainScript, path.join(projectRoot, 'dist', 'index.html')]
+for (const requiredPath of requiredPaths) {
   if (!fs.existsSync(requiredPath)) {
     process.stderr.write(`桌面测试缺少文件：${requiredPath}\n请先执行 npm install 和 npm run build。\n`)
     process.exitCode = 1
@@ -175,14 +188,16 @@ if (smokeMode) {
 }
 process.stdout.write(`DESKTOP_TEST_RUN=${JSON.stringify({ mode, runRoot, userDataPath })}\n`)
 
-const child = spawn(electronExecutable, [mainScript], {
+const child = spawn(electronExecutable, launchArguments, {
   cwd: projectRoot,
   env: {
     ...process.env,
+    CODEX_THREAD_ID: packagedMode ? '' : process.env.CODEX_THREAD_ID,
     RESEARCH_READER_DEV_USER_DATA: userDataPath,
     RESEARCH_READER_DESKTOP_TEST_ROOT: runRoot,
     RESEARCH_READER_DESKTOP_SMOKE: smokeMode ? '1' : '0',
-    RESEARCH_READER_ISOLATED_DESKTOP_TEST: '1',
+    RESEARCH_READER_PACKAGED_SMOKE: packagedMode && smokeMode ? '1' : '0',
+    RESEARCH_READER_ISOLATED_DESKTOP_TEST: packagedMode ? '0' : '1',
     ELECTRON_ENABLE_LOGGING: '1',
   },
   shell: false,
@@ -210,8 +225,10 @@ child.on('error', error => {
 
 child.on('exit', (code, signal) => {
   const gpuCrash = /GPU process exited unexpectedly|GPU process isn't usable/i.test(stderr)
-  const smokeFailed = smokeMode && /RESEARCH_READER_DESKTOP_SMOKE_FAILED=/.test(`${stdout}\n${stderr}`)
-  const smokePassed = !smokeMode || /RESEARCH_READER_DESKTOP_SMOKE=/.test(stdout)
+  const resultPath = path.join(runRoot, 'desktop-smoke-result.json')
+  const fileResult = smokeMode && fs.existsSync(resultPath) ? JSON.parse(fs.readFileSync(resultPath, 'utf8')) : undefined
+  const smokeFailed = smokeMode && (/RESEARCH_READER_DESKTOP_SMOKE_FAILED=/.test(`${stdout}\n${stderr}`) || fileResult?.failed === true)
+  const smokePassed = !smokeMode || /RESEARCH_READER_DESKTOP_SMOKE=/.test(stdout) || fileResult?.failed === false
   if (code !== 0 || signal || gpuCrash || smokeFailed || !smokePassed) {
     process.stderr.write(`DESKTOP_TEST_FAILED=${JSON.stringify({ code, signal, gpuCrash, smokeFailed, smokePassed, runRoot })}\n`)
     process.exitCode = 1

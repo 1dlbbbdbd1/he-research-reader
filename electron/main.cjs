@@ -1,6 +1,15 @@
 const { app, BrowserWindow, clipboard, dialog, ipcMain, shell, Menu, safeStorage } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
+const earlyPackagedSmokeRoot = process.argv.find(value => value.startsWith('--research-reader-test-root='))?.slice('--research-reader-test-root='.length) || ''
+function earlyPackagedSmokeTrace(stage, detail = {}) {
+  if (!earlyPackagedSmokeRoot) return
+  try {
+    fs.mkdirSync(earlyPackagedSmokeRoot, { recursive: true })
+    fs.appendFileSync(path.join(earlyPackagedSmokeRoot, 'desktop-smoke-trace.jsonl'), `${JSON.stringify({ stage, at: new Date().toISOString(), ...detail })}\n`, 'utf8')
+  } catch {}
+}
+earlyPackagedSmokeTrace('main-module:start', { argv: process.argv })
 const { mineruStatus, parseWithMineru } = require('./mineru.cjs')
 const { MineruLocalService } = require('./mineru-service.cjs')
 const { installMineruRuntime } = require('./mineru-install.cjs')
@@ -9,14 +18,25 @@ const { installTranslationRuntime } = require('./translation-install.cjs')
 const { embedLocally, localEmbeddingStatus } = require('./local-embedding.cjs')
 const { installEmbeddingRuntime } = require('./embedding-install.cjs')
 const { reciprocalRankFusion } = require('./semantic-index.cjs')
+earlyPackagedSmokeTrace('main-module:local-runtimes-loaded')
 const { WorkspaceService } = require('./workspace-service.cjs')
+earlyPackagedSmokeTrace('main-module:workspace-loaded')
 const { AppSettingsStore } = require('./settings-service.cjs')
+const { LLMService } = require('./llm/llm-service.cjs')
+const { ResearchAgentService } = require('./agent/agent-service.cjs')
+const { KnowledgeGraphService } = require('./knowledge/knowledge-graph-service.cjs')
+const { PluginService } = require('./plugins/plugin-service.cjs')
 const { findResearchReaderLink, parseResearchReaderLink } = require('./deep-link.cjs')
 const { configureDesktopRuntime } = require('./desktop-runtime.cjs')
 const { writeClipboardText } = require('./clipboard-service.cjs')
+earlyPackagedSmokeTrace('main-module:services-loaded')
 const projectRoot = path.join(__dirname, '..')
+const packagedSmokeArgument = process.argv.includes('--research-reader-packaged-smoke')
+const packagedSmokeTestRootArgument = process.argv.find(value => value.startsWith('--research-reader-test-root='))?.slice('--research-reader-test-root='.length) || ''
+const packagedSmokeUserDataArgument = process.argv.find(value => value.startsWith('--research-reader-test-user-data='))?.slice('--research-reader-test-user-data='.length) || ''
 
 const { isDesktopSmoke, managedCodexSession } = configureDesktopRuntime(app)
+earlyPackagedSmokeTrace('main-module:runtime-configured', { isDesktopSmoke, managedCodexSession })
 
 function isAllowedExternalUrl(value) {
   try {
@@ -32,11 +52,11 @@ const managedCodexUserData = managedCodexSession && codexThreadId
   ? path.join(projectRoot, '.reader-cache', `codex-${codexThreadId}`, 'user-data')
   : ''
 const requestedDevelopmentUserData = String(
-  process.env.RESEARCH_READER_DEV_USER_DATA || managedCodexUserData,
+  process.env.RESEARCH_READER_DEV_USER_DATA || packagedSmokeUserDataArgument || managedCodexUserData,
 ).trim()
-if (!app.isPackaged && requestedDevelopmentUserData) {
+if ((!app.isPackaged || process.env.RESEARCH_READER_PACKAGED_SMOKE === '1' || packagedSmokeArgument) && requestedDevelopmentUserData) {
   const resolvedUserData = path.resolve(requestedDevelopmentUserData)
-  const allowedRoot = `${path.resolve(projectRoot, '.reader-cache')}${path.sep}`
+  const allowedRoot = `${path.resolve(packagedSmokeArgument ? packagedSmokeTestRootArgument : path.join(projectRoot, '.reader-cache'))}${path.sep}`
   if (!resolvedUserData.startsWith(allowedRoot)) {
     throw new Error('开发隔离用户目录只能位于项目 .reader-cache 内。')
   }
@@ -51,15 +71,32 @@ let translationInstallation
 let embeddingInstallation
 let workspaceService
 let appSettingsStore
+let llmService
+let researchAgentService
+let knowledgeGraphService
+let pluginService
 let pendingWorkspaceCreation
 let pendingDeepLink = findResearchReaderLink(process.argv)
 let desktopSmokeFinished = false
+
+function desktopSmokeTrace(stage, detail = {}) {
+  const testRoot = String(process.env.RESEARCH_READER_DESKTOP_TEST_ROOT || packagedSmokeTestRootArgument).trim()
+  if (!isDesktopSmoke || !testRoot) return
+  try {
+    fs.mkdirSync(testRoot, { recursive: true })
+    fs.appendFileSync(path.join(testRoot, 'desktop-smoke-trace.jsonl'), `${JSON.stringify({ stage, at: new Date().toISOString(), ...detail })}\n`, 'utf8')
+  } catch {}
+}
 
 function finishDesktopSmoke(payload, failed = false) {
   if (!isDesktopSmoke || desktopSmokeFinished) return
   desktopSmokeFinished = true
   const marker = failed ? 'RESEARCH_READER_DESKTOP_SMOKE_FAILED' : 'RESEARCH_READER_DESKTOP_SMOKE'
   const serialized = JSON.stringify(payload)
+  const testRoot = String(process.env.RESEARCH_READER_DESKTOP_TEST_ROOT || packagedSmokeTestRootArgument).trim()
+  if (testRoot) {
+    try { fs.writeFileSync(path.join(testRoot, 'desktop-smoke-result.json'), JSON.stringify({ failed, payload }, null, 2), 'utf8') } catch {}
+  }
   if (failed) {
     process.exitCode = 1
     console.error(`${marker}=${serialized}`)
@@ -267,9 +304,13 @@ ipcMain.handle('mineru:parse', async (event, input) => {
   })
 })
 
-ipcMain.handle('translation:status', (_event, input) => localTranslationStatus(translationOptions(input)))
+ipcMain.handle('translation:status', (_event, input) => {
+  pluginService.requireCapability('translation', 'translation.selection')
+  return localTranslationStatus(translationOptions(input))
+})
 
 ipcMain.handle('translation:install', async (event, input) => {
+  pluginService.requireCapability('translation', 'translation.selection')
   const onProgress = progress => event.sender.send('translation:progress', {
     taskId: input?.taskId,
     ...progress,
@@ -289,6 +330,7 @@ ipcMain.handle('translation:install', async (event, input) => {
 })
 
 ipcMain.handle('translation:translate', async (event, input) => {
+  pluginService.requireCapability('translation', 'translation.selection')
   const onProgress = progress => event.sender.send('translation:progress', {
     taskId: input?.taskId,
     ...progress,
@@ -327,11 +369,55 @@ ipcMain.handle('embedding:embed', (_event, input) => embedLocally({
 
 ipcMain.handle('settings:load', () => appSettingsStore.load())
 ipcMain.handle('settings:save', (_event, input) => appSettingsStore.save(input))
+ipcMain.handle('llm:list-providers', () => llmService.listProviders())
+ipcMain.handle('llm:test-connection', (_event, input) => {
+  pluginService.requireCapability('llm', 'llm.test-connection')
+  return llmService.testConnection(input)
+})
+ipcMain.handle('llm:complete', (_event, input) => {
+  pluginService.requireCapability('llm', 'llm.complete')
+  return llmService.complete(input)
+})
+ipcMain.handle('agent:list-tools', () => researchAgentService.listTools())
+ipcMain.handle('agent:list-memory', () => researchAgentService.listMemory())
+ipcMain.handle('agent:save-memory', (_event, input) => researchAgentService.saveMemory(input))
+ipcMain.handle('agent:review-memory', (_event, input) => researchAgentService.reviewMemory(input))
+ipcMain.handle('agent:create-session', (_event, input) => researchAgentService.createSession(input))
+ipcMain.handle('agent:get-session', (_event, input) => researchAgentService.getSession(input?.sessionId))
+ipcMain.handle('agent:propose-plan', (_event, input) => researchAgentService.proposePlan(input))
+ipcMain.handle('agent:get-plan', (_event, input) => researchAgentService.getPlan(input?.planId))
+ipcMain.handle('agent:review-step', (_event, input) => researchAgentService.reviewStep(input))
+ipcMain.handle('agent:execute-plan', (_event, input) => researchAgentService.executePlan(input))
+ipcMain.handle('agent:execute-step', (_event, input) => researchAgentService.executeStep(input))
+ipcMain.handle('knowledge:bootstrap', () => knowledgeGraphService.bootstrap())
+ipcMain.handle('knowledge:get-graph', (_event, input) => knowledgeGraphService.getGraph(input))
+ipcMain.handle('knowledge:propose-node', (_event, input) => knowledgeGraphService.proposeNode(input))
+ipcMain.handle('knowledge:propose-edge', (_event, input) => knowledgeGraphService.proposeEdge(input))
+ipcMain.handle('knowledge:review-node', (_event, input) => knowledgeGraphService.reviewNode(input))
+ipcMain.handle('knowledge:review-edge', (_event, input) => knowledgeGraphService.reviewEdge(input))
+ipcMain.handle('evidence-card:list', (_event, input) => knowledgeGraphService.listEvidenceCards(input))
+ipcMain.handle('evidence-card:create', (_event, input) => knowledgeGraphService.createEvidenceCard(input))
+ipcMain.handle('evidence-card:update', (_event, input) => knowledgeGraphService.updateEvidenceCard(input))
+ipcMain.handle('evidence-card:review', (_event, input) => knowledgeGraphService.reviewEvidenceCard(input))
 ipcMain.handle('clipboard:write-text', (_event, input) => writeClipboardText(clipboard, input))
+ipcMain.handle('citation:list-styles', () => workspaceService.listCitationStyles())
+ipcMain.handle('citation:format', (_event, input) => workspaceService.formatCitation(input))
+ipcMain.handle('plugin:list', () => pluginService.list())
+ipcMain.handle('plugin:install', (_event, input) => pluginService.install(input))
+ipcMain.handle('plugin:uninstall', (_event, input) => pluginService.uninstall(input))
 
 ipcMain.handle('workspace:list-recent', () => workspaceService.listRecent())
 ipcMain.handle('workspace:get-current', () => workspaceService.getCurrent())
 ipcMain.handle('workspace:load-library', () => workspaceService.loadLibraryState())
+ipcMain.handle('workspace:rebuild-portable-vault', () => workspaceService.rebuildVaultProjections())
+ipcMain.handle('workspace:list-migration-backups', () => workspaceService.listMigrationBackups())
+ipcMain.handle('workspace:open-vault-folder', async () => {
+  const current = workspaceService.getCurrent()
+  if (!current?.path) throw new Error('请先创建或打开研究库。')
+  const message = await shell.openPath(current.path)
+  if (message) throw new Error(`无法打开研究库文件夹：${message}`)
+  return { opened: true }
+})
 ipcMain.handle('structured-reading:get', (_event, input) => workspaceService.getStructuredReading(input))
 ipcMain.handle('structured-reading:generate', (_event, input) => workspaceService.generateStructuredReading(input))
 ipcMain.handle('structured-reading:save-adjustment', (_event, input) => workspaceService.saveStructuredReadingAdjustment(input))
@@ -373,9 +459,18 @@ ipcMain.handle('research-report:export', async (_event, input = {}) => {
   if (choice.canceled || !choice.filePath) return { canceled: true }
   return { canceled: false, ...workspaceService.exportResearchReport({ ...input, filePath: choice.filePath }) }
 })
-ipcMain.handle('zotero-sync:capabilities', () => workspaceService.getZoteroSyncCapabilities())
-ipcMain.handle('zotero-sync:preview', (_event, input) => workspaceService.previewZoteroMetadataSync(input))
-ipcMain.handle('zotero-sync:apply', (_event, input) => workspaceService.applyZoteroMetadataSync(input))
+ipcMain.handle('zotero-sync:capabilities', () => {
+  pluginService.requireCapability('zotero', 'bibliography.preview')
+  return workspaceService.getZoteroSyncCapabilities()
+})
+ipcMain.handle('zotero-sync:preview', (_event, input) => {
+  pluginService.requireCapability('zotero', 'bibliography.preview')
+  return workspaceService.previewZoteroMetadataSync(input)
+})
+ipcMain.handle('zotero-sync:apply', (_event, input) => {
+  pluginService.requireCapability('zotero', 'bibliography.apply-confirmed')
+  return workspaceService.applyZoteroMetadataSync(input)
+})
 ipcMain.handle('portable-markdown:export', async (_event, input = {}) => {
   const choice = await dialog.showOpenDialog(mainWindow, {
     title: '选择可迁移 Markdown 目录',
@@ -476,6 +571,10 @@ ipcMain.handle('action-pack:get', (_event, input) => workspaceService.getActionP
 ipcMain.handle('action-pack:review-item', (_event, input) => workspaceService.reviewActionItem(input))
 ipcMain.handle('action-pack:complete-item', (_event, input) => workspaceService.completeActionItem(input))
 ipcMain.handle('review:export', (_event, input) => workspaceService.exportReviewDocument(input))
+ipcMain.handle('review:export-latex', (_event, input) => {
+  pluginService.requireCapability('latex', 'writing.latex-package')
+  return workspaceService.exportReviewLatexPackage(input)
+})
 ipcMain.handle('review:show-export', (_event, input) => {
   if (typeof input?.filePath === 'string') shell.showItemInFolder(input.filePath)
 })
@@ -589,6 +688,7 @@ function listExistingPdfFiles(directory) {
 }
 
 function createWindow() {
+  desktopSmokeTrace('create-window:start')
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -625,6 +725,7 @@ function createWindow() {
   }
   mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   mainWindow.webContents.once('did-finish-load', () => {
+    desktopSmokeTrace('renderer:did-finish-load')
     if (isDesktopSmoke) {
       mainWindow.setContentSize(1024, 768)
       const previousClipboardText = clipboard.readText()
@@ -932,6 +1033,33 @@ function createWindow() {
                 && readerRoot?.scrollWidth === readerRoot?.clientWidth,
             }
           })()`, true)
+          const measureLargeViewport = () => mainWindow.webContents.executeJavaScript(`(() => ({
+            actualWidth: innerWidth,
+            actualHeight: innerHeight,
+            noOverflow: document.documentElement.scrollWidth === document.documentElement.clientWidth,
+            shellFillsViewport: document.querySelector('.app-shell')?.getBoundingClientRect().width === innerWidth,
+          }))()`, true)
+          const largeViewportChecks = []
+          mainWindow.webContents.debugger.attach('1.3')
+          try {
+            for (const [label, width, height] of [['2k', 2560, 1440], ['4k', 3840, 2160]]) {
+              await mainWindow.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+                width,
+                height,
+                deviceScaleFactor: 1,
+                mobile: false,
+              })
+              await new Promise(resolve => setTimeout(resolve, 160))
+              largeViewportChecks.push({
+                label, requestedWidth: width, requestedHeight: height, mode: 'chromium-device-metrics',
+                ...(await measureLargeViewport()),
+              })
+            }
+            await mainWindow.webContents.debugger.sendCommand('Emulation.clearDeviceMetricsOverride')
+          } finally {
+            mainWindow.webContents.debugger.detach()
+          }
+          mainWindow.setContentSize(1600, 900)
           await new Promise(resolve => setTimeout(resolve, 120))
           const screenshotRoot = process.env.RESEARCH_READER_DESKTOP_TEST_ROOT
           const screenshotPath = screenshotRoot ? path.join(screenshotRoot, 'reader-long-document-1600x900.png') : undefined
@@ -1038,11 +1166,12 @@ function createWindow() {
           }
           const clipboardVerified = clipboard.readText() === smokeCitation && clipboardResult?.written === true
           clipboard.writeText(previousClipboardText)
-          if (!clipboardVerified || !desktop1024NoOverflow || !escapeClosedAndRestoredFocus || !greetingVisible || todayAnswerCount !== 5 || !todayContextRestored || !recordSaved || taskBucketCount !== 7 || !aiProposalVisible || !aiTaskConfirmed || !quickInboxSaved || !uiScale10Applied || !workspaceNavVisible || !readerModeRestored || !versionVisible || structuredInitialBlockCount >= structuredBlockCount || structuredBlockCount < 220 || !rawMarkdownPreserved || !structuredScrollable || !structuredReachedEnd || !parallelPanesVisible || !parallelStructuredScrollable || !parallelSeparatorAccessible || !parallelTocInitiallyHidden || !parallelTocCanToggle || !parallelLayoutAdjustable || !reviewMinimumTypeReadable || !reportControlsDoNotOverlap || !bilingualUsesStructuredOrder || !bilingualScrollable || !bilingualReachedEnd || !switchStressPassed || !errorFallbackVisible || !errorBoundaryRecovered || translationEngineCount !== 2 || translationViewCount !== 3 || !failedRetryVisible || !translationLocked || !glossarySaved || !cloudScopeVisible || !reader1024FillsViewport || !desktop1600.noOverflow || !desktop1600.readerFillsViewport || !emptyStateLayoutMetrics.reviewConverged || !emptyStateLayoutMetrics.commandConverged) {
-            finishDesktopSmoke({ reason: 'desktop-acceptance-failed', title, clipboardVerified, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, emptyStateLayoutMetrics, userData: app.getPath('userData') }, true)
+          const largeViewportsPassed = largeViewportChecks.every(check => check.actualWidth === check.requestedWidth && check.actualHeight === check.requestedHeight && check.noOverflow && check.shellFillsViewport)
+          if (!clipboardVerified || !desktop1024NoOverflow || !escapeClosedAndRestoredFocus || !greetingVisible || todayAnswerCount !== 5 || !todayContextRestored || !recordSaved || taskBucketCount !== 7 || !aiProposalVisible || !aiTaskConfirmed || !quickInboxSaved || !uiScale10Applied || !workspaceNavVisible || !readerModeRestored || !versionVisible || structuredInitialBlockCount >= structuredBlockCount || structuredBlockCount < 220 || !rawMarkdownPreserved || !structuredScrollable || !structuredReachedEnd || !parallelPanesVisible || !parallelStructuredScrollable || !parallelSeparatorAccessible || !parallelTocInitiallyHidden || !parallelTocCanToggle || !parallelLayoutAdjustable || !reviewMinimumTypeReadable || !reportControlsDoNotOverlap || !bilingualUsesStructuredOrder || !bilingualScrollable || !bilingualReachedEnd || !switchStressPassed || !errorFallbackVisible || !errorBoundaryRecovered || translationEngineCount !== 2 || translationViewCount !== 3 || !failedRetryVisible || !translationLocked || !glossarySaved || !cloudScopeVisible || !reader1024FillsViewport || !desktop1600.noOverflow || !desktop1600.readerFillsViewport || !largeViewportsPassed || !emptyStateLayoutMetrics.reviewConverged || !emptyStateLayoutMetrics.commandConverged) {
+            finishDesktopSmoke({ reason: 'desktop-acceptance-failed', title, clipboardVerified, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, userData: app.getPath('userData') }, true)
             return
           }
-          finishDesktopSmoke({ title, clipboardVerified, clipboardRestored: clipboard.readText() === previousClipboardText, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, emptyStateLayoutMetrics, screenshotPath, reviewScreenshotPath, parallelScreenshotPath, commandScreenshotPath, userData: app.getPath('userData') })
+          finishDesktopSmoke({ title, clipboardVerified, clipboardRestored: clipboard.readText() === previousClipboardText, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, screenshotPath, reviewScreenshotPath, parallelScreenshotPath, commandScreenshotPath, userData: app.getPath('userData') })
         })
         .catch(error => {
           clipboard.writeText(previousClipboardText)
@@ -1061,6 +1190,7 @@ function createWindow() {
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
+desktopSmokeTrace('single-instance-lock', { acquired: gotSingleInstanceLock })
 if (!gotSingleInstanceLock) {
   app.quit()
 } else {
@@ -1093,12 +1223,15 @@ if (!gotSingleInstanceLock) {
     }
   })
   app.whenReady().then(() => {
+    desktopSmokeTrace('app:ready')
     app.setAppUserModelId('io.researchreader.desktop')
     Menu.setApplicationMenu(null)
-    if (process.defaultApp && process.argv[1]) {
-      app.setAsDefaultProtocolClient('research-reader', process.execPath, [path.resolve(process.argv[1])])
-    } else {
-      app.setAsDefaultProtocolClient('research-reader')
+    if (!isDesktopSmoke) {
+      if (process.defaultApp && process.argv[1]) {
+        app.setAsDefaultProtocolClient('research-reader', process.execPath, [path.resolve(process.argv[1])])
+      } else {
+        app.setAsDefaultProtocolClient('research-reader')
+      }
     }
     workspaceService = new WorkspaceService({
       registryPath: path.join(app.getPath('userData'), 'workspaces.json'),
@@ -1107,7 +1240,15 @@ if (!gotSingleInstanceLock) {
       filePath: path.join(app.getPath('userData'), 'settings.json'),
       safeStorage,
     })
+    llmService = new LLMService({ settingsStore: appSettingsStore })
+    researchAgentService = new ResearchAgentService({ workspaceService })
+    knowledgeGraphService = new KnowledgeGraphService({ workspaceService })
+    pluginService = new PluginService({
+      manifestRoot: path.join(projectRoot, 'plugins'),
+      statePath: path.join(app.getPath('userData'), 'plugins.json'),
+    })
     workspaceService.restoreCurrent()
+    desktopSmokeTrace('services:ready')
     createWindow()
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
   })

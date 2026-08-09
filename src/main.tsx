@@ -7,10 +7,10 @@ import remarkMath from 'remark-math'
 import { Group as ResizableGroup, Panel as ResizablePanel, Separator as ResizableSeparator } from 'react-resizable-panels'
 import xiaoheLogoMark from '../brand/xiaohe-logo-mark.svg'
 import {
-  AlertTriangle, ArrowLeft, ArrowRight, BookOpen, Bug, Check, ChevronRight, ClipboardCheck, Cloud,
+  AlertTriangle, ArrowLeft, ArrowRight, Blocks, BookOpen, Bug, Check, ChevronRight, ClipboardCheck, Cloud,
   CircleDot, Columns2, Download, Expand, ExternalLink, FileText, GitBranch, HardDrive, Languages, Link2,
-  FilePlus2, Files, FlaskConical, Globe2, Highlighter,
-  LayoutDashboard, Menu, MessageSquareText, Minus, MoreHorizontal, PanelLeft,
+  FilePlus2, Files, FlaskConical, Globe2, Highlighter, Images,
+  LayoutDashboard, Menu, MessageSquareText, Minus, MoreHorizontal, Network, PanelLeft,
   Mail, PanelRight, Pencil, Plus, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, Trash2, Upload, X
 } from 'lucide-react'
 import './styles.css'
@@ -26,6 +26,7 @@ import './citation.css'
 import './structured-reading.css'
 import './today-research.css'
 import './research-tasks.css'
+import './theme.css'
 import 'katex/dist/katex.min.css'
 import {
   fileHash,
@@ -93,6 +94,7 @@ import ResearchCommandCenter from './ResearchCommandCenter'
 import ResearchReviewWorkspace from './ResearchReviewWorkspace'
 import TodayResearch, { ResearchReturnGreeting } from './TodayResearch'
 import ResearchTasks from './ResearchTasks'
+import KnowledgeGraphWorkspace from './KnowledgeGraphWorkspace'
 import ReaderViewBoundary from './features/reader/ReaderViewBoundary'
 import VersionedStructuredReading from './features/reader/VersionedStructuredReading'
 import {
@@ -103,12 +105,15 @@ import {
   type CitationView,
 } from './features/citations/CitationControls'
 import { useDialogKeyboard } from './use-dialog-keyboard'
+import { completeAI, hasConfiguredAI } from './ai-client'
+import { extractFigureExplorerItems } from './figure-explorer.mjs'
 
 const feedbackIssueUrl = 'https://github.com/1dlbbbdbd1/he-research-reader/issues/new/choose'
 const feedbackEmailUrl = 'mailto:hzh1144@163.com?subject=H%E2%80%99s%20%E7%A7%91%E7%A0%94%E5%8A%A9%E6%89%8B%E9%97%AE%E9%A2%98%E5%8F%8D%E9%A6%88'
 
 type SourceKind = ImportedKind
 type EvidenceStatus = '事实' | '推断' | '假设'
+type AppView = DesktopResearchResumeView | 'knowledge'
 type Source = {
   id: string
   bibliographicItemId?: string
@@ -197,12 +202,14 @@ type ResearchDesktopBridge = {
   selectResearchArtifactPath?: (input?: { kind?: 'file' | 'directory' }) => Promise<{ canceled: boolean; filePath?: string }>
 }
 type AISettings = {
+  providerId: string
   baseUrl: string
   model: string
-  apiKey: string
+  hasCredential: boolean
   allowFullDocument: boolean
   translationProvider: 'local' | 'ai'
 }
+type AISettingsSaveInput = AISettings & { apiKey?: string; clearApiKey?: boolean }
 type UISettings = DesktopUISettings
 type AnnotationDraft = { text?: string; location?: string; anchor?: FragmentAnchor }
 type ReaderJumpTarget = { sourceId: string; pageNumber: number; anchor?: FragmentAnchor; nonce: string }
@@ -324,13 +331,25 @@ const purposeOptions = [
   '对比基线', '结果讨论', '研究局限', '未来工作', '复现实验',
 ]
 const defaultAISettings: AISettings = {
-  baseUrl: 'https://api.openai.com/v1',
+  providerId: 'deepseek',
+  baseUrl: 'https://api.deepseek.com',
   model: '',
-  apiKey: '',
+  hasCredential: false,
   allowFullDocument: false,
   translationProvider: 'local',
 }
+const fallbackLLMProviders: DesktopLLMProvider[] = [
+  { id: 'deepseek', label: 'DeepSeek', shortLabel: 'DeepSeek', description: '适合中文科研问答与推理，使用官方 OpenAI 兼容接口。', baseUrl: 'https://api.deepseek.com', modelPlaceholder: '从 DeepSeek 控制台复制当前模型名称', docsUrl: 'https://api-docs.deepseek.com/zh-cn/', recommended: true, protocol: 'openai-compatible' },
+  { id: 'siliconflow', label: '硅基流动', shortLabel: 'SiliconFlow', description: '一个 Key 可选择多家模型，模型名称必须从当前控制台复制。', baseUrl: 'https://api.siliconflow.cn/v1', modelPlaceholder: '从硅基流动模型列表复制完整名称', docsUrl: 'https://docs.siliconflow.cn/cn/userguide/quickstart', recommended: false, protocol: 'openai-compatible' },
+  { id: 'openai', label: 'OpenAI', shortLabel: 'OpenAI', description: 'OpenAI 官方 API；模型名称以 API 控制台当前可用列表为准。', baseUrl: 'https://api.openai.com/v1', modelPlaceholder: '从 OpenAI API 控制台复制模型名称', docsUrl: 'https://platform.openai.com/docs/quickstart', recommended: false, protocol: 'openai-compatible' },
+  { id: 'bailian', label: '阿里云百炼', shortLabel: '百炼', description: '默认使用华北 2（北京）兼容地址；其他地域请改为对应 Base URL。', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', modelPlaceholder: '从百炼当前地域的模型列表复制名称', docsUrl: 'https://help.aliyun.com/zh/model-studio/getting-started/first-api-call-to-qwen', recommended: false, protocol: 'openai-compatible' },
+  { id: 'kimi', label: 'Kimi / Moonshot', shortLabel: 'Kimi', description: 'Moonshot 开放平台兼容接口；请使用开放平台 API Key。', baseUrl: 'https://api.moonshot.cn/v1', modelPlaceholder: '从 Moonshot 开放平台复制模型名称', docsUrl: 'https://platform.moonshot.cn/docs/intro', recommended: false, protocol: 'openai-compatible' },
+  { id: 'claude', label: 'Claude / Anthropic', shortLabel: 'Claude', description: 'Anthropic 官方 Messages API；使用 Claude Console 创建的 API Key。', baseUrl: 'https://api.anthropic.com/v1', modelPlaceholder: '从 Claude Console 复制当前模型名称', docsUrl: 'https://platform.claude.com/docs/en/api/messages', recommended: false, protocol: 'anthropic' },
+  { id: 'gemini', label: 'Gemini / Google AI', shortLabel: 'Gemini', description: 'Google Gemini 原生 generateContent API；使用 Google AI Studio API Key。', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', modelPlaceholder: '从 Google AI Studio 复制当前模型名称', docsUrl: 'https://ai.google.dev/gemini-api/docs/api-key', recommended: false, protocol: 'gemini' },
+  { id: 'custom', label: '自定义兼容服务', shortLabel: '自定义', description: '适用于其他 OpenAI 兼容平台、Ollama 网关或本机服务。', baseUrl: '', modelPlaceholder: '填写该服务实际使用的模型名称', docsUrl: '', recommended: false, protocol: 'openai-compatible' },
+]
 const defaultUISettings: UISettings = {
+  theme: 'light',
   uiScale: 1,
   density: 'comfortable',
   surfaceTone: 'neutral',
@@ -357,7 +376,7 @@ function App() {
   const [credentialState, setCredentialState] = useState<'empty' | 'encrypted' | 'unavailable'>('empty')
   const [settingsLoaded, setSettingsLoaded] = useState(!window.readerDesktop)
   const [aiOnboardingRequired, setAIOnboardingRequired] = useState(false)
-  const [active, setActive] = useState<DesktopResearchResumeView>('today')
+  const [active, setActive] = useState<AppView>('today')
   const [selectedSource, setSelectedSource] = useState(sources[0]?.id ?? '')
   const [agentOpen, setAgentOpen] = useState(false)
   const [annotationDraft, setAnnotationDraft] = useState<AnnotationDraft | null>(null)
@@ -421,7 +440,7 @@ function App() {
         setAISettings({ ...defaultAISettings, ...settings.ai })
         setUISettings({ ...defaultUISettings, ...settings.ui })
         setCredentialState(settings.credentialState ?? 'empty')
-        const missingAI = !settings.ai.model?.trim() || !settings.ai.apiKey?.trim() || !settings.ai.baseUrl?.trim()
+        const missingAI = !hasConfiguredAI(settings.ai)
         setAIOnboardingRequired(missingAI)
         setSettingsLoaded(true)
       })
@@ -654,7 +673,7 @@ function App() {
 
   useEffect(() => {
     const desktop = window.readerDesktop
-    if (!desktop || !workspace || !researchResumeReady || active === 'today') return
+    if (!desktop || !workspace || !researchResumeReady || active === 'today' || active === 'knowledge') return
     const timer = window.setTimeout(() => {
       const activeRunId = researchResume?.activeRunId
         ?? researchWorkspace?.runs.find(run => run.outcome === 'running')?.id
@@ -1010,26 +1029,20 @@ function App() {
       let aiSections: Array<{ content: string; citationFragmentIds: string[] }> = []
       let generationRunId: string | undefined
       let aiMessage = '未配置 AI，本次只按来源生成证据与用户笔记区块。'
-      if (aiSettings.baseUrl && aiSettings.model && aiSettings.apiKey && inputs.fragments.length) {
+      if (hasConfiguredAI(aiSettings) && inputs.fragments.length) {
         generationRunId = crypto.randomUUID()
         const request = buildReviewAIRequest(inputs.fragments as unknown as Array<Record<string, unknown>>)
         try {
-          const response = await fetch(`${aiSettings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${aiSettings.apiKey}` },
-            body: JSON.stringify({
-              model: aiSettings.model,
-              temperature: 0.1,
-              messages: [
-                { role: 'system', content: request.system },
-                { role: 'user', content: request.user },
-              ],
-            }),
+          const result = await completeAI({
+            purpose: 'review-document',
+            temperature: 0.1,
+            messages: [
+              { role: 'system', content: request.system },
+              { role: 'user', content: request.user },
+            ],
           })
-          if (!response.ok) throw new Error(`AI 服务返回 ${response.status}`)
-          const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
           aiSections = parseReviewAISections(
-            data.choices?.[0]?.message?.content || '',
+            result.content,
             inputs.fragments.map(fragment => fragment.id),
           )
           aiMessage = `AI 生成 ${aiSections.length} 个有引用的整理区块。`
@@ -1075,6 +1088,20 @@ function App() {
       notify(`${format === 'docx' ? 'Word' : 'Markdown'} 已导出，并保留引用回跳信息。`)
     } catch (error) {
       notify(error instanceof Error ? error.message : '复查文档导出失败。')
+    }
+  }
+
+  async function exportReviewLatex(documentId: string) {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    try {
+      const result = await desktop.exportReviewLatexPackage({ documentId, compilePdf: true })
+      await desktop.showReviewExport({ filePath: result.compiled && result.pdfPath ? result.pdfPath : result.texPath })
+      notify(result.compiled
+        ? 'LaTeX 包与 PDF 已导出；同时保留 source.md、main.tex 和 references.bib。'
+        : `LaTeX 可编辑包已导出；${result.reason || '当前未生成 PDF。'}`)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'LaTeX 导出失败。')
     }
   }
 
@@ -1448,20 +1475,24 @@ function App() {
     setActive(researchResume.activeView)
   }
 
-  async function saveAppSettings(ai: AISettings, ui: UISettings) {
+  async function saveAppSettings(ai: AISettingsSaveInput, ui: UISettings): Promise<AISettings> {
     const desktop = window.readerDesktop
     try {
+      let effectiveAI: AISettings
       if (desktop) {
         const saved = await desktop.saveAppSettings({ ai, ui })
-        setAISettings({ ...defaultAISettings, ...saved.ai })
+        effectiveAI = { ...defaultAISettings, ...saved.ai }
+        setAISettings(effectiveAI)
         setUISettings({ ...defaultUISettings, ...saved.ui })
         setCredentialState(saved.credentialState ?? 'empty')
       } else {
-        setAISettings(ai)
+        effectiveAI = { ...ai, hasCredential: Boolean(ai.apiKey) }
+        setAISettings(effectiveAI)
         setUISettings(ui)
       }
       notify('AI、翻译和阅读界面设置已保存在本机。')
-      if (ai.baseUrl.trim() && ai.model.trim() && ai.apiKey.trim()) setAIOnboardingRequired(false)
+      if (hasConfiguredAI(effectiveAI)) setAIOnboardingRequired(false)
+      return effectiveAI
     } catch (error) {
       throw new Error(error instanceof Error ? error.message : '本机设置保存失败。')
     }
@@ -1502,6 +1533,7 @@ function App() {
 
   return <div
     className={`app-shell ui-density-${uiSettings.density} ui-surface-${uiSettings.surfaceTone} ${active === 'reader' ? 'reader-active' : ''}`}
+    data-theme={uiSettings.theme}
     style={appShellStyle}
   >
     <aside className="sidebar">
@@ -1556,6 +1588,7 @@ function App() {
         <Nav active={active === 'reader'} icon={<BookOpen/>} label="阅读" onClick={() => selected && setActive('reader')}/>
         <Nav active={active === 'dashboard'} icon={<ClipboardCheck/>} label="文献综述" count={reviewDocuments.length} onClick={() => setActive('dashboard')}/>
         <Nav active={active === 'evidence'} icon={<GitBranch/>} label="证据关系" count={evidenceGraph?.summary.relations} onClick={() => openEvidence()}/>
+        <Nav active={active === 'knowledge'} icon={<Network/>} label="知识图谱" onClick={() => setActive('knowledge')}/>
         <Nav active={active === 'actions'} icon={<FlaskConical/>} label="研究任务" count={(researchTasks?.summary.today ?? 0) + (researchTasks?.summary.inbox ?? 0)} onClick={() => { setTaskSourcePackOpen(false); setActive('actions') }}/>
       </nav>
       <div className="sidebar-bottom">
@@ -1565,7 +1598,7 @@ function App() {
       </div>
     </aside>
     <main>
-      <header className="topbar"><button className="mobile-menu"><Menu/></button><div className="crumb">当前研究库 <ChevronRight size={14}/> <strong>{active === 'today' ? '今日科研' : active === 'research-workspace' ? '课题与实验' : active === 'research-review' ? '复盘与写作' : active === 'dashboard' ? '文献综述' : active === 'reader' ? '阅读' : active === 'evidence' ? '证据关系' : active === 'actions' ? '研究任务' : '资料库'}</strong></div><div className="top-actions"><button className="icon-button" title="本地搜索" onClick={() => { setActive('sources'); setLibrarySearchRequest(value => value + 1) }}><Search size={19}/></button><button className="agent-button" onClick={() => setAgentOpen(true)}><MessageSquareText size={16}/> 询问科研助手</button></div></header>
+      <header className="topbar"><button className="mobile-menu"><Menu/></button><div className="crumb">当前研究库 <ChevronRight size={14}/> <strong>{active === 'today' ? '今日科研' : active === 'research-workspace' ? '课题与实验' : active === 'research-review' ? '复盘与写作' : active === 'dashboard' ? '文献综述' : active === 'reader' ? '阅读' : active === 'evidence' ? '证据关系' : active === 'knowledge' ? '知识图谱' : active === 'actions' ? '研究任务' : '资料库'}</strong></div><div className="top-actions"><button className="icon-button" title="本地搜索" onClick={() => { setActive('sources'); setLibrarySearchRequest(value => value + 1) }}><Search size={19}/></button><button className="agent-button" onClick={() => setAgentOpen(true)}><MessageSquareText size={16}/> 询问科研助手</button></div></header>
       {active === 'today' && <TodayResearch
         workspace={researchWorkspace as DesktopResearchWorkspace | undefined}
         papers={bibliographicItems}
@@ -1615,6 +1648,7 @@ function App() {
         onOpenEvidence={(documentId) => openEvidence({ kind: 'document', id: documentId })}
         onConfirm={(id) => void confirmReviewDocument(id)}
         onExport={(id, format) => void exportReviewDocument(id, format)}
+        onLatexExport={(id) => void exportReviewLatex(id)}
         onPortableExport={(id) => void exportPortableMarkdown('review_document', id)}
       />}
       {active === 'sources' && <SourcesV2
@@ -1655,6 +1689,11 @@ function App() {
         canEdit={Boolean(window.readerDesktop)}
         onCreateRelation={createEvidenceRelation}
         onReviewRelation={reviewEvidenceRelation}
+      />}
+      {active === 'knowledge' && <KnowledgeGraphWorkspace
+        workspaceReady={Boolean(workspace)}
+        onOpenSource={(sourceId, pageNumber) => openSource(sourceId, pageNumber)}
+        onNotify={notify}
       />}
       {active === 'actions' && !taskSourcePackOpen && <ResearchTasks
         data={researchTasks}
@@ -1711,6 +1750,7 @@ function App() {
         })}
         onExportAnnotations={sourceId => void exportSourceAnnotations(sourceId)}
         onCopyCitation={item => void copyCitation(item)}
+        onReviewCitation={item => setCitationDialog({ item })}
         onAgent={() => setAgentOpen(true)}
         onAgentClose={() => setAgentOpen(false)}
         onCreateActionPack={createActionPack}
@@ -1955,6 +1995,7 @@ function ReviewWorkspace({
   onOpenEvidence,
   onConfirm,
   onExport,
+  onLatexExport,
   onPortableExport,
 }: {
   sources: Source[]
@@ -1968,6 +2009,7 @@ function ReviewWorkspace({
   onOpenEvidence: (documentId: string) => void
   onConfirm: (id: string) => void
   onExport: (id: string, format: 'markdown' | 'docx') => void
+  onLatexExport: (id: string) => void
   onPortableExport: (id: string) => void
 }) {
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
@@ -2053,7 +2095,7 @@ function ReviewWorkspace({
       {activeDocument ? <>
         <header className="review-document-header">
           <div><span>TRACEABLE REVIEW</span><h2>{activeDocument.title}</h2><p>{activeDocument.items.length} 篇论文 · {activeDocument.blocks.length} 个来源区块</p></div>
-          <div><button className="review-evidence-button" onClick={() => onOpenEvidence(activeDocument.id)}><GitBranch size={13}/>查看证据关系</button>{activeDocument.status === 'draft' ? <button onClick={() => onConfirm(activeDocument.id)}><ShieldCheck size={13}/>人工确认</button> : <button onClick={() => onPortableExport(activeDocument.id)}><Download size={13}/>可迁移 Markdown</button>}<button onClick={() => onExport(activeDocument.id, 'docx')}>导出 Word</button></div>
+          <div><button className="review-evidence-button" onClick={() => onOpenEvidence(activeDocument.id)}><GitBranch size={13}/>查看证据关系</button>{activeDocument.status === 'draft' ? <button onClick={() => onConfirm(activeDocument.id)}><ShieldCheck size={13}/>人工确认</button> : <button onClick={() => onPortableExport(activeDocument.id)}><Download size={13}/>可迁移 Markdown</button>}<button onClick={() => onExport(activeDocument.id, 'docx')}>导出 Word</button><button onClick={() => onLatexExport(activeDocument.id)}>LaTeX / PDF</button></div>
         </header>
         <article className="review-document-content">
           <div className="review-origin-legend"><span className="evidence">原文证据</span><span className="user">用户笔记</span><span className="ai">AI 整理</span></div>
@@ -2867,7 +2909,7 @@ function PaperLibraryTable({
             : <em>用途待标记</em>}
         </div>
         <div className="paper-library-actions">
-          {(item.needsMetadataReview || item.citation.incomplete) && <button className="citation-review-button" onClick={() => onReviewCitation(item)}><AlertTriangle size={13}/>检查题录</button>}
+          <button className="citation-review-button" onClick={() => onReviewCitation(item)}>{(item.needsMetadataReview || item.citation.incomplete) && <AlertTriangle size={13}/>}引用格式</button>
           <CitationButton item={item} onCopy={onCopyCitation} compact/>
           {source?.status === '需重新分析' && <button className="compact-button warning" onClick={() => onReanalyze(source.id)}>重新分析</button>}
           {source?.fileId && !source.isDemo && source.mineruState !== '完成' && <button
@@ -3141,6 +3183,7 @@ function FunctionalReader({
   onCreateTaskFromAnnotation,
   onExportAnnotations,
   onCopyCitation,
+  onReviewCitation,
   onAgent,
   onAgentClose,
   onCreateActionPack,
@@ -3168,6 +3211,7 @@ function FunctionalReader({
   onCreateTaskFromAnnotation: (annotation: Annotation) => Promise<void>
   onExportAnnotations: (sourceId: string) => void
   onCopyCitation: (item: CitationItemView) => void
+  onReviewCitation: (item: CitationItemView) => void
   onAgent: () => void
   onAgentClose: () => void
   onCreateActionPack: (draft: AgentActionPackDraft) => Promise<void>
@@ -3186,7 +3230,7 @@ function FunctionalReader({
   const [rightOpen, setRightOpen] = useState(true)
   const [immersive, setImmersive] = useState(false)
   const [zoom, setZoom] = useState(initialReaderState.zoom)
-  const [leftPanelMode, setLeftPanelMode] = useState<'papers' | 'outline' | 'pages' | 'search'>('papers')
+  const [leftPanelMode, setLeftPanelMode] = useState<'papers' | 'outline' | 'pages' | 'figures' | 'search'>('papers')
   const [pdfOutline, setPdfOutline] = useState<PdfOutlineEntry[]>([])
   const [outlineState, setOutlineState] = useState('')
   const [pdfSearchQuery, setPdfSearchQuery] = useState('')
@@ -3223,6 +3267,7 @@ function FunctionalReader({
     return { 'parallel-pdf': 50, 'parallel-draft': 50 }
   })
   const [mineruLayoutBlocks, setMineruLayoutBlocks] = useState<MineruLayoutBlock[]>([])
+  const [figureExplorerAssets, setFigureExplorerAssets] = useState<Record<string, string>>({})
   const [activeAnnotationId, setActiveAnnotationId] = useState<string>()
   const [citationAnchor, setCitationAnchor] = useState<FragmentAnchor>()
   const sourceAnnotations = annotations.filter(annotation => !annotation.sourceId || annotation.sourceId === source.id)
@@ -3241,6 +3286,20 @@ function FunctionalReader({
     const quote = anchor?.quote?.exact ?? activeAnnotation?.text
     return quote ? locateQuoteInMarkdown(source.mineruMarkdown, quote, mineruLayoutBlocks) : undefined
   }, [activeAnnotation, activeAnnotationId, citationAnchor, mineruLayoutBlocks, source.mineruMarkdown])
+  const figureExplorerItems = useMemo(
+    () => extractFigureExplorerItems(source.mineruMarkdown ?? '', mineruLayoutBlocks),
+    [mineruLayoutBlocks, source.mineruMarkdown],
+  )
+  const resolveFigureAsset = (assetPath?: string) => {
+    if (!assetPath) return undefined
+    const normalized = assetPath.replace(/\\/g, '/').replace(/^\.\//, '')
+    let decoded = normalized
+    try { decoded = decodeURIComponent(normalized) } catch { /* Keep the original path when it is not URI encoded. */ }
+    return figureExplorerAssets[normalized]
+      || figureExplorerAssets[`./${normalized}`]
+      || figureExplorerAssets[decoded]
+      || figureExplorerAssets[`./${decoded}`]
+  }
   const renderedAnnotations = citationAnchor
     ? [...sourceAnnotations, {
         id: '__citation_target__',
@@ -3256,6 +3315,21 @@ function FunctionalReader({
     if (!paper || !['unread', 'title_only'].includes(paper.readingState.readingStatus)) return
     onUpdateReading(paper.id, { readingStatus: 'reading' }, true)
   }, [paper?.id])
+
+  useEffect(() => {
+    let disposed = false
+    setFigureExplorerAssets({})
+    setMineruLayoutBlocks([])
+    if (!window.readerDesktop || !source.mineruMarkdown) return () => { disposed = true }
+    window.readerDesktop.loadMineruAssets({ sourceId: source.id })
+      .then(result => {
+        if (disposed) return
+        setFigureExplorerAssets(result.assets || {})
+        setMineruLayoutBlocks(result.layoutBlocks || [])
+      })
+      .catch(() => { if (!disposed) setFigureExplorerAssets({}) })
+    return () => { disposed = true }
+  }, [source.id, source.mineruRevision, source.mineruMarkdown])
 
   useEffect(() => {
     if (!paper || !pdfDocument || activePage < 1) return
@@ -3601,7 +3675,7 @@ function FunctionalReader({
       setSelectionNotice('输入你针对此处的问题，再发送。')
       return
     }
-    if (!settings.baseUrl || !settings.model || !settings.apiKey) {
+    if (!hasConfiguredAI(settings)) {
       setSelectionNotice(mode === 'translate'
         ? '当前选择使用 AI 翻译，但尚未配置 AI 服务；选区不会被发送。'
         : '当前未配置 AI 服务；选区不会被发送。')
@@ -3621,21 +3695,15 @@ function FunctionalReader({
       ask: `回答用户针对此段原文的问题。答案必须以选区为依据，信息不足就明确说无法从此处判断。用户问题：${selectionQuestion.trim()}`,
     }
     try {
-      const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.apiKey}` },
-        body: JSON.stringify({
-          model: settings.model,
-          temperature: 0.1,
-          messages: [
-            { role: 'system', content: prompts[mode] },
-            { role: 'user', content: `原文位置：${selection.pageNumber ? selection.endPageNumber && selection.endPageNumber !== selection.pageNumber ? `p. ${selection.pageNumber}–${selection.endPageNumber}` : `p. ${selection.pageNumber}` : '结构化文本'}\n\n${selection.translationText}` },
-          ],
-        }),
+      const result = await completeAI({
+        purpose: 'selection-assistant',
+        temperature: 0.1,
+        messages: [
+          { role: 'system', content: prompts[mode] },
+          { role: 'user', content: `原文位置：${selection.pageNumber ? selection.endPageNumber && selection.endPageNumber !== selection.pageNumber ? `p. ${selection.pageNumber}–${selection.endPageNumber}` : `p. ${selection.pageNumber}` : '结构化文本'}\n\n${selection.translationText}` },
+        ],
       })
-      if (!response.ok) throw new Error(`服务返回 ${response.status}`)
-      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
-      const content = data.choices?.[0]?.message?.content
+      const content = result.content
       if (!content) throw new Error('服务没有返回可用内容。')
       setSelectionAnswer(content)
       setSelectionCloudConfirm(false)
@@ -3809,6 +3877,7 @@ function FunctionalReader({
       </div>
       <div className="reader-toolbar-group">
         {paper && <CitationButton item={paper} onCopy={onCopyCitation} compact/>}
+        {paper && <button className="reader-icon-button" onClick={() => onReviewCitation(paper)} title="选择 APA、IEEE、GB/T 或 BibTeX 引用格式"><MoreHorizontal size={16}/></button>}
         {source.kind === 'PDF' && <button className={`reader-icon-button ${leftOpen && leftPanelMode === 'search' ? 'active' : ''}`} onClick={() => openLeftPanel('search')} title="搜索当前 PDF（Ctrl + F）"><Search size={16}/></button>}
         {source.kind === 'PDF' && <div className="reader-zoom">
           <button onClick={() => setZoom(value => clampReaderZoom(value - .1))} title="缩小（Ctrl + 滚轮向下）"><Minus size={14}/></button>
@@ -3829,6 +3898,7 @@ function FunctionalReader({
         <button className={leftPanelMode === 'papers' ? 'active' : ''} onClick={() => setLeftPanelMode('papers')}>文献</button>
         <button className={leftPanelMode === 'outline' ? 'active' : ''} disabled={!pdfDocument} onClick={() => setLeftPanelMode('outline')}>目录</button>
         <button className={leftPanelMode === 'pages' ? 'active' : ''} disabled={!pdfDocument} onClick={() => setLeftPanelMode('pages')}>页面</button>
+        <button className={leftPanelMode === 'figures' ? 'active' : ''} disabled={!source.mineruMarkdown} onClick={() => setLeftPanelMode('figures')}>图表</button>
         <button className={leftPanelMode === 'search' ? 'active' : ''} disabled={!pdfDocument} onClick={() => openLeftPanel('search')}>搜索</button>
       </div>
       {leftPanelMode === 'papers' && <div className="reader-paper-list">
@@ -3857,6 +3927,25 @@ function FunctionalReader({
           active={activePage === index + 1}
           onOpen={pageNumber => scrollToPage(pageNumber)}
         />)}
+      </div>}
+      {leftPanelMode === 'figures' && <div className="reader-figure-explorer">
+        <header><Images size={15}/><div><strong>Figure Explorer</strong><span>{figureExplorerItems.length} 个图、表或算法</span></div></header>
+        <div className="reader-figure-filters"><span>Figure {figureExplorerItems.filter(item => item.kind === 'figure').length}</span><span>Table {figureExplorerItems.filter(item => item.kind === 'table').length}</span><span>Algorithm {figureExplorerItems.filter(item => item.kind === 'algorithm').length}</span></div>
+        {figureExplorerItems.map(item => <button key={item.id} className={`reader-figure-item ${item.kind}`} onClick={() => {
+          if (item.pageNumber && pdfDocument) {
+            setViewMode('original')
+            scrollToPage(item.pageNumber)
+          } else {
+            setViewMode('markdown')
+            setLoadState(`${item.label} 暂无唯一 PDF 页码；已打开整理稿，请人工核对位置。`)
+          }
+        }}>
+          {item.kind === 'figure' && resolveFigureAsset(item.assetPath) && <img src={resolveFigureAsset(item.assetPath)} alt={item.caption}/>}
+          {item.kind !== 'figure' && item.preview && <pre>{item.preview}</pre>}
+          <span><em>{item.kind === 'figure' ? 'FIGURE' : item.kind === 'table' ? 'TABLE' : 'ALGORITHM'}</em><strong>{item.label}</strong><small>{item.pageNumber ? `第 ${item.pageNumber} 页 · 点击跳转 PDF` : '页码待核对 · 点击打开整理稿'}</small></span>
+          <p>{item.caption}</p>
+        </button>)}
+        {!figureExplorerItems.length && <div className="reader-figure-empty"><Images size={25}/><strong>没有识别到图、表或算法</strong><span>完成 MinerU 解析后，这里会从原始 Markdown 与版面锚点自动建立索引。</span></div>}
       </div>}
       {leftPanelMode === 'search' && <div className="reader-pdf-search">
         <form onSubmit={event => { event.preventDefault(); void runPdfPageSearch() }}>
@@ -4156,7 +4245,7 @@ function PaperReadingCard({
       setCardNotice('AI 阅读卡需要在桌面客户端的研究库中生成。')
       return
     }
-    if (!settings.baseUrl || !settings.model || !settings.apiKey) {
+    if (!hasConfiguredAI(settings)) {
       setCardNotice('尚未配置可用的 AI 服务。')
       return
     }
@@ -4183,22 +4272,16 @@ function PaperReadingCard({
     setCardBusy(true)
     setCardNotice(`正在让 ${settings.model} 整理可追溯阅读卡…`)
     try {
-      const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.apiKey}` },
-        body: JSON.stringify({
-          model: settings.model,
-          temperature: 0,
-          messages: [
-            { role: 'system', content: pendingRequest.system },
-            { role: 'user', content: pendingRequest.user },
-          ],
-        }),
+      const result = await completeAI({
+        purpose: 'paper-reading-card',
+        temperature: 0,
+        messages: [
+          { role: 'system', content: pendingRequest.system },
+          { role: 'user', content: pendingRequest.user },
+        ],
       })
-      if (!response.ok) throw new Error(`AI 服务返回 ${response.status}`)
-      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
       const sections = parsePaperReadingCardAnswer(
-        data.choices?.[0]?.message?.content || '',
+        result.content,
         pendingRequest.contexts,
       )
       const fingerprintBytes = await crypto.subtle.digest(
@@ -4210,7 +4293,7 @@ function PaperReadingCard({
         .join('')
       const saved = await desktop.savePaperReadingCardDraft({
         itemId: paper.id,
-        provider: settings.baseUrl,
+        provider: settings.providerId,
         model: settings.model,
         promptFingerprint,
         sections,
@@ -4307,7 +4390,7 @@ function PaperReadingCard({
     <div className="paper-ai-card">
       <div className="paper-ai-card-head">
         <div>
-          <strong>结构化阅读卡</strong>
+          <strong>Paper Intelligence Panel</strong>
           <small>{snapshot?.card
             ? snapshot.card.status === 'accepted' ? '已采纳 · 可进入全库检索' : 'AI 草稿 · 等待你的确认'
             : '原文证据、用户笔记和 AI 整理分开保存'}</small>
@@ -4325,7 +4408,7 @@ function PaperReadingCard({
       </div>}
       {cardNotice && <div className="paper-ai-card-notice">
         <span>{cardNotice}</span>
-        {(!settings.baseUrl || !settings.model || !settings.apiKey) && <button onClick={onSettings}>打开设置</button>}
+        {!hasConfiguredAI(settings) && <button onClick={onSettings}>打开设置</button>}
       </div>}
       {snapshot?.card?.sections.map(section => <article className="paper-ai-card-section" key={section.id}>
         <div><span className={`note-origin ${snapshot.card?.status === 'accepted' ? 'accepted' : 'ai'}`}>{snapshot.card?.status === 'accepted' ? '已采纳' : 'AI 草稿'}</span><strong>{section.title}</strong></div>
@@ -4607,7 +4690,7 @@ function LegacyStructuredDocument({
   }
 
   function requestAIClassification() {
-    if (!settings.baseUrl || !settings.model || !settings.apiKey) {
+    if (!hasConfiguredAI(settings)) {
       setNotice('尚未配置可用的 AI 服务。请先在设置中填写 OpenAI 兼容地址、模型和密钥。')
       return
     }
@@ -4625,22 +4708,16 @@ function LegacyStructuredDocument({
     setNotice(`正在让 ${settings.model} 识别章节边界；AI 不能返回替换正文。`)
     try {
       const request = buildAcademicMarkdownAIRequest({ markdown: text, paper })
-      const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.apiKey}` },
-        body: JSON.stringify({
-          model: settings.model,
-          temperature: 0,
-          messages: [
-            { role: 'system', content: request.system },
-            { role: 'user', content: request.user },
-          ],
-        }),
+      const result = await completeAI({
+        purpose: 'structured-reading',
+        temperature: 0,
+        messages: [
+          { role: 'system', content: request.system },
+          { role: 'user', content: request.user },
+        ],
       })
-      if (!response.ok) throw new Error(`AI 服务返回 ${response.status}`)
-      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
       const boundaries = parseAcademicMarkdownBoundaries(
-        data.choices?.[0]?.message?.content || '',
+        result.content,
         text,
       )
       onSaveLayout({
@@ -4696,7 +4773,7 @@ function LegacyStructuredDocument({
       </section>}
       {notice && <div className="academic-layout-notice">
         <span>{notice}</span>
-        {(!settings.baseUrl || !settings.model || !settings.apiKey || !settings.allowFullDocument) && <button onClick={onSettings}>打开设置</button>}
+        {(!hasConfiguredAI(settings) || !settings.allowFullDocument) && <button onClick={onSettings}>打开设置</button>}
       </div>}
       {displayMode === 'raw'
         ? <pre className="structured-raw-markdown">{text}</pre>
@@ -4765,6 +4842,10 @@ function AgentModalV2({
   const [busy, setBusy] = useState(false)
   const [papers, setPapers] = useState<Array<{ title: string; doi?: string; year?: string }>>([])
   const [notice, setNotice] = useState('')
+  const [agentPlan, setAgentPlan] = useState<DesktopAgentPlan>()
+  const [agentMemory, setAgentMemory] = useState<DesktopAgentMemory[]>([])
+  const [memoryDraft, setMemoryDraft] = useState('')
+  const [memoryKind, setMemoryKind] = useState<DesktopAgentMemory['kind']>('research_direction')
 
   const scopeItemIds = ['selection', 'page', 'current'].includes(scope)
     ? currentItemId ? [currentItemId] : []
@@ -4789,6 +4870,14 @@ function AgentModalV2({
   useEffect(() => {
     if (readerContext?.selection?.text) setScope('selection')
   }, [readerContext?.sourceId, readerContext?.pageNumber, readerContext?.selection?.text])
+
+  useEffect(() => {
+    let alive = true
+    window.readerDesktop?.listAgentMemory()
+      .then(items => { if (alive) setAgentMemory(items) })
+      .catch(() => undefined)
+    return () => { alive = false }
+  }, [workspaceName])
 
   function toggleItem(itemId: string) {
     setSelectedItemIds(current => current.includes(itemId)
@@ -4857,7 +4946,7 @@ function AgentModalV2({
             : `本地检索没有找到证据。${searchMessage || '可以换用论文中的术语再试。'}`)
         return
       }
-      if (!settings.baseUrl || !settings.model || !settings.apiKey) {
+      if (!hasConfiguredAI(settings)) {
         setNotice(`已通过${searchModeLabel}在本机找到 ${ranked.length} 条候选证据。尚未配置 AI，因此只展示证据，不生成回答。`)
         return
       }
@@ -4867,6 +4956,7 @@ function AgentModalV2({
         scopeLabel,
         readerContext,
         researchContext: researchWorkspace,
+        memory: agentMemory,
         history: turns.slice(-3).flatMap(turn => [
           { role: 'user' as const, content: turn.question },
           { role: 'assistant' as const, content: turn.sections.map(section => section.content).join('\n') },
@@ -4874,21 +4964,15 @@ function AgentModalV2({
       })
       setContexts(request.contexts)
       setNotice(`已通过${searchModeLabel}找到 ${ranked.length} 条本地证据；正在向 ${settings.model} 发送问题、最近对话和证据片段，不发送原 PDF。`)
-      const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.apiKey}` },
-        body: JSON.stringify({
-          model: settings.model,
-          temperature: 0.1,
-          messages: [
-            { role: 'system', content: request.system },
-            { role: 'user', content: request.user },
-          ],
-        }),
+      const result = await completeAI({
+        purpose: 'research-agent',
+        temperature: 0.1,
+        messages: [
+          { role: 'system', content: request.system },
+          { role: 'user', content: request.user },
+        ],
       })
-      if (!response.ok) throw new Error(`AI 服务返回 ${response.status}`)
-      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
-      const rawAnswer = data.choices?.[0]?.message?.content || ''
+      const rawAnswer = result.content
       const sections = parseResearchAgentAnswer(rawAnswer, request.contexts)
       const actions = parseResearchAgentActions(rawAnswer, request.contexts)
       setTurns(current => [...current, {
@@ -5005,6 +5089,80 @@ function AgentModalV2({
     }
   }
 
+  async function proposeExecutionPlan() {
+    const desktop = window.readerDesktop
+    const objective = question.trim() || turns[turns.length - 1]?.question || ''
+    if (!desktop || !objective) {
+      setNotice(desktop ? '请先输入一个明确的研究目标。' : '持久化 Planner 需要在桌面客户端中运行。')
+      return
+    }
+    setBusy(true)
+    setNotice('正在把目标拆成可审查的工具步骤；此时不会写入正式研究记录。')
+    try {
+      const plan = await desktop.proposeAgentPlan({
+        objective,
+        scope: {
+          label: scopeLabel,
+          itemIds: scopeItemIds,
+          ...(readerContext?.sourceId ? { sourceId: readerContext.sourceId } : {}),
+          ...(scope === 'selection' && readerContext?.selection?.text ? { quote: readerContext.selection.text, pageNumber: readerContext.pageNumber, understanding: '' } : {}),
+        },
+      })
+      setAgentPlan(plan)
+      setNotice(`已保存 ${plan.steps.length} 步计划。只读步骤可直接运行，写入步骤必须逐项确认。`)
+    } catch (planError) {
+      setNotice(planError instanceof Error ? planError.message : 'Agent 计划生成失败。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function reviewPlanStep(stepId: string, decision: 'confirm' | 'dismiss') {
+    try {
+      const plan = await window.readerDesktop?.reviewAgentStep({ stepId, decision })
+      if (plan) setAgentPlan(plan)
+    } catch (reviewError) {
+      setNotice(reviewError instanceof Error ? reviewError.message : 'Agent 步骤审查失败。')
+    }
+  }
+
+  async function runExecutionPlan() {
+    if (!agentPlan || !window.readerDesktop) return
+    setBusy(true)
+    try {
+      const result = await window.readerDesktop.executeAgentPlan({ planId: agentPlan.id })
+      setAgentPlan(result.plan)
+      setNotice(result.waitingForConfirmation.length
+        ? `只读或已确认步骤已执行；还有 ${result.waitingForConfirmation.length} 个写入步骤等待确认。`
+        : `计划执行完成，状态：${result.plan.status}。`)
+    } catch (runError) {
+      setNotice(runError instanceof Error ? runError.message : 'Agent 计划执行失败。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveMemory() {
+    if (!memoryDraft.trim() || !window.readerDesktop) return
+    try {
+      await window.readerDesktop.saveAgentMemory({ kind: memoryKind, content: memoryDraft.trim(), createdBy: 'user', importance: 4 })
+      setMemoryDraft('')
+      setAgentMemory(await window.readerDesktop.listAgentMemory())
+    } catch (memoryError) {
+      setNotice(memoryError instanceof Error ? memoryError.message : 'Agent 记忆保存失败。')
+    }
+  }
+
+  async function reviewMemory(id: string, decision: 'confirm' | 'reject' | 'archive') {
+    if (!window.readerDesktop) return
+    try {
+      await window.readerDesktop.reviewAgentMemory({ id, decision })
+      setAgentMemory(await window.readerDesktop.listAgentMemory())
+    } catch (memoryError) {
+      setNotice(memoryError instanceof Error ? memoryError.message : 'Agent 记忆复核失败。')
+    }
+  }
+
   const panel = <section className={`agent-modal agent-modal-v2 research-agent-modal ${embedded ? 'embedded' : ''}`}>
     {!embedded && <header><div><span className="agent-orb"><MessageSquareText size={18}/></span><div><p className="section-kicker">研究助手</p><h2>基于研究库证据回答</h2></div></div><button className="icon-button" onClick={onClose}><X/></button></header>}
     <div className="agent-context">
@@ -5059,9 +5217,32 @@ function AgentModalV2({
       <label className="agent-question">{turns.length ? '继续追问' : '你想让 Agent 基于这些证据回答什么？'}<textarea value={question} onChange={event => setQuestion(event.target.value)} placeholder={turns.length ? '可以直接说“比较一下”“为什么”“证据够吗”…' : '例如：这些论文对刚度扰动采用了哪些评价指标？'}/></label>
       <div className="agent-actions">
         <button className="primary-button" disabled={busy} onClick={() => void retrieveAndAnswer()}><Search size={15}/> 检索证据并回答</button>
+        <button className="outline-button" disabled={busy} onClick={() => void proposeExecutionPlan()}><GitBranch size={15}/> 生成执行计划</button>
         <button className="outline-button" disabled={busy} onClick={() => void searchPapers()}><Globe2 size={15}/> 检索公开文献</button>
       </div>
       {notice && <p className="agent-notice">{notice}</p>}
+      {agentPlan && <section className="agent-plan-board">
+        <header><div><span>持久化 Planner</span><h3>{agentPlan.objective}</h3></div><b>{agentPlan.status}</b></header>
+        <div>{agentPlan.steps.map(step => <article key={step.id} className={step.status}>
+          <span>{String(step.position + 1).padStart(2, '0')}</span>
+          <div><strong>{step.title}</strong><p>{step.rationale}</p><small>{step.toolName} · {step.requiresConfirmation ? '写入研究库，必须确认' : '只读工具'}</small>{step.error && <em>{step.error}</em>}</div>
+          <aside>
+            <b>{step.status === 'proposed' ? '待处理' : step.status === 'confirmed' ? '已确认' : step.status === 'completed' ? '已完成' : step.status === 'dismissed' ? '已跳过' : step.status}</b>
+            {step.status === 'proposed' && step.requiresConfirmation && <><button onClick={() => void reviewPlanStep(step.id, 'confirm')}>确认</button><button onClick={() => void reviewPlanStep(step.id, 'dismiss')}>跳过</button></>}
+          </aside>
+        </article>)}</div>
+        <footer><span>所有执行事件都写入只追加审计日志。</span><button className="primary-button" disabled={busy || agentPlan.status === 'completed'} onClick={() => void runExecutionPlan()}>运行只读与已确认步骤</button></footer>
+      </section>}
+      <details className="agent-memory-panel">
+        <summary>长期记忆 <span>{agentMemory.filter(item => item.reviewState === 'confirmed').length} 条已确认</span></summary>
+        <div className="agent-memory-editor"><select value={memoryKind} onChange={event => setMemoryKind(event.target.value as DesktopAgentMemory['kind'])}>
+          <option value="research_direction">研究方向</option><option value="preferred_term">常用术语</option><option value="preference">工作偏好</option><option value="reading_history">阅读历史</option><option value="experiment_history">实验历史</option>
+        </select><input value={memoryDraft} onChange={event => setMemoryDraft(event.target.value)} placeholder="例如：优先把柔顺控制译为 compliant control"/><button disabled={!memoryDraft.trim()} onClick={() => void saveMemory()}>保存</button></div>
+        <div className="agent-memory-list">{agentMemory.length ? agentMemory.map(item => <article key={item.id} className={item.reviewState}>
+          <span>{item.kind}</span><p>{item.content}</p><small>{item.reviewState === 'draft' ? 'AI 建议，等待确认' : item.reviewState === 'confirmed' ? '已确认长期记忆' : item.reviewState}</small>
+          <div>{item.reviewState === 'draft' ? <><button onClick={() => void reviewMemory(item.id, 'confirm')}>确认</button><button onClick={() => void reviewMemory(item.id, 'reject')}>拒绝</button></> : item.reviewState === 'confirmed' ? <button onClick={() => void reviewMemory(item.id, 'archive')}>归档</button> : null}</div>
+        </article>) : <p>还没有长期记忆。只有已确认内容会作为以后 Agent 的稳定背景。</p>}</div>
+      </details>
       {proposedActions.length > 0 && <div className="agent-action-proposals">
         <h3>待你审查的下一步 <span>{proposedActions.length}</span></h3>
         {proposedActions.map((action, index) => <section key={`${action.title}-${index}`}>
@@ -5105,10 +5286,12 @@ function SettingsModal({
   onboarding?: boolean
   workspaceOpen: boolean
   onClose: () => void
-  onSave: (settings: AISettings, uiSettings: UISettings) => Promise<void>
+  onSave: (settings: AISettingsSaveInput, uiSettings: UISettings) => Promise<AISettings>
 }) {
-  const [tab, setTab] = useState<'ai' | 'appearance'>('ai')
-  const [draft, setDraft] = useState({ ...defaultAISettings, ...settings })
+  const [tab, setTab] = useState<'ai' | 'appearance' | 'vault' | 'plugins'>('ai')
+  const [draft, setDraft] = useState<AISettingsSaveInput>({ ...defaultAISettings, ...settings, apiKey: '', clearApiKey: false })
+  const [providers, setProviders] = useState<DesktopLLMProvider[]>(fallbackLLMProviders)
+  const [connectionState, setConnectionState] = useState<{ kind: 'idle' | 'testing' | 'success' | 'error'; message: string; latencyMs?: number }>({ kind: 'idle', message: '保存前先测试一次，确认地址、模型和密钥确实可用。' })
   const [uiDraft, setUIDraft] = useState({ ...defaultUISettings, ...uiSettings })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -5117,6 +5300,11 @@ function SettingsModal({
   const [embeddingInstalling, setEmbeddingInstalling] = useState(false)
   const [semanticIndexing, setSemanticIndexing] = useState(false)
   const [embeddingProgress, setEmbeddingProgress] = useState('')
+  const [vaultProjection, setVaultProjection] = useState<{ generatedAt: string; counts: Record<string, number>; files: string[] }>()
+  const [vaultBusy, setVaultBusy] = useState(false)
+  const [migrationBackups, setMigrationBackups] = useState<Array<{ id: string; sourceVersion: number; targetVersion: number; createdAt: string; databaseSha256: string; valid: boolean; directory: string }>>([])
+  const [plugins, setPlugins] = useState<DesktopPlugin[]>([])
+  const [pluginBusy, setPluginBusy] = useState('')
   const previewAccent = ({
     slate: { main: '#42474b', soft: '#e9ebec' },
     blue: { main: '#476b86', soft: '#e6eef4' },
@@ -5127,6 +5315,44 @@ function SettingsModal({
     warm: { page: '#f7f5f0', paper: '#fffefb' },
     cool: { page: '#f3f5f6', paper: '#fcfdfe' },
   } as const)[uiDraft.surfaceTone]
+  const selectedProvider = providers.find(provider => provider.id === draft.providerId) ?? fallbackLLMProviders.find(provider => provider.id === 'custom')!
+
+  useEffect(() => {
+    let alive = true
+    const desktop = window.readerDesktop
+    if (!desktop) return () => { alive = false }
+    desktop.listLLMProviders()
+      .then(items => {
+        if (alive && items.length) setProviders(items)
+      })
+      .catch(() => {
+        if (alive) setProviders(fallbackLLMProviders)
+      })
+    return () => { alive = false }
+  }, [])
+
+  useEffect(() => {
+    if (!window.readerDesktop) return
+    window.readerDesktop.listPlugins().then(setPlugins).catch(() => setPlugins([]))
+  }, [])
+
+  useEffect(() => {
+    if (!window.readerDesktop || !workspaceOpen) { setMigrationBackups([]); return }
+    window.readerDesktop.listMigrationBackups().then(setMigrationBackups).catch(() => setMigrationBackups([]))
+  }, [workspaceOpen])
+
+  async function togglePlugin(plugin: DesktopPlugin) {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    setPluginBusy(plugin.id)
+    try {
+      if (plugin.installed) await desktop.uninstallPlugin({ id: plugin.id })
+      else await desktop.installPlugin({ id: plugin.id })
+      setPlugins(await desktop.listPlugins())
+    } catch (pluginError) {
+      setError(pluginError instanceof Error ? pluginError.message : '插件状态更新失败。')
+    } finally { setPluginBusy('') }
+  }
 
   useEffect(() => {
     let alive = true
@@ -5225,14 +5451,86 @@ function SettingsModal({
     }
   }
 
+  function selectProvider(provider: DesktopLLMProvider) {
+    const sameCredentialSlot = provider.id === settings.providerId && provider.baseUrl === settings.baseUrl
+    setDraft(current => ({
+      ...current,
+      providerId: provider.id,
+      baseUrl: provider.baseUrl,
+      model: provider.id === settings.providerId ? settings.model : '',
+      hasCredential: sameCredentialSlot && settings.hasCredential,
+      apiKey: '',
+      clearApiKey: false,
+    }))
+    setConnectionState({ kind: 'idle', message: '服务商已切换。填写模型名称后，请重新测试连接。' })
+    setError('')
+  }
+
+  async function testConnection() {
+    const desktop = window.readerDesktop
+    setError('')
+    if (!desktop) {
+      setConnectionState({ kind: 'error', message: '网页预览不会读取或发送 API Key，请在桌面客户端测试。' })
+      return
+    }
+    if (!draft.baseUrl.trim() || !draft.model.trim()) {
+      setConnectionState({ kind: 'error', message: '请先填写服务地址和模型名称。' })
+      return
+    }
+    if (!draft.hasCredential && !draft.apiKey?.trim()) {
+      setConnectionState({ kind: 'error', message: '当前连接还没有 API Key，请先粘贴密钥。' })
+      return
+    }
+    setConnectionState({ kind: 'testing', message: '正在发送不含研究内容的最小测试请求…' })
+    try {
+      const result = await desktop.testLLMConnection({
+        providerId: draft.providerId,
+        baseUrl: draft.baseUrl.trim(),
+        model: draft.model.trim(),
+        apiKey: draft.apiKey?.trim() || undefined,
+      })
+      setConnectionState({ kind: 'success', message: `${result.providerLabel} · ${result.model} 已连通`, latencyMs: result.latencyMs })
+    } catch (testError) {
+      setConnectionState({ kind: 'error', message: testError instanceof Error ? testError.message : '连接测试失败，请核对地址、模型和密钥。' })
+    }
+  }
+
+  async function rebuildPortableVault() {
+    const desktop = window.readerDesktop
+    if (!desktop || !workspaceOpen) {
+      setError('请先在桌面客户端创建或打开研究库。')
+      return
+    }
+    setError('')
+    setVaultBusy(true)
+    try {
+      setVaultProjection(await desktop.rebuildPortableVault())
+    } catch (projectionError) {
+      setError(projectionError instanceof Error ? projectionError.message : '研究库投影重建失败。')
+    } finally {
+      setVaultBusy(false)
+    }
+  }
+
+  async function openVaultFolder() {
+    try {
+      await window.readerDesktop?.openCurrentVaultFolder()
+    } catch (openError) {
+      setError(openError instanceof Error ? openError.message : '研究库文件夹打开失败。')
+    }
+  }
+
   async function save() {
     setBusy(true)
     setError('')
     try {
-      if (onboarding && (!draft.baseUrl.trim() || !draft.model.trim() || !draft.apiKey.trim())) {
-        throw new Error('首次使用请完整填写服务地址、模型名称和 API 密钥。')
+      if (!draft.baseUrl.trim() || !draft.model.trim()) {
+        throw new Error('请完整填写服务地址和模型名称。')
       }
-      await onSave(draft, uiDraft)
+      const saved = await onSave({ ...draft, baseUrl: draft.baseUrl.trim(), model: draft.model.trim(), apiKey: draft.apiKey?.trim() || undefined }, uiDraft)
+      if (onboarding && !hasConfiguredAI(saved)) {
+        throw new Error('首次使用必须保存可用的 API Key；你的研究库内容不会在这一步发送。')
+      }
       onClose()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '设置保存失败。')
@@ -5248,6 +5546,8 @@ function SettingsModal({
     </header>
     <nav className="settings-tabs">
       <button className={tab === 'ai' ? 'active' : ''} onClick={() => setTab('ai')}><Sparkles size={14}/> AI 与翻译</button>
+      <button className={tab === 'vault' ? 'active' : ''} onClick={() => setTab('vault')}><HardDrive size={14}/> Research Vault</button>
+      <button className={tab === 'plugins' ? 'active' : ''} onClick={() => setTab('plugins')}><Blocks size={14}/> 插件</button>
       <button className={tab === 'appearance' ? 'active' : ''} onClick={() => setTab('appearance')}><Settings2 size={14}/> 界面与阅读</button>
     </nav>
     <div className="settings-content">
@@ -5255,6 +5555,63 @@ function SettingsModal({
         <div className="settings-intro">
           <strong>{onboarding ? '接入后，科研助手才可以进行问答、阅读卡和章节整理' : '本地优先，云端调用必须手动触发'}</strong>
           <p>MinerU 转 Markdown 在本机完成，不依赖 AI。AI 用于章节整理、论文问答、阅读卡和课题推进；整篇派生 Markdown 仍需单独授权和再次确认。</p>
+        </div>
+        <div className="ai-connection-layout">
+          <aside className="provider-rail" aria-label="AI 服务商">
+            <span>选择服务商</span>
+            {providers.map(provider => <button
+              type="button"
+              key={provider.id}
+              className={draft.providerId === provider.id ? 'active' : ''}
+              onClick={() => selectProvider(provider)}
+            >
+              <i>{provider.shortLabel.slice(0, 1)}</i>
+              <span><strong>{provider.label}</strong><small>{provider.recommended ? '推荐接入' : provider.id === 'custom' ? '兼容接口' : '官方 API'}</small></span>
+              {draft.providerId === provider.id && <Check size={14}/>}
+            </button>)}
+          </aside>
+          <section className="connection-dossier">
+            <header>
+              <div><span>当前连接</span><h3>{selectedProvider.label}</h3><p>{selectedProvider.description}</p></div>
+              <b>{selectedProvider.protocol === 'openai-compatible' ? 'OpenAI 兼容协议' : selectedProvider.protocol === 'anthropic' ? 'Anthropic Messages' : 'Gemini 原生协议'}</b>
+            </header>
+            <label>服务地址（Base URL）<input value={draft.baseUrl} onChange={event => {
+              const baseUrl = event.target.value
+              setDraft(current => ({ ...current, baseUrl, hasCredential: current.providerId === settings.providerId && baseUrl === settings.baseUrl && settings.hasCredential, apiKey: '', clearApiKey: false }))
+              setConnectionState({ kind: 'idle', message: '地址已修改，请重新测试连接。' })
+            }} placeholder={selectedProvider.baseUrl || '例如 http://127.0.0.1:11434/v1'}/></label>
+            <label>模型名称<input value={draft.model} onChange={event => {
+              setDraft(current => ({ ...current, model: event.target.value }))
+              setConnectionState({ kind: 'idle', message: '模型已修改，请重新测试连接。' })
+            }} placeholder={selectedProvider.modelPlaceholder}/></label>
+            <label>API Key
+              <div className="api-key-row">
+                <input type="password" autoComplete="off" value={draft.apiKey ?? ''} onChange={event => {
+                  setDraft(current => ({ ...current, apiKey: event.target.value, clearApiKey: false }))
+                  setConnectionState({ kind: 'idle', message: '密钥已修改，请测试后再保存。' })
+                }} placeholder={draft.hasCredential ? '已加密保存；留空继续使用' : '粘贴开放平台 API Key'}/>
+                {(draft.hasCredential || draft.apiKey) && <button type="button" onClick={() => {
+                  setDraft(current => ({ ...current, apiKey: '', hasCredential: false, clearApiKey: true }))
+                  setConnectionState({ kind: 'idle', message: '保存后会清除这个连接的密钥。' })
+                }}>清除</button>}
+              </div>
+            </label>
+            <div className={`connection-test-state ${connectionState.kind}`} role={connectionState.kind === 'error' ? 'alert' : 'status'}>
+              <span>{connectionState.kind === 'success' ? <Check size={15}/> : connectionState.kind === 'error' ? <AlertTriangle size={15}/> : <CircleDot size={15}/>}</span>
+              <div><strong>{connectionState.kind === 'testing' ? '正在验证连接' : connectionState.kind === 'success' ? '连接可用' : connectionState.kind === 'error' ? '需要处理' : draft.hasCredential ? '已有加密密钥' : '尚未验证'}</strong><small>{connectionState.message}{connectionState.latencyMs ? ` · ${connectionState.latencyMs} ms` : ''}</small></div>
+              <button type="button" disabled={connectionState.kind === 'testing'} onClick={() => void testConnection()}>{connectionState.kind === 'testing' ? '测试中…' : '测试连接'}</button>
+            </div>
+            <details className="provider-tutorial">
+              <summary>第一次接入？展开 4 步教程</summary>
+              <ol>
+                <li>打开服务商的开放平台，而不是普通聊天网页。</li>
+                <li>创建 API Key；请不要把密钥粘贴到研究库或论文笔记。</li>
+                <li>从控制台复制当前可用的模型名称，不凭印象填写。</li>
+                <li>回到这里测试连接；测试只发送固定的“OK”指令，不发送研究内容。</li>
+              </ol>
+              {selectedProvider.docsUrl && <a href={selectedProvider.docsUrl} target="_blank" rel="noreferrer">打开 {selectedProvider.label} 官方接入文档 <ExternalLink size={13}/></a>}
+            </details>
+          </section>
         </div>
         <div className={`local-component-card ${embeddingStatus?.available ? 'ready' : 'missing'}`}>
           <div className="local-component-copy">
@@ -5282,14 +5639,53 @@ function SettingsModal({
           <option value="local">本地 Argos（推荐，不消耗 Token）</option>
           <option value="ai">已配置的 AI 服务（会发送选区）</option>
         </select></label>
-        <label>OpenAI 兼容服务地址<input value={draft.baseUrl} onChange={event => setDraft({ ...draft, baseUrl: event.target.value })} placeholder="https://api.openai.com/v1"/></label>
-        <label>模型名称<input value={draft.model} onChange={event => setDraft({ ...draft, model: event.target.value })} placeholder="例如 gpt-4.1-mini 或本地模型名"/></label>
-        <label>API 密钥<input type="password" value={draft.apiKey} onChange={event => setDraft({ ...draft, apiKey: event.target.value })} placeholder="桌面端使用系统加密保存"/></label>
-        <div className={`credential-state ${credentialState}`}>
-          <span className="status-dot"/>
-          <div><strong>{credentialState === 'encrypted' ? '密钥已由系统加密保存' : credentialState === 'unavailable' ? '系统凭据暂不可用' : '尚未保存密钥'}</strong><small>密钥不写入研究库、导出文件、README 或源码。</small></div>
-        </div>
+        <div className={`credential-state ${credentialState}`}><ShieldCheck size={16}/><div><strong>{credentialState === 'encrypted' ? '密钥只在主进程解密' : credentialState === 'unavailable' ? '系统凭据暂不可用' : '密钥等待加密保存'}</strong><small>渲染界面、研究库、导出文件、README 和源码都不会得到明文密钥。</small></div></div>
         <label className="toggle-label"><input type="checkbox" checked={draft.allowFullDocument} onChange={event => setDraft({ ...draft, allowFullDocument: event.target.checked })}/>允许在每次再次确认后，发送整篇派生 Markdown 做章节识别</label>
+      </section> : tab === 'vault' ? <section className="settings-panel vault-settings">
+        <div className="settings-intro">
+          <strong>数据库负责完整性，开放文件负责长期可读</strong>
+          <p>正式记录继续保存在兼容旧版本的 library.sqlite；软件同时把笔记、证据、实验、数据集和报告重建为 Markdown。只覆盖带 .generated 的文件，不会覆盖你自己写的笔记。</p>
+        </div>
+        <article className="vault-portability-card">
+          <header><div><span>RESEARCH VAULT</span><h3>开放目录 · 格式 v2</h3></div><ShieldCheck size={20}/></header>
+          <div className="vault-folder-map">
+            {[
+              ['papers', '论文原件与派生稿'], ['notes', '你的笔记与只读投影'], ['evidence', '原文证据卡'],
+              ['experiments', '实验与 Run'], ['datasets', '数据登记与校验值'], ['reports', '科研报告'],
+              ['attachments', '用户附件'], ['config', '开放布局说明'],
+            ].map(([name, description]) => <div key={name}><code>{name}/</code><span>{description}</span></div>)}
+          </div>
+          {vaultProjection ? <div className="vault-projection-result" role="status">
+            <Check size={16}/><div><strong>投影已重建</strong><small>{new Date(vaultProjection.generatedAt).toLocaleString()} · 笔记 {vaultProjection.counts.notes ?? 0} · 证据 {vaultProjection.counts.evidence ?? 0} · Run {vaultProjection.counts.experiments ?? 0} · 报告 {vaultProjection.counts.reports ?? 0}</small></div>
+          </div> : <p className="vault-projection-note">打开研究库时会自动刷新；也可以在大量修改后手动重建。外部实验文件只登记原路径和 SHA-256，不会被移动。</p>}
+          <footer>
+            <button type="button" className="outline-button" disabled={!workspaceOpen || !window.readerDesktop} onClick={() => void openVaultFolder()}>打开研究库文件夹</button>
+            <button type="button" className="primary-button" disabled={vaultBusy || !workspaceOpen || !window.readerDesktop} onClick={() => void rebuildPortableVault()}>{vaultBusy ? '正在重建…' : '重建用户可读投影'}</button>
+          </footer>
+        </article>
+        <details className="vault-portability-details">
+          <summary>哪些内容可以直接编辑？</summary>
+          <p>你可以自由编辑 notes 里自己创建的 Markdown 和 attachments 中的文件。`index.generated.md`、`VAULT_INDEX.generated.md` 和 `schema.generated.json` 是只读投影，应回到软件里修改正式记录。</p>
+        </details>
+        <section className="migration-backup-list">
+          <header><div><ShieldCheck size={17}/><strong>升级前恢复快照</strong></div><span>{migrationBackups.length} 份</span></header>
+          {migrationBackups.map(backup => <article key={backup.id}><div><strong>schema v{backup.sourceVersion} → v{backup.targetVersion}</strong><small>{new Date(backup.createdAt).toLocaleString()} · SHA-256 {backup.databaseSha256.slice(0, 12)}…</small></div><em className={backup.valid ? 'valid' : 'invalid'}>{backup.valid ? '校验通过' : '校验失败'}</em></article>)}
+          {!migrationBackups.length && <p>当前研究库没有发生过需要升级的 schema；首次升级前会自动创建只读快照。</p>}
+          <small>回滚不会在应用运行时自动覆盖数据库。需要恢复时先退出应用，再按 `docs/migration/v1-rollback.md` 执行带校验的 PowerShell 脚本。</small>
+        </section>
+      </section> : tab === 'plugins' ? <section className="settings-panel plugin-settings">
+        <div className="settings-intro">
+          <strong>可信内置插件 · 可安装、可卸载</strong>
+          <p>v1 只启用随正式应用发布并经过审计的适配器，不下载或执行任意第三方脚本。安装表示启用能力，卸载表示在本机禁用。</p>
+        </div>
+        <div className="plugin-catalog">{plugins.map(plugin => <article key={plugin.id} className={plugin.installed ? 'installed' : ''}>
+          <header><div><span>{plugin.category.toUpperCase()}</span><h3>{plugin.name}</h3></div><em>{plugin.trust === 'built-in' ? '内置可信' : plugin.trust}</em></header>
+          <p>{plugin.description}</p>
+          <div className="plugin-capabilities">{plugin.capabilities.map(capability => <code key={capability}>{capability}</code>)}</div>
+          <small>接口 v{plugin.interfaceVersion} · {plugin.permissions.length} 项受控权限 · {plugin.adapter}</small>
+          <footer><span>{plugin.installed ? <><Check size={14}/>已安装</> : '未安装'}</span><button disabled={pluginBusy === plugin.id || !window.readerDesktop} onClick={() => void togglePlugin(plugin)}>{pluginBusy === plugin.id ? '处理中…' : plugin.installed ? '卸载' : '安装'}</button></footer>
+        </article>)}</div>
+        {!plugins.length && <div className="plugin-empty">桌面插件注册表尚未加载；网页预览不会模拟已安装状态。</div>}
       </section> : <section className="settings-panel appearance-settings">
         <div className="settings-intro">
           <strong>让界面适合长时间科研工作</strong>
@@ -5306,6 +5702,14 @@ function SettingsModal({
             <option value="compact">紧凑</option>
           </select></label>
         </div>
+        <fieldset className="visual-choice-group theme-choices">
+          <legend>明暗主题</legend>
+          <div>{([['light', 'Light Theme'], ['dark', 'Dark Theme']] as const).map(([value, label]) => <button
+            className={uiDraft.theme === value ? 'active' : ''}
+            key={value}
+            onClick={() => setUIDraft({ ...uiDraft, theme: value })}
+          ><i className={`theme-swatch ${value}`}/><span>{label}</span></button>)}</div>
+        </fieldset>
         <fieldset className="visual-choice-group">
           <legend>界面底色</legend>
           <div>{([
@@ -5333,7 +5737,7 @@ function SettingsModal({
         <label className="range-setting"><span>Markdown 正文字号 <b>{uiDraft.readerFontSize}px</b></span><input type="range" min="14" max="22" step="1" value={uiDraft.readerFontSize} onChange={event => setUIDraft({ ...uiDraft, readerFontSize: Number(event.target.value) })}/></label>
         <label className="range-setting"><span>Markdown 正文行距 <b>{uiDraft.readerLineHeight.toFixed(1)}</b></span><input type="range" min="1.5" max="2.2" step=".1" value={uiDraft.readerLineHeight} onChange={event => setUIDraft({ ...uiDraft, readerLineHeight: Number(event.target.value) })}/></label>
         <label className="range-setting"><span>Markdown 正文宽度 <b>{uiDraft.readerWidth}px</b></span><input type="range" min="680" max="980" step="20" value={uiDraft.readerWidth} onChange={event => setUIDraft({ ...uiDraft, readerWidth: Number(event.target.value) })}/></label>
-        <article className="reading-settings-preview" style={{
+        <article className={`reading-settings-preview ${uiDraft.theme}`} style={{
           maxWidth: `${Math.min(540, uiDraft.readerWidth * .62)}px`,
           fontSize: `${Math.max(12, uiDraft.readerFontSize * .8)}px`,
           lineHeight: uiDraft.readerLineHeight,

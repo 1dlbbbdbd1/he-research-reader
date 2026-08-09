@@ -51,11 +51,40 @@ test('first use requires AI setup and existing folder creation offers PDF manage
   const ui = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
   const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8')
   assert.match(ui, /aiOnboardingRequired/)
-  assert.match(ui, /首次使用请完整填写服务地址、模型名称和 API 密钥/)
+  assert.match(ui, /首次使用必须保存可用的 API Key/)
+  assert.match(ui, /测试只发送固定的“OK”指令，不发送研究内容/)
+  assert.match(ui, /渲染界面、研究库、导出文件、README 和源码都不会得到明文密钥/)
   assert.match(ui, /MinerU 转 Markdown 在本机完成，不依赖 AI/)
   assert.match(ui, /一键管理发现的 \{existingPaperCount\} 篇 PDF/)
   assert.match(main, /existingPaperCount: existingPapers\.length/)
   assert.match(main, /manageExistingPapers/)
+})
+
+test('Research Vault v2 可在界面重建投影并通过受限 IPC 打开当前研究库', () => {
+  const ui = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
+  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8')
+  const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8')
+  assert.match(ui, /重建用户可读投影/)
+  assert.match(ui, /只覆盖带 \.generated 的文件/)
+  assert.match(preload, /rebuildPortableVault: \(\) => ipcRenderer\.invoke\('workspace:rebuild-portable-vault'\)/)
+  assert.match(preload, /openCurrentVaultFolder: \(\) => ipcRenderer\.invoke\('workspace:open-vault-folder'\)/)
+  assert.match(main, /workspaceService\.rebuildVaultProjections\(\)/)
+  assert.match(main, /shell\.openPath\(current\.path\)/)
+})
+
+test('持久化 Agent Planner、Memory 和逐步确认通过受限 IPC 接入真实面板', () => {
+  const ui = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
+  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8')
+  const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8')
+  assert.match(ui, /生成执行计划/)
+  assert.match(ui, /运行只读与已确认步骤/)
+  assert.match(ui, /长期记忆/)
+  assert.match(ui, /写入研究库，必须确认/)
+  assert.match(preload, /proposeAgentPlan: input => ipcRenderer\.invoke\('agent:propose-plan', input\)/)
+  assert.match(preload, /reviewAgentStep: input => ipcRenderer\.invoke\('agent:review-step', input\)/)
+  assert.match(preload, /executeAgentPlan: input => ipcRenderer\.invoke\('agent:execute-plan', input\)/)
+  assert.match(main, /researchAgentService\.reviewStep\(input\)/)
+  assert.match(main, /researchAgentService\.executePlan\(input\)/)
 })
 
 test('desktop renderer has an explicit content security policy', () => {
@@ -328,4 +357,60 @@ test('PDF selection can be pinned into the research Agent conversation', () => {
   assert.match(ui, /selection: agentSelection \? \{/)
   assert.match(ui, /已添加到对话/)
   assert.match(ui, /aria-label="移除对话选区"/)
+})
+
+test('知识图谱与 Evidence Card 通过受限 IPC 接入可复核工作区', () => {
+  const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8')
+  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8')
+  const app = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
+  const workspace = fs.readFileSync(path.join(root, 'src', 'KnowledgeGraphWorkspace.tsx'), 'utf8')
+
+  for (const channel of ['knowledge:get-graph', 'knowledge:review-edge', 'evidence-card:list', 'evidence-card:update']) {
+    assert.match(main, new RegExp(`ipcMain\\.handle\\('${channel}'`))
+    assert.match(preload, new RegExp(`ipcRenderer\\.invoke\\('${channel}'`))
+  }
+  assert.match(app, /label="知识图谱"/)
+  assert.match(app, /<KnowledgeGraphWorkspace/)
+  assert.match(workspace, /Evidence Card/)
+  assert.match(workspace, /AI 建议/)
+  assert.match(workspace, /确认/)
+  assert.match(workspace, /拒绝/)
+  assert.match(workspace, /原文（只读）/)
+})
+
+test('插件、主题与 LaTeX 高级路线在设置和写作页面拥有真实能力门', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+  const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8')
+  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8')
+  const app = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
+  const review = fs.readFileSync(path.join(root, 'src', 'ResearchReviewWorkspace.tsx'), 'utf8')
+  const theme = fs.readFileSync(path.join(root, 'src', 'theme.css'), 'utf8')
+
+  assert.ok(packageJson.build.files.includes('plugins/**/*'))
+  for (const channel of ['plugin:list', 'plugin:install', 'plugin:uninstall', 'review:export-latex']) {
+    assert.match(main, new RegExp(`ipcMain\\.handle\\('${channel}'`))
+    assert.match(preload, new RegExp(`ipcRenderer\\.invoke\\('${channel}'`))
+  }
+  assert.match(main, /requireCapability\('latex', 'writing\.latex-package'/)
+  assert.match(app, /可信内置插件/)
+  assert.match(app, /plugin\.installed \? '卸载' : '安装'/)
+  assert.match(app, /明暗主题/)
+  assert.match(app, /\['light', 'Light Theme'\]/)
+  assert.match(app, /\['dark', 'Dark Theme'\]/)
+  assert.match(app, /LaTeX \/ PDF/)
+  assert.match(theme, /\.app-shell\[data-theme='dark'\]/)
+})
+
+test('迁移快照校验与显式回滚入口作为正式产品资料交付', () => {
+  const app = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
+  const script = fs.readFileSync(path.join(root, 'scripts', 'restore-migration-backup.ps1'), 'utf8')
+  const guide = fs.readFileSync(path.join(root, 'docs', 'migration', 'v1-rollback.md'), 'utf8')
+
+  assert.match(app, /升级前恢复快照/)
+  assert.match(app, /SHA-256/)
+  assert.match(script, /\[switch\]\$Force/)
+  assert.match(script, /FileShare\]::None/)
+  assert.match(script, /rollback-rescue/)
+  assert.match(guide, /restore-migration-backup\.ps1/)
+  assert.match(guide, /-Force/)
 })

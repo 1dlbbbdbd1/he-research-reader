@@ -1,9 +1,13 @@
 export const READING_CARD_SECTIONS = [
   { key: 'problem', title: '文献解决的问题' },
+  { key: 'contribution', title: '核心贡献' },
   { key: 'method', title: '研究对象与方法' },
+  { key: 'experiment', title: '实验设计与数据' },
   { key: 'findings', title: '主要结论' },
+  { key: 'strengths', title: '优点与可复用之处' },
   { key: 'limitations', title: '作者局限与适用边界' },
-  { key: 'user_notes', title: '我的批注与疑问' },
+  { key: 'user_notes', title: '我的观点、批注与疑问' },
+  { key: 'related_papers', title: '相关论文线索' },
   { key: 'relevance', title: '与当前研究的关系' },
   { key: 'reuse', title: '可用于论文的位置' },
   { key: 'next_steps', title: '待核验问题与下一步' },
@@ -70,7 +74,7 @@ export function parsePaperReadingCardAnswer(content, contexts) {
 }
 
 function contextAllowedForSection(sectionKey, origin) {
-  if (['problem', 'method', 'findings', 'limitations'].includes(sectionKey)) {
+  if (['problem', 'contribution', 'method', 'experiment', 'findings', 'strengths', 'limitations', 'related_papers'].includes(sectionKey)) {
     return ['source_evidence', 'document', 'bibliography'].includes(origin)
   }
   if (sectionKey === 'user_notes') return ['user', 'user_state'].includes(origin)

@@ -8,11 +8,13 @@ import {
   buildAcademicMarkdownAIRequest,
   parseAcademicMarkdownBoundaries,
 } from '../../academic-markdown-skill.mjs'
+import { completeAI, hasConfiguredAI } from '../../ai-client'
 
 type AISettings = {
+  providerId: string
   baseUrl: string
   model: string
-  apiKey: string
+  hasCredential: boolean
   allowFullDocument: boolean
 }
 
@@ -235,7 +237,7 @@ export default function VersionedStructuredReading({
   }
 
   function requestAI() {
-    if (!settings.baseUrl || !settings.model || !settings.apiKey) {
+    if (!hasConfiguredAI(settings)) {
       setNotice('尚未配置可用的 AI 服务。请先在设置中填写服务地址、模型和密钥。')
       return
     }
@@ -253,18 +255,12 @@ export default function VersionedStructuredReading({
     setNotice(`正在让 ${settings.model} 识别章节边界；返回的正文不会被采用。`)
     try {
       const request = buildAcademicMarkdownAIRequest({ markdown: rawMarkdown, paper })
-      const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.apiKey}` },
-        body: JSON.stringify({
-          model: settings.model,
-          temperature: 0,
-          messages: [{ role: 'system', content: request.system }, { role: 'user', content: request.user }],
-        }),
+      const result = await completeAI({
+        purpose: 'structured-reading',
+        temperature: 0,
+        messages: [{ role: 'system', content: request.system }, { role: 'user', content: request.user }],
       })
-      if (!response.ok) throw new Error(`AI 服务返回 ${response.status}`)
-      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
-      const boundaries = parseAcademicMarkdownBoundaries(data.choices?.[0]?.message?.content || '', rawMarkdown)
+      const boundaries = parseAcademicMarkdownBoundaries(result.content, rawMarkdown)
       setState(await desktop.generateStructuredReading({ sourceId, createdBy: 'ai', model: settings.model, boundaries }))
       setConfirmAI(false)
       setNotice(`已保存 ${boundaries.length} 个章节边界为新版本；正文仍来自原始块。`)

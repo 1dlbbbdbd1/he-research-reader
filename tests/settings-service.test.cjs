@@ -5,9 +5,28 @@ const path = require('node:path')
 const test = require('node:test')
 const { AppSettingsStore, normalizeSettings } = require('../electron/settings-service.cjs')
 
+function safeStorageDouble() {
+  return {
+    isEncryptionAvailable: () => true,
+    encryptString: value => Buffer.from(`protected:${value}`, 'utf8'),
+    decryptString: buffer => buffer.toString('utf8').replace(/^protected:/, ''),
+  }
+}
+
+function withTemporaryStore(run, safeStorage = safeStorageDouble()) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reader-settings-'))
+  const filePath = path.join(root, 'settings.json')
+  try {
+    return run({ filePath, store: new AppSettingsStore({ filePath, safeStorage }) })
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+}
+
 test('界面与阅读设置会裁剪到产品允许范围', () => {
   const normalized = normalizeSettings({
     ui: {
+      theme: 'dark',
       uiScale: 4,
       density: 'unknown',
       surfaceTone: 'warm',
@@ -18,6 +37,7 @@ test('界面与阅读设置会裁剪到产品允许范围', () => {
     },
   })
   assert.deepEqual(normalized.ui, {
+    theme: 'dark',
     uiScale: 1.1,
     density: 'comfortable',
     surfaceTone: 'warm',
@@ -28,50 +48,69 @@ test('界面与阅读设置会裁剪到产品允许范围', () => {
   })
 })
 
-test('API 密钥只以系统加密后的内容写入设置文件', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reader-settings-'))
-  const filePath = path.join(root, 'settings.json')
-  const safeStorage = {
-    isEncryptionAvailable: () => true,
-    encryptString: value => Buffer.from(`protected:${value}`, 'utf8'),
-    decryptString: buffer => buffer.toString('utf8').replace(/^protected:/, ''),
-  }
-  try {
-    const store = new AppSettingsStore({ filePath, safeStorage })
-    store.save({
-      ai: {
-        baseUrl: 'http://127.0.0.1:11434/v1',
-        model: 'local-model',
-        apiKey: 'top-secret',
-        translationProvider: 'local',
-      },
-      ui: { accentColor: 'blue' },
-    })
-    const raw = fs.readFileSync(filePath, 'utf8')
-    assert.doesNotMatch(raw, /top-secret/)
-    assert.match(raw, /encryptedApiKey/)
-    const loaded = store.load()
-    assert.equal(loaded.ai.apiKey, 'top-secret')
-    assert.equal(loaded.credentialState, 'encrypted')
-    assert.equal(loaded.ui.accentColor, 'blue')
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true })
-  }
-})
+test('公开设置绝不向渲染进程返回 API Key，主进程仍可按需解密', () => withTemporaryStore(({ filePath, store }) => {
+  const saved = store.save({
+    ai: {
+      providerId: 'custom',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'local-model',
+      apiKey: 'top-secret',
+      translationProvider: 'local',
+    },
+    ui: { accentColor: 'blue' },
+  })
+  const raw = fs.readFileSync(filePath, 'utf8')
+  assert.doesNotMatch(raw, /top-secret/)
+  assert.match(raw, /encryptedApiKey/)
+  assert.equal(Object.hasOwn(saved.ai, 'apiKey'), false)
+  assert.equal(saved.ai.hasCredential, true)
+  assert.equal(saved.credentialState, 'encrypted')
+  assert.equal(saved.ui.accentColor, 'blue')
+  assert.equal(store.credentialFor(saved.ai), 'top-secret')
+  assert.equal(store.loadActiveAIConfig().apiKey, 'top-secret')
+}))
 
-test('系统加密不可用时拒绝把 API 密钥降级为明文', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reader-settings-'))
-  try {
-    const store = new AppSettingsStore({
-      filePath: path.join(root, 'settings.json'),
-      safeStorage: { isEncryptionAvailable: () => false },
-    })
-    assert.throws(
-      () => store.save({ ai: { apiKey: 'must-not-leak' } }),
-      /没有保存 API 密钥/,
-    )
-    assert.equal(fs.existsSync(path.join(root, 'settings.json')), false)
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true })
-  }
-})
+test('不同服务商和 Base URL 的凭据槽互相隔离并可切回', () => withTemporaryStore(({ store }) => {
+  store.save({ ai: { providerId: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-model', apiKey: 'deepseek-key' } })
+  store.save({ ai: { providerId: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'openai-model', apiKey: 'openai-key' } })
+  assert.equal(store.credentialFor({ providerId: 'deepseek', baseUrl: 'https://api.deepseek.com' }), 'deepseek-key')
+  assert.equal(store.credentialFor({ providerId: 'openai', baseUrl: 'https://api.openai.com/v1' }), 'openai-key')
+  assert.equal(store.credentialFor({ providerId: 'custom', baseUrl: 'http://127.0.0.1:11434/v1' }), '')
+  const switchedBack = store.save({ ai: { providerId: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-model' } })
+  assert.equal(switchedBack.ai.hasCredential, true)
+}))
+
+test('旧版单一 encryptedApiKey 会无损迁移到 v2 凭据槽', () => withTemporaryStore(({ filePath, store }) => {
+  fs.writeFileSync(filePath, JSON.stringify({
+    ai: { baseUrl: 'https://api.openai.com/v1', model: 'legacy-model', translationProvider: 'ai' },
+    encryptedApiKey: Buffer.from('protected:legacy-secret', 'utf8').toString('base64'),
+    ui: { surfaceTone: 'warm' },
+  }), 'utf8')
+  const loaded = store.load()
+  assert.equal(loaded.ai.providerId, 'openai')
+  assert.equal(loaded.ai.hasCredential, true)
+  assert.equal(store.loadActiveAIConfig().apiKey, 'legacy-secret')
+  store.save({ ai: loaded.ai, ui: loaded.ui })
+  const migrated = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+  assert.equal(migrated.version, 2)
+  assert.equal(Object.hasOwn(migrated, 'encryptedApiKey'), false)
+  assert.equal(migrated.credentials.length, 1)
+  assert.equal(store.loadActiveAIConfig().apiKey, 'legacy-secret')
+}))
+
+test('清除密钥只删除当前连接的凭据槽', () => withTemporaryStore(({ store }) => {
+  store.save({ ai: { providerId: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-model', apiKey: 'deepseek-key' } })
+  store.save({ ai: { providerId: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'openai-model', apiKey: 'openai-key' } })
+  const cleared = store.save({ ai: { providerId: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'openai-model', clearApiKey: true } })
+  assert.equal(cleared.ai.hasCredential, false)
+  assert.equal(store.credentialFor({ providerId: 'openai', baseUrl: 'https://api.openai.com/v1' }), '')
+  assert.equal(store.credentialFor({ providerId: 'deepseek', baseUrl: 'https://api.deepseek.com' }), 'deepseek-key')
+}))
+
+test('系统加密不可用时拒绝把 API Key 降级为明文', () => withTemporaryStore(({ filePath, store }) => {
+  assert.throws(
+    () => store.save({ ai: { providerId: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-model', apiKey: 'must-not-leak' } }),
+    /没有保存 API Key/,
+  )
+  assert.equal(fs.existsSync(filePath), false)
+}, { isEncryptionAvailable: () => false }))

@@ -1,0 +1,13 @@
+{
+  "id": "zotero",
+  "name": "Zotero 互操作",
+  "version": "1.0.0",
+  "description": "预览并由用户确认题录元数据同步；不接管 Zotero 数据库。",
+  "category": "bibliography",
+  "interfaceVersion": 1,
+  "trust": "built-in",
+  "adapter": "zotero-metadata-sync",
+  "capabilities": ["bibliography.preview", "bibliography.apply-confirmed"],
+  "permissions": ["bibliography:read", "bibliography:write"],
+  "defaultInstalled": true
+}

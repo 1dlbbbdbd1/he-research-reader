@@ -2,6 +2,20 @@
 
 本文件只记录已经形成可安装或可携带交付物的里程碑版本。开发中的普通提交不单独发布 Release。
 
+## 1.0.0
+
+发布日期：2026-08-10
+
+- 完成 Research Vault v2 与 schema v18：用户可读目录、可重建投影、原文件保护、v1–v17 幂等迁移、升级前 SHA-256 快照和显式回滚流程。
+- 完成多供应商 LLM Provider 与普通用户 AI 接入页；API Key 使用系统加密且不进入渲染进程、研究库或导出文件。
+- 完成持久化 Research Agent：Memory、Planner、七个受控工具、只读自动执行、写入逐项确认和只追加审计。
+- 完成类型化 Research Knowledge Graph 与 Evidence Card；AI 节点和关系必须人工复核，关系缺少证据时不能确认，原文不可覆盖。
+- 完成 Paper Intelligence Panel 与 Figure Explorer，可索引 Figure、Table、Algorithm 并跳回 PDF 位置。
+- 完成统一 Citation Database 的 GB/T 7714—2015、APA 7、IEEE、BibTeX 输出；保留 Word 主路线并新增 Markdown → LaTeX → 可选 PDF 高级路线。
+- 完成 zotero、arxiv、github、latex、translation、llm 六个可信内置插件的 manifest、能力门与安装/卸载生命周期。
+- 完成 Light/Dark Theme 与 1024×768、1600×900、2K、4K 布局门禁；辅助字号不低于 13px。
+- 完成 23 章验收矩阵、211 项单元/集成/UI 回归、开发与成品 Electron smoke、生产依赖 0 漏洞审计和全新安装/启动/退出/卸载验收。
+
 ## 0.3.1
 
 发布日期：2026-08-09

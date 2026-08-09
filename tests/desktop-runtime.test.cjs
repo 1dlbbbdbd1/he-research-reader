@@ -44,11 +44,33 @@ test('packaged applications keep the normal isolated GPU process', () => {
     smokeRequested: true,
     isolatedTestRequested: true,
     managedCodexSession: true,
+    packagedSmokeRequested: false,
   })
 
   assert.equal(result.isDesktopSmoke, false)
   assert.equal(result.usesIsolatedWindowsTestCompatibility, false)
   assert.deepEqual(app.calls, [])
+})
+
+test('显式成品 smoke 才能在受管 Windows 使用测试兼容模式', () => {
+  const app = fakeApp(true)
+  const result = configureDesktopRuntime(app, {
+    platform: 'win32',
+    smokeRequested: true,
+    isolatedTestRequested: true,
+    managedCodexSession: true,
+    packagedSmokeRequested: true,
+  })
+
+  assert.equal(result.isDesktopSmoke, true)
+  assert.equal(result.packagedSmokeRequested, true)
+  assert.equal(result.usesIsolatedWindowsTestCompatibility, true)
+  assert.deepEqual(app.calls, [
+    ['disableHardwareAcceleration'],
+    ['appendSwitch', 'in-process-gpu'],
+    ['appendSwitch', 'no-sandbox'],
+    ['appendSwitch', 'single-process'],
+  ])
 })
 
 test('normal development does not disable Chromium sandboxing', () => {

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { AlertTriangle, Check, ClipboardCopy, X } from 'lucide-react'
 import { useDialogKeyboard } from '../../use-dialog-keyboard'
 
@@ -68,7 +69,7 @@ export function CitationImportPanel({ items, alreadyImported, onCopy, onReview, 
           <span><strong>{item.title}</strong><p>{item.citation.text}</p></span>
         </div>
         <div>
-          {item.citation.incomplete && <button type="button" className="citation-review-button" onClick={() => onReview(item)}>检查题录</button>}
+          <button type="button" className="citation-review-button" onClick={() => onReview(item)}>{item.citation.incomplete ? '检查题录' : '引用格式'}</button>
           <CitationButton item={item} onCopy={onCopy} compact/>
         </div>
       </article>)}
@@ -82,6 +83,41 @@ export function CitationDialog({ item, reason, onClose }: {
   onClose: () => void
 }) {
   const dialogRef = useDialogKeyboard<HTMLElement>(onClose)
+  const [style, setStyle] = useState<'gb-t-7714-2015' | 'apa-7' | 'ieee' | 'bibtex'>('gb-t-7714-2015')
+  const [styles, setStyles] = useState<Array<{ id: typeof style; label: string }>>([
+    { id: 'gb-t-7714-2015', label: 'GB/T 7714—2015' },
+    { id: 'apa-7', label: 'APA 7th' },
+    { id: 'ieee', label: 'IEEE' },
+    { id: 'bibtex', label: 'BibTeX' },
+  ])
+  const [citation, setCitation] = useState<CitationView>(item.citation)
+  const [notice, setNotice] = useState(reason || '')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let disposed = false
+    const desktop = window.readerDesktop
+    if (!desktop) return () => { disposed = true }
+    desktop.listCitationStyles().then(value => { if (!disposed) setStyles(value) }).catch(() => {})
+    setBusy(true)
+    desktop.formatCitation({ itemId: item.id, style })
+      .then(value => { if (!disposed) { setCitation(value); setNotice('') } })
+      .catch(error => { if (!disposed) setNotice(error instanceof Error ? error.message : '引用格式化失败。') })
+      .finally(() => { if (!disposed) setBusy(false) })
+    return () => { disposed = true }
+  }, [item.id, style])
+
+  async function copyCurrent() {
+    const desktop = window.readerDesktop
+    if (!desktop) {
+      setNotice('桌面客户端才可验证剪贴板写入；下方文本仍可手动复制。')
+      return
+    }
+    try {
+      await desktop.writeClipboardText({ text: citation.text })
+      setNotice(`${citation.standard} 引用已复制并回读确认。`)
+    } catch (error) { setNotice(error instanceof Error ? error.message : '剪贴板写入失败。') }
+  }
   const fields = [
     ['类型', item.itemType],
     ['作者', item.authors.map(author => author.literal || [author.family, author.given].filter(Boolean).join(', ')).filter(Boolean).join('；')],
@@ -94,18 +130,19 @@ export function CitationDialog({ item, reason, onClose }: {
   return <div className="modal-backdrop" role="presentation">
     <section ref={dialogRef} className="citation-dialog" role="dialog" aria-modal="true" aria-labelledby="citation-dialog-title">
       <header>
-        <div><p>GB/T 7714—2015</p><h2 id="citation-dialog-title">{reason ? '剪贴板写入失败' : '检查题录元数据'}</h2></div>
+        <div><p>Unified Citation Database</p><h2 id="citation-dialog-title">{reason ? '剪贴板写入失败' : '引用格式与题录检查'}</h2></div>
         <button type="button" onClick={onClose} aria-label="关闭"><X size={18}/></button>
       </header>
-      {reason && <div className="citation-dialog-warning"><AlertTriangle size={17}/><span>{reason}<br/>下方文本可直接选中并手动复制。</span></div>}
-      {item.citation.missingFields.length > 0 && <div className="citation-missing-fields">
+      {notice && <div className="citation-dialog-warning"><AlertTriangle size={17}/><span>{notice}<br/>下方文本可直接选中并手动复制。</span></div>}
+      <label>引用格式<select value={style} onChange={event => setStyle(event.target.value as typeof style)}>{styles.map(entry => <option value={entry.id} key={entry.id}>{entry.label}</option>)}</select></label>
+      {citation.missingFields.length > 0 && <div className="citation-missing-fields">
         <strong>当前缺少</strong>
-        <span>{item.citation.missingFields.map(field => field.label).join('、')}</span>
+        <span>{citation.missingFields.map(field => field.label).join('、')}</span>
         <p>已按现有确认字段降级生成，没有补造缺失信息。</p>
       </div>}
-      <label>可复制引用<textarea readOnly value={item.citation.text} onFocus={event => event.currentTarget.select()}/></label>
+      <label>可复制引用<textarea readOnly value={busy ? '正在格式化…' : citation.text} onFocus={event => event.currentTarget.select()}/></label>
       <dl>{fields.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
-      <footer><button type="button" className="primary-button" onClick={onClose}>完成检查</button></footer>
+      <footer><button type="button" className="outline-button" onClick={() => void copyCurrent()} disabled={busy}><ClipboardCopy size={14}/>复制当前格式</button><button type="button" className="primary-button" onClick={onClose}>完成检查</button></footer>
     </section>
   </div>
 }

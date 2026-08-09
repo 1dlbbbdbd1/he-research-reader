@@ -1,0 +1,13 @@
+{
+  "id": "arxiv",
+  "name": "arXiv 发现",
+  "version": "1.0.0",
+  "description": "为论文发现接口保留的可信适配器；联网操作必须由用户触发。",
+  "category": "discovery",
+  "interfaceVersion": 1,
+  "trust": "built-in",
+  "adapter": "arxiv-discovery",
+  "capabilities": ["paper.search", "paper.metadata-preview"],
+  "permissions": ["network:arxiv", "bibliography:read"],
+  "defaultInstalled": false
+}

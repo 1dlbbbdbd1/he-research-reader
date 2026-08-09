@@ -164,7 +164,7 @@ export function mergeAgentSearchResponses(responses, terms, limit = 12) {
     .slice(0, Math.max(1, limit))
 }
 
-export function buildResearchAgentRequest({ question, evidence, scopeLabel, readerContext, researchContext, history = [] }) {
+export function buildResearchAgentRequest({ question, evidence, scopeLabel, readerContext, researchContext, memory = [], history = [] }) {
   const contexts = (Array.isArray(evidence) ? evidence : []).map((entry, index) => ({
     evidenceId: `E${index + 1}`,
     title: entry.title,
@@ -181,6 +181,7 @@ export function buildResearchAgentRequest({ question, evidence, scopeLabel, read
       '把原文证据、用户笔记和题录信息区分开；用户笔记不能冒充论文结论。',
       '里程碑和测试记录是用户项目事实，只能证明项目状态、实际操作和用户观察；不能冒充论文结论或未经确认的科学结论。',
       '会话历史只用于理解追问，不能作为证据；本轮结论仍必须引用本轮 evidence。',
+      '已确认长期记忆只用于理解用户术语、研究方向和偏好，不能作为论文或实验结论证据。',
       '阅读进度、当前页和当前视图只是上下文元数据，除非对应内容已列入 evidence，否则不能据此推断论文结论。',
       '每个回答区块至少引用一个 evidenceId；没有证据支持的内容不要输出。',
       '行动建议只能是 read、compare、verify、experiment、review、note 六类，每条都必须解释原因并引用 evidenceId。',
@@ -205,6 +206,10 @@ export function buildResearchAgentRequest({ question, evidence, scopeLabel, read
         currentHypothesis: String(researchContext.project?.currentHypothesis || '').slice(0, 2000),
         stage: String(researchContext.project?.stage || ''),
       } : null,
+      memory: (Array.isArray(memory) ? memory : []).filter(item => item?.reviewState === 'confirmed').slice(0, 40).map(item => ({
+        kind: String(item.kind || ''),
+        content: String(item.content || '').slice(0, 1000),
+      })),
       history: (Array.isArray(history) ? history : []).slice(-6).map(turn => ({
         role: turn?.role === 'assistant' ? 'assistant' : 'user',
         content: String(turn?.content || '').slice(0, 2400),

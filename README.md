@@ -2,7 +2,45 @@
 
 H’s 科研助手是一款面向个人研究者的 Windows 本地优先科研工作台。它把文献阅读、证据记录、研究任务、实验过程、复盘写作和成果导出放在同一个应用里，尽量减少在多个软件之间来回切换。
 
-当前版本：**0.3.1**
+当前版本：**1.0.0**
+
+## v1.0 长期重构进度
+
+H’s Research Assistant v1.0 长期重构已经完成。重构不会删除或替换现有 `library.sqlite` 与研究原文件；所有新结构都提供幂等迁移、来源追踪、回滚信息和桌面回归证据。
+
+- [x] Phase 0：架构、数据、桌面安全与迁移风险审计
+- [x] Phase 1：核心领域契约、多供应商 LLM Provider、主进程凭据隔离、普通用户 AI 接入页
+- [x] Phase 2：Research Vault v2 用户可读目录与可重建投影
+- [x] Phase 3：持久化 Agent Memory、Planner、Tools 与逐项确认
+- [x] Phase 4：类型化 Research Knowledge Graph、Evidence Card、关系证据与人工复核工作区
+- [x] Phase 5：统一 Today、Paper Intelligence、Figure Explorer 与可持久化明暗主题 UI
+- [x] Phase 6：统一 GB/T、APA、IEEE、BibTeX 引用，Word/LaTeX/PDF 写作路线与可信内置插件生命周期
+- [x] Phase 7：旧数据迁移、升级前哈希快照、回滚脚本、幂等与兼容性验收
+- [x] Phase 8：单元、集成、UI、桌面、安装/卸载完整交付验收
+
+架构边界和迁移纪律见 [`docs/architecture/v1-core-contracts.md`](docs/architecture/v1-core-contracts.md)。该清单只在对应阶段已有运行实现与测试证据后勾选。
+
+23 章目标与实现、数据边界、测试证据的逐项对应见 [`docs/acceptance/v1.0.md`](docs/acceptance/v1.0.md)。
+
+Agent 的持久化状态、七个工具和逐项确认边界见 [`docs/architecture/v1-agent-runtime.md`](docs/architecture/v1-agent-runtime.md)。
+
+知识图谱节点/关系、Evidence Card 原文不可变边界和人工复核规则见 [`docs/architecture/v1-knowledge-graph.md`](docs/architecture/v1-knowledge-graph.md)。Phase 4 已通过 3 项知识图谱服务测试、40 项研究库迁移/持久化测试和生产构建；图谱及证据卡已进入主导航，不是仅存在于数据库中的静态能力。
+
+Phase 5 已把 Paper Intelligence Panel 扩为核心贡献、方法、实验、优点、局限、我的观点和相关论文线索；Figure Explorer 会从 MinerU 原始 Markdown 自动索引 Figure、Table、Algorithm，并用版面锚点跳回 PDF。Light/Dark Theme 作为本机设置加密配置旁的独立 UI 选项持久化，最低辅助字号门禁为 13px。相关 10 项定向测试与生产构建通过；完整桌面视觉回归仍在 Phase 8 总门禁执行。
+
+Phase 6 继续复用同一个 Citation Database：引用检查器可切换 GB/T 7714—2015、APA 7th、IEEE、BibTeX；Word 仍是主路线，LaTeX 高级路线会导出 `source.md`、`main.tex`、`references.bib`，检测到 Tectonic 时再生成 PDF，缺少编译器时明确交付可编辑包而不假装成功。设置页新增六个可安装/卸载的可信内置插件，能力调用同时经过安装状态与 capability 门。接口说明见 [`plugins/README.md`](plugins/README.md) 和 [`docs/architecture/v1-writing-and-plugins.md`](docs/architecture/v1-writing-and-plugins.md)。
+
+Phase 7 在所有旧 schema 原位升级前创建以“旧版本、目标版本、数据库哈希”命名的幂等快照；升级完成必须通过目标版本、SQLite `quick_check` 与 `foreign_key_check` 才更新研究库清单。设置页显示快照校验状态；带路径边界、占用检查、SHA-256 和二次救援副本的 PowerShell 回滚流程见 [`docs/migration/v1-rollback.md`](docs/migration/v1-rollback.md)。v1–v17 → v18 迁移和重复打开均已进入 43 项迁移/研究库测试。
+
+Phase 8 已完成 211 项测试、生产构建、生产依赖 0 漏洞审计和隔离 Electron smoke；桌面验收覆盖 1024×768、1600×900 真实窗口，以及 2K/4K Chromium 精确 CSS 尺寸，均无全局横向溢出。v1.0.0 安装版与便携版已生成；安装版完成全新安装、内置 Argos/回滚资源核对、安装目录成品 smoke、正常退出与卸载，应用目录、进程、卸载项和快捷方式均无残留。
+
+## 1.0.0 更新
+
+- Research Vault v2、schema v18、升级前哈希快照与显式回滚流程。
+- 多供应商 LLM Provider、普通用户 AI 接入向导、持久化 Agent Memory/Planner/Tools。
+- 类型化科研知识图谱、Evidence Card、Paper Intelligence 与 Figure Explorer。
+- 统一引用数据库、Word 主路线、LaTeX/PDF 高级路线和六个可信内置插件。
+- Today Research Dashboard、Light/Dark Theme，以及从 1024×768 到 4K 的桌面布局验收。
 
 ## 0.3.1 更新
 
@@ -14,8 +52,8 @@ H’s 科研助手是一款面向个人研究者的 Windows 本地优先科研�
 
 | 下载文件 | 适合谁 | 安装与本地翻译 |
 | --- | --- | --- |
-| `HsResearchAssistant-Setup-0.3.1-x64.exe` | **推荐**：日常长期使用 | 可选择安装位置，创建桌面和开始菜单快捷方式，并提供卸载程序。约 430 MB，安装包内含可选的 Argos 英文 → 中文本地翻译组件；组件安装后约占 1 GB。 |
-| `HsResearchAssistant-Portable-0.3.1-x64.exe` | 临时试用，或没有软件安装权限 | 约 105 MB，无需安装，双击即可运行；不创建快捷方式和卸载入口。未内置 Argos，本地翻译首次安装时需要联网下载运行时和语言模型。 |
+| `HsResearchAssistant-Setup-1.0.0-x64.exe` | **推荐**：日常长期使用 | 可选择安装位置，创建桌面和开始菜单快捷方式，并提供卸载程序。安装包内含可选的 Argos 英文 → 中文本地翻译组件；组件安装后约占 1 GB。 |
+| `HsResearchAssistant-Portable-1.0.0-x64.exe` | 临时试用，或没有软件安装权限 | 无需安装，双击即可运行；不创建快捷方式和卸载入口。未内置 Argos，本地翻译首次安装时需要联网下载运行时和语言模型。 |
 | `SHA256SUMS.txt` | 需要核对下载完整性 | 保存两个程序文件的 SHA-256 校验值。 |
 
 > **便携版只是“免安装”，不是“所有数据都跟着 exe 走”。** 两个版本都会把软件设置、最近打开记录、本地组件和加密后的 API Key 保存在当前 Windows 用户的 AppData 中；研究库则始终保存在创建时由你选择的文件夹。把便携版复制到另一台电脑时，这些 AppData 数据不会自动随行。卸载安装版或删除便携版 exe 都不会删除研究库。

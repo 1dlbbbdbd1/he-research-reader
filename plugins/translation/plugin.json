@@ -1,0 +1,13 @@
+{
+  "id": "translation",
+  "name": "本地翻译",
+  "version": "1.0.0",
+  "description": "连接应用内置的 Argos 本地翻译生命周期。",
+  "category": "translation",
+  "interfaceVersion": 1,
+  "trust": "built-in",
+  "adapter": "local-translation",
+  "capabilities": ["translation.selection", "translation.document"],
+  "permissions": ["translation:local"],
+  "defaultInstalled": true
+}

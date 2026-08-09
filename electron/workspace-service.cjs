@@ -3,14 +3,17 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { fileURLToPath } = require('node:url')
 const { openWorkspaceDatabase, SCHEMA_VERSION } = require('./workspace-db.cjs')
+const { VAULT_FORMAT_VERSION, ensureVaultLayout, rebuildVaultProjections } = require('./vault-layout.cjs')
 const { detectBibliographyFormat, parseBibliography } = require('./bibliography-adapters.cjs')
-const { CitationFormatter } = require('./citation-formatter.cjs')
+const { CITATION_STYLES, CitationFormatter } = require('./citation-formatter.cjs')
 const {
   ZOTERO_SYNC_ADAPTER,
   planZoteroMetadataSync,
   zoteroSyncCapabilities,
 } = require('./bibliography-sync.cjs')
 const { portableMarkdownFileName, renderPortableMarkdown } = require('./portable-markdown.cjs')
+const { compileLatexPackage, renderLatexDocument } = require('./writing-export.cjs')
+const { createMigrationBackup, listMigrationBackups, verifyMigratedDatabase } = require('./migration-backup.cjs')
 const {
   legacyTaskId,
   milestoneStatusFromTask,
@@ -105,10 +108,14 @@ const QUESTION_STATE_LABELS = {
 }
 const READING_CARD_SECTION_TITLES = {
   problem: '文献解决的问题',
+  contribution: '核心贡献',
   method: '研究对象与方法',
+  experiment: '实验设计与数据',
   findings: '主要结论',
+  strengths: '优点与可复用之处',
   limitations: '作者局限与适用边界',
-  user_notes: '我的批注与疑问',
+  user_notes: '我的观点、批注与疑问',
+  related_papers: '相关论文线索',
   relevance: '与当前研究的关系',
   reuse: '可用于论文的位置',
   next_steps: '待核验问题与下一步',
@@ -401,8 +408,7 @@ class WorkspaceService {
   }
 
   #initializeWorkspace(root, name) {
-    fs.mkdirSync(path.join(root, 'papers'), { recursive: true })
-    fs.mkdirSync(path.join(root, 'exports'), { recursive: true })
+    ensureVaultLayout(root)
     fs.mkdirSync(path.join(root, '.reader-cache'), { recursive: true })
 
     const createdAt = now()
@@ -420,6 +426,8 @@ class WorkspaceService {
       projectId: vault.projectId,
       name: vault.name,
       schemaVersion: vault.schemaVersion,
+      vaultFormatVersion: VAULT_FORMAT_VERSION,
+      database: { path: DATABASE_FILE, format: 'sqlite' },
       createdAt,
       updatedAt: createdAt,
     })
@@ -446,17 +454,29 @@ class WorkspaceService {
       throw new Error('研究库清单不完整，已停止打开以保护数据。')
     }
 
-    const nextDatabase = openWorkspaceDatabase(path.join(root, DATABASE_FILE))
+    const databasePath = path.join(root, DATABASE_FILE)
+    const migrationBackup = createMigrationBackup({ root, targetVersion: SCHEMA_VERSION })
+    let nextDatabase
+    try {
+      nextDatabase = openWorkspaceDatabase(databasePath)
+      verifyMigratedDatabase(nextDatabase, SCHEMA_VERSION)
+    } catch (error) {
+      nextDatabase?.close()
+      const backupHint = migrationBackup?.id ? `升级前备份已保留为 ${migrationBackup.id}。` : ''
+      throw new Error(`研究库升级或完整性检查失败，已停止打开。${backupHint}${error instanceof Error ? error.message : String(error)}`)
+    }
     const project = nextDatabase.prepare('SELECT id, name FROM projects WHERE id = ?').get(manifest.projectId)
     if (!project) {
       nextDatabase.close()
       throw new Error('研究库数据库与清单不匹配，已停止打开以保护数据。')
     }
-    if (manifest.schemaVersion !== SCHEMA_VERSION) {
+    if (manifest.schemaVersion !== SCHEMA_VERSION || migrationBackup) {
       manifest.schemaVersion = SCHEMA_VERSION
       manifest.updatedAt = now()
+      if (migrationBackup) manifest.lastMigration = { backupId: migrationBackup.id, fromVersion: migrationBackup.sourceVersion, toVersion: migrationBackup.targetVersion, verifiedAt: manifest.updatedAt }
       writeJsonAtomic(manifestPath, manifest)
     }
+    ensureVaultLayout(root)
 
     this.close()
     this.database = nextDatabase
@@ -469,6 +489,7 @@ class WorkspaceService {
       createdAt: manifest.createdAt,
       updatedAt: manifest.updatedAt,
     }
+    this.rebuildVaultProjections()
     this.#remember(this.current)
     return this.current
   }
@@ -480,7 +501,10 @@ class WorkspaceService {
   }
 
   close() {
-    if (this.database && this.current) this.endResearchSession()
+    if (this.database && this.current) {
+      this.endResearchSession()
+      this.rebuildVaultProjections()
+    }
     this.database?.close()
     this.database = undefined
     this.current = undefined
@@ -492,6 +516,33 @@ class WorkspaceService {
       schemaVersion: this.database.prepare('PRAGMA user_version').get().user_version,
       tables: this.database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.name),
     }
+  }
+
+  listMigrationBackups() {
+    this.#requireOpen()
+    return listMigrationBackups(this.current.path)
+  }
+
+  rebuildVaultProjections() {
+    this.#requireOpen()
+    const result = rebuildVaultProjections({
+      root: this.current.path,
+      database: this.database,
+      projectId: this.current.projectId,
+      vaultName: this.current.name,
+      schemaVersion: SCHEMA_VERSION,
+    })
+    const manifestPath = path.join(this.current.path, VAULT_FILE)
+    const manifest = readJson(manifestPath)
+    writeJsonAtomic(manifestPath, {
+      ...manifest,
+      schemaVersion: SCHEMA_VERSION,
+      vaultFormatVersion: VAULT_FORMAT_VERSION,
+      database: { path: DATABASE_FILE, format: 'sqlite' },
+      projections: { version: VAULT_FORMAT_VERSION, generatedAt: result.generatedAt },
+      updatedAt: manifest.updatedAt || now(),
+    })
+    return result
   }
 
   loadLibraryState() {
@@ -764,6 +815,25 @@ class WorkspaceService {
       claims,
       history,
     }
+  }
+
+  listCitationStyles() {
+    return CITATION_STYLES.map(style => ({ ...style }))
+  }
+
+  formatCitation(input = {}) {
+    this.#requireOpen()
+    const itemId = String(input.itemId || '').trim()
+    const row = this.database.prepare(`
+      SELECT id, title, item_type, authors_json, issued, accessed, container_title, publisher,
+             publisher_place, volume, issue, pages, language, identifiers_json
+      FROM bibliographic_items WHERE id = ? AND project_id = ? AND archived_at IS NULL
+    `).get(itemId, this.current.projectId)
+    if (!row) throw new Error('当前研究库中找不到这条题录。')
+    return citationFormatter.format(bibliographicSummaryFromRow(row), {
+      style: String(input.style || 'gb-t-7714-2015'),
+      sequence: Number.isInteger(input.sequence) && input.sequence > 0 ? input.sequence : undefined,
+    })
   }
 
   getResearchResume() {
@@ -4061,6 +4131,38 @@ class WorkspaceService {
       WHERE id = ?
     `).run(timestamp, document.id)
     return { filePath, fileSha256, revisionHash, format, exportedAt: timestamp }
+  }
+
+  exportReviewLatexPackage(input = {}) {
+    this.#requireOpen()
+    const document = this.getReviewDocument(input.documentId)
+    const timestamp = now()
+    const safeTitle = safeFileName(document.title).replace(/\.[^.]+$/, '').slice(0, 80)
+    const suffix = timestamp.replace(/[:.]/g, '-')
+    const directory = path.join(this.current.path, 'exports', `${safeTitle}-latex-${suffix}`)
+    fs.mkdirSync(directory, { recursive: false })
+    const markdown = renderReviewMarkdown(document)
+    const bibtexEntries = [...new Set(document.items.map(item => citationFormatter.format(item, { style: 'bibtex' }).text))]
+    const tex = renderLatexDocument({ title: document.title, markdown })
+    const sourcePath = path.join(directory, 'source.md')
+    const texPath = path.join(directory, 'main.tex')
+    const bibPath = path.join(directory, 'references.bib')
+    fs.writeFileSync(sourcePath, markdown, 'utf8')
+    fs.writeFileSync(texPath, tex, 'utf8')
+    fs.writeFileSync(bibPath, `${bibtexEntries.join('\n\n')}\n`, 'utf8')
+    const compilation = input.compilePdf === false ? { compiled: false, reason: '用户选择只导出可编辑 LaTeX 包。' } : compileLatexPackage({ directory })
+    const manifest = {
+      schemaVersion: 1,
+      documentId: document.id,
+      title: document.title,
+      citationStyle: 'BibTeX',
+      sourceDirection: 'review document -> Markdown snapshot -> LaTeX -> optional PDF',
+      generatedAt: timestamp,
+      files: ['source.md', 'main.tex', 'references.bib', ...(compilation.compiled ? ['main.pdf'] : [])],
+      compilation: { compiled: compilation.compiled, reason: compilation.reason || '' },
+    }
+    fs.writeFileSync(path.join(directory, 'export-manifest.json'), JSON.stringify(manifest, null, 2), 'utf8')
+    return { directory, sourcePath, texPath, bibPath, ...compilation, generatedAt: timestamp }
   }
 
   importSourceFile(input = {}) {

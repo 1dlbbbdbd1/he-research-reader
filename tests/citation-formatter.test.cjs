@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
-const { CitationFormatter, formatGB7714 } = require('../electron/citation-formatter.cjs')
+const { CitationFormatter, formatAPA, formatBibTeX, formatGB7714, formatIEEE } = require('../electron/citation-formatter.cjs')
 const { writeClipboardText } = require('../electron/clipboard-service.cjs')
 
 test('中文期刊固定输出卷期页与 DOI，默认不伪造序号', () => {
@@ -96,10 +96,28 @@ test('导入层的无题名占位符仍被识别为缺失字段', () => {
   assert.ok(result.missingFields.some(field => field.field === 'title'))
 })
 
-test('统一 CitationFormatter 拒绝未实现的样式', () => {
+test('统一 CitationFormatter 从同一题录生成 GB/T、APA、IEEE 与 BibTeX', () => {
   const formatter = new CitationFormatter()
-  assert.equal(formatter.format({ itemType: 'book', title: '测试', authors: [] }, { style: 'gb-t-7714-2015' }).standard, 'GB/T 7714—2015')
-  assert.throws(() => formatter.format({}, { style: 'apa' }), /不支持的引用格式/)
+  const item = {
+    itemType: 'article-journal', title: 'Traceable evidence workflows',
+    authors: [{ family: 'Smith', given: 'Jane A' }, { family: 'Wang', given: 'Li' }],
+    issued: '2026', containerTitle: 'Journal of Research Tools', volume: '4', issue: '2', pages: '20-31',
+    identifiers: { DOI: ['10.1000/example'] },
+  }
+  assert.equal(formatter.format(item, { style: 'gb-t-7714-2015' }).standard, 'GB/T 7714—2015')
+  assert.equal(formatter.format(item, { style: 'apa-7' }).text, 'Smith, J. A., & Wang, L. (2026). Traceable evidence workflows. Journal of Research Tools, 4(2), 20-31. https://doi.org/10.1000/example')
+  assert.equal(formatter.format(item, { style: 'ieee', sequence: 3 }).text, '[3] J. A. Smith, and L. Wang, “Traceable evidence workflows,” Journal of Research Tools, vol. 4, no. 2, pp. 20-31, 2026, doi: 10.1000/example.')
+  assert.match(formatter.format(item, { style: 'bibtex' }).text, /^@article\{smith2026traceable,/)
+  assert.throws(() => formatter.format({}, { style: 'unknown' }), /不支持的引用格式/)
+})
+
+test('APA、IEEE 与 BibTeX 对缺失字段明确降级且不补造元数据', () => {
+  const item = { itemType: 'book', title: '只有题名', authors: [], identifiers: {} }
+  for (const result of [formatAPA(item), formatIEEE(item), formatBibTeX(item)]) {
+    assert.equal(result.incomplete, true)
+    assert.ok(result.missingFields.some(field => field.field === 'authors'))
+    assert.doesNotMatch(result.text, /2026|北京|出版社/)
+  }
 })
 
 test('剪贴板服务写入后回读确认，失败时不假装成功', () => {

@@ -6,9 +6,11 @@ function configureDesktopRuntime(app, options = {}) {
     ?? process.env.RESEARCH_READER_ISOLATED_DESKTOP_TEST === '1'
   const managedCodexSession = options.managedCodexSession
     ?? Boolean(String(process.env.CODEX_THREAD_ID || '').trim())
-  const isDesktopSmoke = !app.isPackaged && smokeRequested
+  const packagedSmokeRequested = options.packagedSmokeRequested
+    ?? (process.env.RESEARCH_READER_PACKAGED_SMOKE === '1' || process.argv.includes('--research-reader-packaged-smoke'))
+  const isDesktopSmoke = smokeRequested && (!app.isPackaged || packagedSmokeRequested)
   const usesIsolatedWindowsTestCompatibility = platform === 'win32'
-    && !app.isPackaged
+    && (!app.isPackaged || packagedSmokeRequested)
     && (isolatedTestRequested || managedCodexSession)
 
   if (usesIsolatedWindowsTestCompatibility) {
@@ -21,11 +23,13 @@ function configureDesktopRuntime(app, options = {}) {
     app.disableHardwareAcceleration()
     app.commandLine.appendSwitch('in-process-gpu')
     app.commandLine.appendSwitch('no-sandbox')
+    if (app.isPackaged && packagedSmokeRequested) app.commandLine.appendSwitch('single-process')
   }
 
   return {
     isDesktopSmoke,
     managedCodexSession,
+    packagedSmokeRequested,
     usesIsolatedWindowsTestCompatibility,
   }
 }

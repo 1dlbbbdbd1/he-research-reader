@@ -1,6 +1,6 @@
 const { DatabaseSync } = require('node:sqlite')
 
-const SCHEMA_VERSION = 16
+const SCHEMA_VERSION = 18
 
 const migrationOne = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -1293,6 +1293,224 @@ CREATE INDEX IF NOT EXISTS idx_portable_markdown_exports_entity
   ON portable_markdown_exports(project_id, entity_kind, entity_id, exported_at DESC);
 `
 
+const migrationSeventeen = `
+CREATE TABLE IF NOT EXISTS agent_memory_items (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  kind TEXT NOT NULL CHECK (kind IN ('research_direction', 'preferred_term', 'reading_history', 'experiment_history', 'preference')),
+  content TEXT NOT NULL,
+  content_sha256 TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK (source_type IN ('user', 'project', 'paper', 'run', 'agent')),
+  source_id TEXT,
+  importance INTEGER NOT NULL DEFAULT 3 CHECK (importance BETWEEN 1 AND 5),
+  review_state TEXT NOT NULL DEFAULT 'draft' CHECK (review_state IN ('draft', 'confirmed', 'rejected', 'archived')),
+  created_by TEXT NOT NULL CHECK (created_by IN ('user', 'ai', 'system')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  UNIQUE (project_id, kind, content_sha256)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'archived')),
+  scope_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(scope_json)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_turns (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES agent_sessions(id),
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
+  content TEXT NOT NULL,
+  evidence_refs_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(evidence_refs_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_plans (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES agent_sessions(id),
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  objective TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'confirmed', 'running', 'completed', 'cancelled')),
+  created_by TEXT NOT NULL CHECK (created_by IN ('user', 'ai', 'system')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  confirmed_at TEXT,
+  completed_at TEXT
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_plan_steps (
+  id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL REFERENCES agent_plans(id),
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  position INTEGER NOT NULL CHECK (position >= 0),
+  tool_name TEXT NOT NULL CHECK (tool_name IN ('searchPaper', 'readPaper', 'extractEvidence', 'queryKnowledgeGraph', 'createTask', 'updateExperiment', 'generateReport')),
+  title TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  input_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(input_json)),
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'confirmed', 'running', 'completed', 'failed', 'dismissed')),
+  requires_confirmation INTEGER NOT NULL CHECK (requires_confirmation IN (0, 1)),
+  output_json TEXT CHECK (output_json IS NULL OR json_valid(output_json)),
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  confirmed_at TEXT,
+  completed_at TEXT,
+  UNIQUE (plan_id, position)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_tool_events (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  session_id TEXT NOT NULL REFERENCES agent_sessions(id),
+  plan_id TEXT NOT NULL REFERENCES agent_plans(id),
+  step_id TEXT NOT NULL REFERENCES agent_plan_steps(id),
+  tool_name TEXT NOT NULL,
+  event_type TEXT NOT NULL CHECK (event_type IN ('proposed', 'confirmed', 'dismissed', 'started', 'completed', 'failed')),
+  actor TEXT NOT NULL CHECK (actor IN ('user', 'ai', 'system')),
+  snapshot_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(snapshot_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_agent_memory_project
+  ON agent_memory_items(project_id, review_state, kind, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_project
+  ON agent_sessions(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_turns_session
+  ON agent_turns(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_plans_session
+  ON agent_plans(session_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_steps_plan
+  ON agent_plan_steps(plan_id, position);
+CREATE INDEX IF NOT EXISTS idx_agent_tool_events_step
+  ON agent_tool_events(step_id, created_at);
+
+CREATE TRIGGER IF NOT EXISTS agent_turns_cannot_be_updated
+BEFORE UPDATE ON agent_turns BEGIN SELECT RAISE(ABORT, 'agent turns are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS agent_turns_cannot_be_deleted
+BEFORE DELETE ON agent_turns BEGIN SELECT RAISE(ABORT, 'agent turns cannot be deleted'); END;
+CREATE TRIGGER IF NOT EXISTS agent_tool_events_cannot_be_updated
+BEFORE UPDATE ON agent_tool_events BEGIN SELECT RAISE(ABORT, 'agent tool events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS agent_tool_events_cannot_be_deleted
+BEFORE DELETE ON agent_tool_events BEGIN SELECT RAISE(ABORT, 'agent tool events cannot be deleted'); END;
+CREATE TRIGGER IF NOT EXISTS agent_plan_step_definition_is_immutable
+BEFORE UPDATE OF plan_id, position, tool_name, title, rationale, input_json, requires_confirmation ON agent_plan_steps
+BEGIN SELECT RAISE(ABORT, 'agent plan step definition is immutable'); END;
+`
+
+const migrationEighteen = `
+CREATE TABLE IF NOT EXISTS evidence_cards (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  paper_id TEXT REFERENCES bibliographic_items(id),
+  source_id TEXT NOT NULL REFERENCES sources(id),
+  source_fragment_id TEXT NOT NULL REFERENCES note_fragments(id),
+  understanding_fragment_id TEXT REFERENCES note_fragments(id),
+  page_number INTEGER CHECK (page_number IS NULL OR page_number >= 1),
+  figure_label TEXT,
+  table_label TEXT,
+  algorithm_label TEXT,
+  original_sha256 TEXT NOT NULL,
+  tags_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags_json)),
+  related_experiment_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(related_experiment_ids_json)),
+  origin TEXT NOT NULL CHECK (origin IN ('user', 'ai', 'import', 'system')),
+  review_state TEXT NOT NULL DEFAULT 'draft' CHECK (review_state IN ('draft', 'confirmed', 'rejected', 'archived')),
+  created_by TEXT NOT NULL CHECK (created_by IN ('user', 'ai', 'system')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  UNIQUE (project_id, source_fragment_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS evidence_card_events (
+  id TEXT PRIMARY KEY,
+  card_id TEXT NOT NULL REFERENCES evidence_cards(id),
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  event_type TEXT NOT NULL CHECK (event_type IN ('created', 'updated', 'confirmed', 'rejected', 'archived', 'linked')),
+  actor TEXT NOT NULL CHECK (actor IN ('user', 'ai', 'system')),
+  snapshot_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(snapshot_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS knowledge_nodes (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  node_type TEXT NOT NULL CHECK (node_type IN ('paper', 'author', 'concept', 'method', 'experiment', 'dataset', 'code', 'idea', 'claim', 'evidence')),
+  entity_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  properties_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(properties_json)),
+  origin TEXT NOT NULL CHECK (origin IN ('source', 'user', 'ai_suggestion', 'import', 'system')),
+  review_state TEXT NOT NULL DEFAULT 'draft' CHECK (review_state IN ('draft', 'confirmed', 'rejected', 'archived')),
+  created_by TEXT NOT NULL CHECK (created_by IN ('user', 'ai', 'system')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  UNIQUE (project_id, node_type, entity_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS knowledge_edges (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  from_node_id TEXT NOT NULL REFERENCES knowledge_nodes(id),
+  to_node_id TEXT NOT NULL REFERENCES knowledge_nodes(id),
+  edge_type TEXT NOT NULL CHECK (edge_type IN ('authored_by', 'mentions', 'proposes', 'uses', 'validated_by', 'derived_from', 'supports', 'contradicts', 'related_to')),
+  evidence_refs_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(evidence_refs_json)),
+  rationale TEXT NOT NULL DEFAULT '',
+  origin TEXT NOT NULL CHECK (origin IN ('source', 'user', 'ai_suggestion', 'import', 'system')),
+  review_state TEXT NOT NULL DEFAULT 'draft' CHECK (review_state IN ('draft', 'confirmed', 'rejected', 'archived')),
+  created_by TEXT NOT NULL CHECK (created_by IN ('user', 'ai', 'system')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  UNIQUE (project_id, from_node_id, to_node_id, edge_type)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS knowledge_graph_events (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  entity_kind TEXT NOT NULL CHECK (entity_kind IN ('node', 'edge')),
+  entity_id TEXT NOT NULL,
+  event_type TEXT NOT NULL CHECK (event_type IN ('created', 'confirmed', 'rejected', 'archived', 'updated', 'bootstrapped')),
+  actor TEXT NOT NULL CHECK (actor IN ('user', 'ai', 'system')),
+  snapshot_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(snapshot_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_evidence_cards_project
+  ON evidence_cards(project_id, review_state, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_nodes_project
+  ON knowledge_nodes(project_id, review_state, node_type, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_edges_project
+  ON knowledge_edges(project_id, review_state, edge_type, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_edges_from
+  ON knowledge_edges(project_id, from_node_id, review_state);
+CREATE INDEX IF NOT EXISTS idx_knowledge_edges_to
+  ON knowledge_edges(project_id, to_node_id, review_state);
+
+CREATE TRIGGER IF NOT EXISTS evidence_card_events_cannot_be_updated
+BEFORE UPDATE ON evidence_card_events BEGIN SELECT RAISE(ABORT, 'evidence card events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS evidence_card_events_cannot_be_deleted
+BEFORE DELETE ON evidence_card_events BEGIN SELECT RAISE(ABORT, 'evidence card events cannot be deleted'); END;
+CREATE TRIGGER IF NOT EXISTS knowledge_graph_events_cannot_be_updated
+BEFORE UPDATE ON knowledge_graph_events BEGIN SELECT RAISE(ABORT, 'knowledge graph events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS knowledge_graph_events_cannot_be_deleted
+BEFORE DELETE ON knowledge_graph_events BEGIN SELECT RAISE(ABORT, 'knowledge graph events cannot be deleted'); END;
+CREATE TRIGGER IF NOT EXISTS confirmed_knowledge_edge_requires_evidence_on_insert
+BEFORE INSERT ON knowledge_edges
+WHEN NEW.review_state = 'confirmed' AND json_array_length(NEW.evidence_refs_json) = 0
+BEGIN SELECT RAISE(ABORT, 'confirmed knowledge edge requires evidence'); END;
+CREATE TRIGGER IF NOT EXISTS confirmed_knowledge_edge_requires_evidence_on_update
+BEFORE UPDATE OF review_state, evidence_refs_json ON knowledge_edges
+WHEN NEW.review_state = 'confirmed' AND json_array_length(NEW.evidence_refs_json) = 0
+BEGIN SELECT RAISE(ABORT, 'confirmed knowledge edge requires evidence'); END;
+`
+
 function openWorkspaceDatabase(filePath) {
   const database = new DatabaseSync(filePath)
   database.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;')
@@ -1572,6 +1790,40 @@ function migrate(database) {
       database.exec('PRAGMA user_version = 16')
       database.exec('COMMIT')
       current = 16
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+  if (current < 17) {
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      database.exec(migrationSeventeen)
+      database.prepare('INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)').run(
+        17,
+        'persistent-research-agent-memory-plans-and-tools',
+        new Date().toISOString(),
+      )
+      database.exec('PRAGMA user_version = 17')
+      database.exec('COMMIT')
+      current = 17
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+  if (current < 18) {
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      database.exec(migrationEighteen)
+      database.prepare('INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)').run(
+        18,
+        'typed-knowledge-graph-and-evidence-cards',
+        new Date().toISOString(),
+      )
+      database.exec('PRAGMA user_version = 18')
+      database.exec('COMMIT')
+      current = 18
     } catch (error) {
       database.exec('ROLLBACK')
       throw error

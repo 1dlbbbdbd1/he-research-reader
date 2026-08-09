@@ -648,6 +648,7 @@ type DesktopStructuredReadingState = {
 }
 
 type DesktopUISettings = {
+  theme: 'light' | 'dark'
   uiScale: number
   density: 'compact' | 'comfortable'
   surfaceTone: 'neutral' | 'warm' | 'cool'
@@ -657,11 +658,159 @@ type DesktopUISettings = {
   readerWidth: number
 }
 
+type DesktopLLMProvider = {
+  id: string
+  label: string
+  shortLabel: string
+  description: string
+  baseUrl: string
+  modelPlaceholder: string
+  docsUrl: string
+  recommended: boolean
+  protocol: 'openai-compatible' | 'anthropic' | 'gemini'
+}
+
+type DesktopAIMessage = {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+type DesktopAICompletionResult = {
+  content: string
+  providerId: string
+  providerLabel: string
+  model: string
+  purpose: string
+  latencyMs: number
+  usage?: {
+    promptTokens?: number
+    completionTokens?: number
+    totalTokens?: number
+  }
+}
+
+type DesktopAgentMemory = {
+  id: string
+  kind: 'research_direction' | 'preferred_term' | 'reading_history' | 'experiment_history' | 'preference'
+  content: string
+  sourceType: 'user' | 'project' | 'paper' | 'run' | 'agent'
+  sourceId?: string
+  importance: number
+  reviewState: 'draft' | 'confirmed' | 'rejected' | 'archived'
+  createdBy: 'user' | 'ai' | 'system'
+  createdAt: string
+  updatedAt: string
+  reviewedAt?: string
+}
+
+type DesktopAgentPlanStep = {
+  id: string
+  planId: string
+  position: number
+  toolName: 'searchPaper' | 'readPaper' | 'extractEvidence' | 'queryKnowledgeGraph' | 'createTask' | 'updateExperiment' | 'generateReport'
+  title: string
+  rationale: string
+  input: Record<string, unknown>
+  status: 'proposed' | 'confirmed' | 'running' | 'completed' | 'failed' | 'dismissed'
+  requiresConfirmation: boolean
+  output?: Record<string, unknown>
+  error?: string
+  createdAt: string
+  updatedAt: string
+  confirmedAt?: string
+  completedAt?: string
+}
+
+type DesktopAgentPlan = {
+  id: string
+  sessionId: string
+  objective: string
+  status: 'draft' | 'confirmed' | 'running' | 'completed' | 'cancelled'
+  createdBy: 'user' | 'ai' | 'system'
+  steps: DesktopAgentPlanStep[]
+  createdAt: string
+  updatedAt: string
+  confirmedAt?: string
+  completedAt?: string
+}
+
+type DesktopKnowledgeNode = {
+  id: string
+  type: 'paper' | 'author' | 'concept' | 'method' | 'experiment' | 'dataset' | 'code' | 'idea' | 'claim' | 'evidence'
+  entityId: string
+  label: string
+  description: string
+  properties: Record<string, unknown>
+  origin: 'source' | 'user' | 'ai_suggestion' | 'import' | 'system'
+  reviewState: 'draft' | 'confirmed' | 'rejected' | 'archived'
+  createdBy: 'user' | 'ai' | 'system'
+  createdAt: string
+  updatedAt: string
+  reviewedAt?: string
+}
+
+type DesktopKnowledgeEvidenceRef = { type: 'bibliography' | 'source' | 'fragment' | 'evidence' | 'run' | 'artifact' | 'claim'; id: string; label?: string }
+
+type DesktopKnowledgeEdge = {
+  id: string
+  fromNodeId: string
+  toNodeId: string
+  type: 'authored_by' | 'mentions' | 'proposes' | 'uses' | 'validated_by' | 'derived_from' | 'supports' | 'contradicts' | 'related_to'
+  evidenceRefs: DesktopKnowledgeEvidenceRef[]
+  rationale: string
+  origin: DesktopKnowledgeNode['origin']
+  reviewState: DesktopKnowledgeNode['reviewState']
+  createdBy: DesktopKnowledgeNode['createdBy']
+  createdAt: string
+  updatedAt: string
+  reviewedAt?: string
+}
+
+type DesktopEvidenceCard = {
+  id: string
+  paperId?: string
+  sourceId: string
+  sourceFragmentId: string
+  understandingFragmentId?: string
+  sourceName: string
+  original: string
+  understanding: string
+  pageNumber?: number
+  figureLabel?: string
+  tableLabel?: string
+  algorithmLabel?: string
+  originalSha256: string
+  tags: string[]
+  relatedExperimentIds: string[]
+  origin: 'user' | 'ai' | 'import' | 'system'
+  reviewState: DesktopKnowledgeNode['reviewState']
+  createdBy: DesktopKnowledgeNode['createdBy']
+  createdAt: string
+  updatedAt: string
+  reviewedAt?: string
+}
+
+type DesktopPlugin = {
+  id: 'zotero' | 'arxiv' | 'github' | 'latex' | 'translation' | 'llm' | string
+  name: string
+  version: string
+  description: string
+  category: 'bibliography' | 'discovery' | 'code' | 'writing' | 'translation' | 'llm'
+  interfaceVersion: 1
+  trust: 'built-in'
+  adapter: string
+  capabilities: string[]
+  permissions: string[]
+  defaultInstalled: boolean
+  installed: boolean
+}
+
 type DesktopAppSettings = {
   ai: {
+    providerId: string
     baseUrl: string
     model: string
-    apiKey: string
+    hasCredential: boolean
     allowFullDocument: boolean
     translationProvider: 'local' | 'ai'
   }
@@ -1005,10 +1154,63 @@ interface Window {
     onLocalEmbeddingProgress(callback: (progress: LocalTranslationProgress) => void): () => void
     loadAppSettings(): Promise<DesktopAppSettings>
     saveAppSettings(input: {
-      ai: DesktopAppSettings['ai']
+      ai: DesktopAppSettings['ai'] & { apiKey?: string; clearApiKey?: boolean }
       ui: DesktopUISettings
     }): Promise<DesktopAppSettings>
+    listLLMProviders(): Promise<DesktopLLMProvider[]>
+    testLLMConnection(input: {
+      providerId: string
+      baseUrl: string
+      model: string
+      apiKey?: string
+    }): Promise<{
+      connected: true
+      providerId: string
+      providerLabel: string
+      model: string
+      baseUrl: string
+      latencyMs: number
+    }>
+    completeAI(input: {
+      purpose: 'review-document' | 'selection-assistant' | 'paper-reading-card' | 'structured-reading' | 'research-agent' | 'bilingual-translation'
+      messages: DesktopAIMessage[]
+      temperature?: number
+      maxTokens?: number
+    }): Promise<DesktopAICompletionResult>
+    listAgentTools(): Promise<Array<{ name: DesktopAgentPlanStep['toolName']; label: string; description: string; readOnly: boolean; requiresConfirmation: boolean }>>
+    listAgentMemory(): Promise<DesktopAgentMemory[]>
+    saveAgentMemory(input: { kind: DesktopAgentMemory['kind']; content: string; sourceType?: DesktopAgentMemory['sourceType']; sourceId?: string; importance?: number; createdBy?: 'user' | 'ai' | 'system' }): Promise<DesktopAgentMemory>
+    reviewAgentMemory(input: { id: string; decision: 'confirm' | 'reject' | 'archive' }): Promise<DesktopAgentMemory>
+    createAgentSession(input: { title?: string; scope?: Record<string, unknown> }): Promise<{ id: string; title: string; status: string; scope: Record<string, unknown>; createdAt: string; updatedAt: string }>
+    getAgentSession(input: { sessionId: string }): Promise<{ id: string; title: string; status: string; scope: Record<string, unknown>; turns: Array<{ id: string; role: 'user' | 'assistant' | 'tool'; content: string; evidenceRefs: unknown[]; createdAt: string }>; plans: DesktopAgentPlan[]; createdAt: string; updatedAt: string }>
+    proposeAgentPlan(input: { sessionId?: string; objective: string; scope?: Record<string, unknown> }): Promise<DesktopAgentPlan>
+    getAgentPlan(input: { planId: string }): Promise<DesktopAgentPlan>
+    reviewAgentStep(input: { stepId: string; decision: 'confirm' | 'dismiss' }): Promise<DesktopAgentPlan>
+    executeAgentPlan(input: { planId: string }): Promise<{ plan: DesktopAgentPlan; results: Array<{ stepId: string; toolName: string; output: unknown }>; waitingForConfirmation: string[] }>
+    executeAgentStep(input: { stepId: string }): Promise<{ stepId: string; toolName: string; output: unknown }>
+    bootstrapKnowledgeGraph(): Promise<{ createdNodes: number; createdEdges: number; createdCards: number; graph: { nodes: DesktopKnowledgeNode[]; edges: DesktopKnowledgeEdge[]; summary: Record<string, number> } }>
+    getKnowledgeGraph(input?: { includeArchived?: boolean; reviewStates?: DesktopKnowledgeNode['reviewState'][] }): Promise<{ nodes: DesktopKnowledgeNode[]; edges: DesktopKnowledgeEdge[]; summary: { nodes: number; edges: number; draftNodes: number; draftEdges: number } }>
+    proposeKnowledgeNode(input: { type: DesktopKnowledgeNode['type']; label: string; description?: string; properties?: Record<string, unknown>; entityId?: string; createdBy?: 'user' | 'ai' }): Promise<DesktopKnowledgeNode>
+    proposeKnowledgeEdge(input: { fromNodeId: string; toNodeId: string; type: DesktopKnowledgeEdge['type']; evidenceRefs?: DesktopKnowledgeEvidenceRef[]; rationale?: string; createdBy?: 'user' | 'ai' }): Promise<DesktopKnowledgeEdge>
+    reviewKnowledgeNode(input: { id: string; decision: 'confirm' | 'reject' | 'archive' }): Promise<DesktopKnowledgeNode>
+    reviewKnowledgeEdge(input: { id: string; decision: 'confirm' | 'reject' | 'archive'; evidenceRefs?: DesktopKnowledgeEvidenceRef[] }): Promise<DesktopKnowledgeEdge>
+    listEvidenceCards(input?: { reviewState?: DesktopEvidenceCard['reviewState'] }): Promise<DesktopEvidenceCard[]>
+    createEvidenceCard(input: { sourceFragmentId: string; understanding?: string; tags?: string[]; relatedExperimentIds?: string[]; pageNumber?: number; figureLabel?: string; tableLabel?: string; algorithmLabel?: string; createdBy?: 'user' | 'ai'; aiProvenance?: Record<string, unknown> }): Promise<DesktopEvidenceCard>
+    updateEvidenceCard(input: { id: string; understanding?: string; tags?: string[]; relatedExperimentIds?: string[]; createdBy?: 'user' | 'ai'; aiProvenance?: Record<string, unknown> }): Promise<DesktopEvidenceCard>
+    reviewEvidenceCard(input: { id: string; decision: 'confirm' | 'reject' | 'archive' }): Promise<DesktopEvidenceCard>
     writeClipboardText(input: { text: string }): Promise<{ written: true; characterCount: number }>
+    listCitationStyles(): Promise<Array<{ id: 'gb-t-7714-2015' | 'apa-7' | 'ieee' | 'bibtex'; label: string }>>
+    formatCitation(input: { itemId: string; style: 'gb-t-7714-2015' | 'apa-7' | 'ieee' | 'bibtex'; sequence?: number }): Promise<{
+      standard: string
+      styleId: string
+      documentType: string
+      text: string
+      missingFields: Array<{ field: string; label: string }>
+      incomplete: boolean
+    }>
+    listPlugins(): Promise<DesktopPlugin[]>
+    installPlugin(input: { id: string }): Promise<DesktopPlugin>
+    uninstallPlugin(input: { id: string }): Promise<DesktopPlugin>
     listRecentWorkspaces(): Promise<WorkspaceSummary[]>
     getCurrentWorkspace(): Promise<WorkspaceSummary | undefined>
     createWorkspace(input: { name: string }): Promise<WorkspaceDialogResult>
@@ -1016,6 +1218,24 @@ interface Window {
     createWorkspaceInSelectedFolder(input: { creationRequestId: string; name: string; manageExistingPapers?: boolean }): Promise<WorkspaceDialogResult>
     switchWorkspace(input: { id: string }): Promise<WorkspaceSummary>
     loadWorkspaceLibrary(): Promise<WorkspaceLibraryState>
+    rebuildPortableVault(): Promise<{
+      vaultFormatVersion: number
+      generatedAt: string
+      counts: Record<string, number>
+      files: string[]
+    }>
+    listMigrationBackups(): Promise<Array<{
+      id: string
+      sourceVersion: number
+      targetVersion: number
+      createdAt: string
+      databaseSha256: string
+      files: string[]
+      status: 'rollback-ready'
+      valid: boolean
+      directory: string
+    }>>
+    openCurrentVaultFolder(): Promise<{ opened: true }>
     getStructuredReading(input: { sourceId: string }): Promise<DesktopStructuredReadingState>
     generateStructuredReading(input: {
       sourceId: string
@@ -1274,6 +1494,16 @@ interface Window {
       revisionHash: string
       format: 'markdown' | 'docx'
       exportedAt: string
+    }>
+    exportReviewLatexPackage(input: { documentId: string; compilePdf?: boolean }): Promise<{
+      directory: string
+      sourcePath: string
+      texPath: string
+      bibPath: string
+      compiled: boolean
+      pdfPath?: string
+      reason?: string
+      generatedAt: string
     }>
     showReviewExport(input: { filePath: string }): Promise<void>
     resolveDeepLink(input: {

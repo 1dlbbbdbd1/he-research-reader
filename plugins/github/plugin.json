@@ -1,0 +1,13 @@
+{
+  "id": "github",
+  "name": "GitHub 代码关联",
+  "version": "1.0.0",
+  "description": "把用户确认的仓库或提交链接登记为研究代码证据。",
+  "category": "code",
+  "interfaceVersion": 1,
+  "trust": "built-in",
+  "adapter": "github-code-evidence",
+  "capabilities": ["code.link", "code.metadata-preview"],
+  "permissions": ["network:github"],
+  "defaultInstalled": false
+}

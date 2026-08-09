@@ -40,12 +40,53 @@ test('研究库会创建固定目录、清单和当前数据模型', () => {
     assert.ok(fs.existsSync(path.join(vault.path, 'papers')))
     assert.ok(fs.existsSync(path.join(vault.path, 'exports')))
     assert.ok(fs.existsSync(path.join(vault.path, '.reader-cache')))
+    for (const directory of ['database', 'notes', 'evidence', 'experiments', 'datasets', 'reports', 'attachments', 'config']) {
+      assert.ok(fs.existsSync(path.join(vault.path, directory)), `missing vault directory ${directory}`)
+    }
+    assert.ok(fs.existsSync(path.join(vault.path, 'VAULT_INDEX.generated.md')))
+    assert.equal(JSON.parse(fs.readFileSync(path.join(vault.path, 'vault.json'), 'utf8')).vaultFormatVersion, 2)
 
     const schema = fixture.service.inspectSchema()
-    assert.equal(schema.schemaVersion, 16)
-    for (const table of ['bibliographic_items', 'bibliographic_external_refs', 'bibliographic_sync_runs', 'portable_markdown_exports', 'note_fragments', 'fragment_relation_events', 'review_documents', 'review_blocks', 'review_citations', 'action_packs', 'action_items', 'action_item_evidence', 'action_item_research_evidence', 'action_pack_events', 'migration_runs', 'migration_map', 'bibliographic_reading_states', 'reading_state_events', 'search_index_state', 'library_search_fts', 'annotation_events', 'annotation_exports', 'semantic_index_state', 'semantic_chunks', 'research_records', 'research_project_history', 'research_milestones', 'research_run_templates', 'research_runs', 'research_artifacts', 'reading_translation_segments', 'reading_translation_overrides', 'reading_translation_terms', 'research_reports', 'research_report_revisions', 'research_report_exports', 'research_claims', 'research_claim_revisions', 'structured_reading_documents', 'structured_reading_versions', 'research_resume_state', 'research_resume_events', 'research_tasks', 'research_task_events']) {
+    assert.equal(schema.schemaVersion, 18)
+    for (const table of ['bibliographic_items', 'bibliographic_external_refs', 'bibliographic_sync_runs', 'portable_markdown_exports', 'note_fragments', 'fragment_relation_events', 'review_documents', 'review_blocks', 'review_citations', 'action_packs', 'action_items', 'action_item_evidence', 'action_item_research_evidence', 'action_pack_events', 'migration_runs', 'migration_map', 'bibliographic_reading_states', 'reading_state_events', 'search_index_state', 'library_search_fts', 'annotation_events', 'annotation_exports', 'semantic_index_state', 'semantic_chunks', 'research_records', 'research_project_history', 'research_milestones', 'research_run_templates', 'research_runs', 'research_artifacts', 'reading_translation_segments', 'reading_translation_overrides', 'reading_translation_terms', 'research_reports', 'research_report_revisions', 'research_report_exports', 'research_claims', 'research_claim_revisions', 'structured_reading_documents', 'structured_reading_versions', 'research_resume_state', 'research_resume_events', 'research_tasks', 'research_task_events', 'agent_memory_items', 'agent_sessions', 'agent_turns', 'agent_plans', 'agent_plan_steps', 'agent_tool_events', 'evidence_cards', 'evidence_card_events', 'knowledge_nodes', 'knowledge_edges', 'knowledge_graph_events']) {
       assert.ok(schema.tables.includes(table), `missing ${table}`)
     }
+  } finally {
+    fixture.close()
+  }
+})
+
+test('Research Vault v2 投影可重复重建且不覆盖用户文件', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, '可携带研究库')
+    const userReadme = path.join(vault.path, 'notes', 'README.md')
+    fs.writeFileSync(userReadme, '# 我的笔记约定\n', 'utf8')
+    fs.writeFileSync(path.join(vault.path, 'notes', '我的想法.md'), '# 不受软件管理\n', 'utf8')
+    fixture.service.saveResearchRecord({
+      recordType: 'dataset',
+      title: '刚度扰动原始数据',
+      content: '采样频率 1000 Hz；保留原始 CSV。',
+      status: 'active',
+      occurredAt: '2026-08-09T08:00:00+08:00',
+      filePath: 'E:\\data\\stiffness.csv',
+      tags: ['raw', 'assembly'],
+    })
+
+    const first = fixture.service.rebuildVaultProjections()
+    const second = fixture.service.rebuildVaultProjections()
+    assert.equal(first.vaultFormatVersion, 2)
+    assert.deepEqual(second.counts, first.counts)
+    assert.equal(second.counts.datasets, 1)
+    assert.equal(fs.readFileSync(userReadme, 'utf8'), '# 我的笔记约定\n')
+    assert.equal(fs.readFileSync(path.join(vault.path, 'notes', '我的想法.md'), 'utf8'), '# 不受软件管理\n')
+    assert.match(fs.readFileSync(path.join(vault.path, 'datasets', 'index.generated.md'), 'utf8'), /刚度扰动原始数据/)
+    assert.match(fs.readFileSync(path.join(vault.path, 'datasets', 'index.generated.md'), 'utf8'), /E:\\data\\stiffness\.csv/)
+    assert.match(fs.readFileSync(path.join(vault.path, 'VAULT_INDEX.generated.md'), 'utf8'), /Research Vault v2/)
+    const schema = JSON.parse(fs.readFileSync(path.join(vault.path, 'database', 'schema.generated.json'), 'utf8'))
+    assert.equal(schema.database, '../library.sqlite')
+    assert.equal(schema.schemaVersion, 18)
+    assert.ok(schema.tables.includes('research_records'))
   } finally {
     fixture.close()
   }
@@ -90,7 +131,7 @@ test('普通文件夹里的现有 PDF 可按用户确认一键复制纳入研究
   }
 })
 
-test('已发布的 v1 研究库会事务升级到 v16，并同步清单版本', () => {
+test('已发布的 v1 研究库会事务升级到 v18，并同步清单版本', () => {
   const fixture = withService()
   try {
     const vault = fixture.service.create(fixture.root, '升级测试')
@@ -152,7 +193,7 @@ test('已发布的 v1 研究库会事务升级到 v16，并同步清单版本', 
         ALTER TABLE bibliographic_items DROP COLUMN accessed;
         ALTER TABLE bibliographic_items DROP COLUMN publisher;
         ALTER TABLE bibliographic_items DROP COLUMN publisher_place;
-        DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16);
+        DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18);
         PRAGMA user_version = 1;
       `)
     } finally {
@@ -165,7 +206,7 @@ test('已发布的 v1 研究库会事务升级到 v16，并同步清单版本', 
 
     fixture.service.open(vault.path)
     const schema = fixture.service.inspectSchema()
-    assert.equal(schema.schemaVersion, 16)
+    assert.equal(schema.schemaVersion, 18)
     assert.ok(schema.tables.includes('bibliographic_reading_states'))
     assert.ok(schema.tables.includes('reading_state_events'))
     assert.ok(schema.tables.includes('library_search_fts'))
@@ -195,7 +236,7 @@ test('已发布的 v1 研究库会事务升级到 v16，并同步清单版本', 
     assert.ok(projectColumns.includes('current_hypothesis'))
     assert.ok(projectColumns.includes('stage'))
     assert.ok(projectColumns.includes('mode'))
-    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 18)
   } finally {
     fixture.close()
   }
@@ -339,7 +380,7 @@ test('科研记录校验输入并阻止跨课题覆盖和关联', () => {
   }
 })
 
-test('已发布的 v8 研究库会原位升级到 v16 并获得通用工科数据表和内置模板', () => {
+test('已发布的 v8 研究库会原位升级到 v18 并获得通用工科数据表和内置模板', () => {
   const fixture = withService()
   try {
     const vault = fixture.service.create(fixture.root, 'v8 升级测试')
@@ -372,7 +413,7 @@ test('已发布的 v8 研究库会原位升级到 v16 并获得通用工科数�
         ALTER TABLE bibliographic_items DROP COLUMN accessed;
         ALTER TABLE bibliographic_items DROP COLUMN publisher;
         ALTER TABLE bibliographic_items DROP COLUMN publisher_place;
-        DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16);
+        DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18);
         PRAGMA user_version = 8;
       `)
     } finally {
@@ -385,19 +426,19 @@ test('已发布的 v8 研究库会原位升级到 v16 并获得通用工科数�
 
     fixture.service.open(vault.path)
     const workspace = fixture.service.getResearchWorkspace()
-    assert.equal(fixture.service.inspectSchema().schemaVersion, 16)
+    assert.equal(fixture.service.inspectSchema().schemaVersion, 18)
     assert.equal(workspace.project.mode, 'exploration')
     assert.deepEqual(
       new Set(workspace.runTemplates.filter(template => template.builtIn).map(template => template.category)),
       new Set(['general', 'ros', 'python', 'data-analysis', 'simulation', 'physical']),
     )
-    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 18)
   } finally {
     fixture.close()
   }
 })
 
-test('已发布的 v9 研究库会事务升级到 v16 并获得报告、论文论断、引用、结构化阅读、现场恢复、统一任务与翻译状态模型', () => {
+test('已发布的 v9 研究库会事务升级到 v18 并获得报告、论文论断、引用、结构化阅读、现场恢复、统一任务、Agent、知识图谱与翻译状态模型', () => {
   const fixture = withService()
   try {
     const vault = fixture.service.create(fixture.root, 'v9 升级测试')
@@ -422,7 +463,7 @@ test('已发布的 v9 研究库会事务升级到 v16 并获得报告、论文�
         ALTER TABLE bibliographic_items DROP COLUMN accessed;
         ALTER TABLE bibliographic_items DROP COLUMN publisher;
         ALTER TABLE bibliographic_items DROP COLUMN publisher_place;
-        DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16);
+        DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18);
         PRAGMA user_version = 9;
       `)
     } finally {
@@ -435,7 +476,7 @@ test('已发布的 v9 研究库会事务升级到 v16 并获得报告、论文�
 
     fixture.service.open(vault.path)
     const schema = fixture.service.inspectSchema()
-    assert.equal(schema.schemaVersion, 16)
+    assert.equal(schema.schemaVersion, 18)
     assert.ok(schema.tables.includes('research_reports'))
     assert.ok(schema.tables.includes('research_report_revisions'))
     assert.ok(schema.tables.includes('research_report_exports'))
@@ -444,13 +485,13 @@ test('已发布的 v9 研究库会事务升级到 v16 并获得报告、论文�
     const workspace = fixture.service.getResearchWorkspace()
     assert.deepEqual(workspace.reports, [])
     assert.deepEqual(workspace.claims, [])
-    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 18)
   } finally {
     fixture.close()
   }
 })
 
-test('schema v10 研究库原位升级到 v16 后获得引用出版项且不改写既有题录', () => {
+test('schema v10 研究库原位升级到 v18 后获得引用出版项且不改写既有题录', () => {
   const fixture = withService()
   try {
     const vault = fixture.service.create(fixture.root, 'v10 引用迁移测试')
@@ -478,7 +519,7 @@ test('schema v10 研究库原位升级到 v16 后获得引用出版项且不改�
         ALTER TABLE bibliographic_items DROP COLUMN accessed;
         ALTER TABLE bibliographic_items DROP COLUMN publisher;
         ALTER TABLE bibliographic_items DROP COLUMN publisher_place;
-        DELETE FROM schema_migrations WHERE version IN (11, 12, 13, 14, 15, 16);
+        DELETE FROM schema_migrations WHERE version IN (11, 12, 13, 14, 15, 16, 17, 18);
         PRAGMA user_version = 10;
       `)
     } finally {
@@ -490,7 +531,7 @@ test('schema v10 研究库原位升级到 v16 后获得引用出版项且不改�
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
 
     fixture.service.open(vault.path)
-    assert.equal(fixture.service.inspectSchema().schemaVersion, 16)
+    assert.equal(fixture.service.inspectSchema().schemaVersion, 18)
     const columns = fixture.service.database.prepare('PRAGMA table_info(bibliographic_items)').all().map(row => row.name)
     assert.ok(columns.includes('accessed'))
     assert.ok(columns.includes('publisher'))
@@ -501,7 +542,7 @@ test('schema v10 研究库原位升级到 v16 后获得引用出版项且不改�
   }
 })
 
-test('schema v11 研究库事务升级到 v16 并创建结构化阅读、现场恢复、统一任务与翻译状态表', () => {
+test('schema v11 研究库事务升级到 v18 并创建结构化阅读、现场恢复、统一任务、Agent、知识图谱与翻译状态表', () => {
   const fixture = withService()
   try {
     const vault = fixture.service.create(fixture.root, 'v11 结构化阅读迁移测试')
@@ -520,7 +561,7 @@ test('schema v11 研究库事务升级到 v16 并创建结构化阅读、现场�
         DROP TABLE research_resume_state;
         DROP TABLE structured_reading_versions;
         DROP TABLE structured_reading_documents;
-        DELETE FROM schema_migrations WHERE version IN (12, 13, 14, 15, 16);
+        DELETE FROM schema_migrations WHERE version IN (12, 13, 14, 15, 16, 17, 18);
         PRAGMA user_version = 11;
       `)
     } finally {
@@ -533,7 +574,7 @@ test('schema v11 研究库事务升级到 v16 并创建结构化阅读、现场�
 
     fixture.service.open(vault.path)
     const schema = fixture.service.inspectSchema()
-    assert.equal(schema.schemaVersion, 16)
+    assert.equal(schema.schemaVersion, 18)
     assert.ok(schema.tables.includes('structured_reading_documents'))
     assert.ok(schema.tables.includes('structured_reading_versions'))
     assert.ok(schema.tables.includes('research_resume_state'))
@@ -544,7 +585,7 @@ test('schema v11 研究库事务升级到 v16 并创建结构化阅读、现场�
   }
 })
 
-test('schema v12 研究库事务升级到 v16 并创建只追加现场、任务事件与翻译状态', () => {
+test('schema v12 研究库事务升级到 v18 并创建只追加现场、任务、Agent、知识图谱事件与翻译状态', () => {
   const fixture = withService()
   try {
     const vault = fixture.service.create(fixture.root, 'v12 现场恢复迁移测试')
@@ -561,7 +602,7 @@ test('schema v12 研究库事务升级到 v16 并创建只追加现场、任务�
         DROP TABLE research_tasks;
         DROP TABLE research_resume_events;
         DROP TABLE research_resume_state;
-        DELETE FROM schema_migrations WHERE version IN (13, 14, 15, 16);
+        DELETE FROM schema_migrations WHERE version IN (13, 14, 15, 16, 17, 18);
         PRAGMA user_version = 12;
       `)
     } finally {
@@ -574,18 +615,18 @@ test('schema v12 研究库事务升级到 v16 并创建只追加现场、任务�
 
     fixture.service.open(vault.path)
     const schema = fixture.service.inspectSchema()
-    assert.equal(schema.schemaVersion, 16)
+    assert.equal(schema.schemaVersion, 18)
     assert.ok(schema.tables.includes('research_resume_state'))
     assert.ok(schema.tables.includes('research_resume_events'))
     assert.ok(schema.tables.includes('research_tasks'))
     assert.ok(schema.tables.includes('research_task_events'))
-    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 18)
   } finally {
     fixture.close()
   }
 })
 
-test('schema v13 研究库事务升级到 v16 并保留现场状态', () => {
+test('schema v13 研究库事务升级到 v18 并保留现场状态', () => {
   const fixture = withService()
   try {
     const vault = fixture.service.create(fixture.root, 'v13 统一任务迁移测试')
@@ -602,7 +643,7 @@ test('schema v13 研究库事务升级到 v16 并保留现场状态', () => {
         DROP TABLE reading_translation_overrides;
         DROP TABLE research_task_events;
         DROP TABLE research_tasks;
-        DELETE FROM schema_migrations WHERE version IN (14, 15, 16);
+        DELETE FROM schema_migrations WHERE version IN (14, 15, 16, 17, 18);
         PRAGMA user_version = 13;
       `)
     } finally {
@@ -614,16 +655,16 @@ test('schema v13 研究库事务升级到 v16 并保留现场状态', () => {
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
 
     fixture.service.open(vault.path)
-    assert.equal(fixture.service.inspectSchema().schemaVersion, 16)
+    assert.equal(fixture.service.inspectSchema().schemaVersion, 18)
     assert.equal(fixture.service.getResearchResume().activeView, 'research-workspace')
     assert.ok(fixture.service.inspectSchema().tables.includes('research_tasks'))
-    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 18)
   } finally {
     fixture.close()
   }
 })
 
-test('schema v14 研究库原位升级到 v16 并保留既有翻译缓存', () => {
+test('schema v14 研究库原位升级到 v18 并保留既有翻译缓存', () => {
   const fixture = withService()
   try {
     const vault = fixture.service.create(fixture.root, 'v14 翻译状态迁移测试')
@@ -647,7 +688,7 @@ test('schema v14 研究库原位升级到 v16 并保留既有翻译缓存', () =
         DROP TABLE bibliographic_external_refs;
         DROP TABLE reading_translation_terms;
         DROP TABLE reading_translation_overrides;
-        DELETE FROM schema_migrations WHERE version IN (15, 16);
+        DELETE FROM schema_migrations WHERE version IN (15, 16, 17, 18);
         PRAGMA user_version = 14;
       `)
     } finally {
@@ -659,20 +700,20 @@ test('schema v14 研究库原位升级到 v16 并保留既有翻译缓存', () =
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
 
     fixture.service.open(vault.path)
-    assert.equal(fixture.service.inspectSchema().schemaVersion, 16)
+    assert.equal(fixture.service.inspectSchema().schemaVersion, 18)
     assert.ok(fixture.service.inspectSchema().tables.includes('reading_translation_overrides'))
     assert.ok(fixture.service.inspectSchema().tables.includes('reading_translation_terms'))
     const restored = fixture.service.getReadingTranslationSegments({
       sourceId: 'v14-translation-source', segments: [{ segmentId: 'segment-1', sourceHash: hash }],
     })
     assert.equal(restored.segments[0].translatedText, '既有翻译缓存仍可读取。')
-    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 18)
   } finally {
     fixture.close()
   }
 })
 
-test('schema v15 研究库原位升级到 v16 并增加 Zotero 边界与可迁移导出记录', () => {
+test('schema v15 研究库原位升级到 v18 并增加 Zotero、Agent、知识图谱边界与可迁移导出记录', () => {
   const fixture = withService()
   try {
     const vault = fixture.service.create(fixture.root, 'v15 兼容接口迁移测试')
@@ -683,7 +724,7 @@ test('schema v15 研究库原位升级到 v16 并增加 Zotero 边界与可迁�
         DROP TABLE portable_markdown_exports;
         DROP TABLE bibliographic_sync_runs;
         DROP TABLE bibliographic_external_refs;
-        DELETE FROM schema_migrations WHERE version = 16;
+        DELETE FROM schema_migrations WHERE version IN (16, 17, 18);
         PRAGMA user_version = 15;
       `)
     } finally {
@@ -696,11 +737,101 @@ test('schema v15 研究库原位升级到 v16 并增加 Zotero 边界与可迁�
 
     fixture.service.open(vault.path)
     const schema = fixture.service.inspectSchema()
-    assert.equal(schema.schemaVersion, 16)
+    assert.equal(schema.schemaVersion, 18)
     assert.ok(schema.tables.includes('bibliographic_external_refs'))
     assert.ok(schema.tables.includes('bibliographic_sync_runs'))
     assert.ok(schema.tables.includes('portable_markdown_exports'))
-    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 16)
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 18)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('schema v16 研究库事务升级到 v18 并新增持久化 Agent 与知识图谱审计模型', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, 'v16 Agent 升级测试')
+    fixture.service.close()
+    const database = new DatabaseSync(path.join(vault.path, 'library.sqlite'))
+    try {
+      database.exec(`
+        DROP TABLE knowledge_graph_events;
+        DROP TABLE knowledge_edges;
+        DROP TABLE knowledge_nodes;
+        DROP TABLE evidence_card_events;
+        DROP TABLE evidence_cards;
+        DROP TABLE agent_tool_events;
+        DROP TABLE agent_plan_steps;
+        DROP TABLE agent_plans;
+        DROP TABLE agent_turns;
+        DROP TABLE agent_sessions;
+        DROP TABLE agent_memory_items;
+        DELETE FROM schema_migrations WHERE version IN (17, 18);
+        PRAGMA user_version = 16;
+      `)
+    } finally {
+      database.close()
+    }
+    const manifestPath = path.join(vault.path, 'vault.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.schemaVersion = 16
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+
+    fixture.service.open(vault.path)
+    const schema = fixture.service.inspectSchema()
+    assert.equal(schema.schemaVersion, 18)
+    for (const table of ['agent_memory_items', 'agent_sessions', 'agent_turns', 'agent_plans', 'agent_plan_steps', 'agent_tool_events']) {
+      assert.ok(schema.tables.includes(table), `missing ${table}`)
+    }
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 18)
+  } finally {
+    fixture.close()
+  }
+})
+
+test('schema v17 研究库原位升级到 v18 后新增 Evidence Card 与知识图谱且迁移幂等', () => {
+  const fixture = withService()
+  try {
+    const vault = fixture.service.create(fixture.root, 'v17 知识图谱升级测试')
+    fixture.service.close()
+    const database = new DatabaseSync(path.join(vault.path, 'library.sqlite'))
+    try {
+      database.exec(`
+        DROP TABLE knowledge_graph_events;
+        DROP TABLE knowledge_edges;
+        DROP TABLE knowledge_nodes;
+        DROP TABLE evidence_card_events;
+        DROP TABLE evidence_cards;
+        DELETE FROM schema_migrations WHERE version = 18;
+        PRAGMA user_version = 17;
+      `)
+    } finally {
+      database.close()
+    }
+    const manifestPath = path.join(vault.path, 'vault.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.schemaVersion = 17
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+
+    fixture.service.open(vault.path)
+    let schema = fixture.service.inspectSchema()
+    assert.equal(schema.schemaVersion, 18)
+    for (const table of ['evidence_cards', 'evidence_card_events', 'knowledge_nodes', 'knowledge_edges', 'knowledge_graph_events']) {
+      assert.ok(schema.tables.includes(table), `missing ${table}`)
+    }
+    let backups = fixture.service.listMigrationBackups()
+    assert.equal(backups.length, 1)
+    assert.equal(backups[0].sourceVersion, 17)
+    assert.equal(backups[0].targetVersion, 18)
+    assert.equal(backups[0].valid, true)
+    fixture.service.close()
+    fixture.service.open(vault.path)
+    schema = fixture.service.inspectSchema()
+    assert.equal(schema.schemaVersion, 18)
+    backups = fixture.service.listMigrationBackups()
+    assert.equal(backups.length, 1)
+    assert.equal(fixture.service.database.prepare('SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 18').get().count, 1)
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).schemaVersion, 18)
   } finally {
     fixture.close()
   }
@@ -2445,6 +2576,16 @@ test('复查文档严格分离证据、用户笔记和 AI 整理，并导出可�
     assert.doesNotMatch(markdownText, /没有证据的推断/)
     const word = await fixture.service.exportReviewDocument({ documentId: document.id, format: 'docx' })
     assert.equal(fs.readFileSync(word.filePath).subarray(0, 2).toString(), 'PK')
+    const latex = fixture.service.exportReviewLatexPackage({ documentId: document.id, compilePdf: false })
+    assert.equal(latex.compiled, false)
+    assert.match(fs.readFileSync(latex.texPath, 'utf8'), /\\bibliography\{references\}/)
+    assert.match(fs.readFileSync(latex.bibPath, 'utf8'), /@article\{/)
+    assert.match(fs.readFileSync(latex.sourcePath, 'utf8'), /research-reader:\/\/open\?sourceId=/)
+    const apa = fixture.service.formatCitation({ itemId: items[0].id, style: 'apa-7' })
+    const ieee = fixture.service.formatCitation({ itemId: items[0].id, style: 'ieee', sequence: 1 })
+    assert.equal(apa.styleId, 'apa-7')
+    assert.equal(ieee.styleId, 'ieee')
+    assert.equal(fixture.service.listCitationStyles().length, 4)
     assert.equal(fixture.service.database.prepare('SELECT count(*) AS count FROM export_records').get().count, 2)
     assert.throws(
       () => fixture.service.exportPortableMarkdown({ kind: 'review_document', id: document.id, directory: fixture.root }),

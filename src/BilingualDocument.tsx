@@ -18,13 +18,15 @@ import {
   type BilingualReadingDocument as BilingualDocumentState,
   type BilingualSegment,
 } from './bilingual-reading.mjs'
+import { completeAI, hasConfiguredAI } from './ai-client'
 
 const BILINGUAL_RENDER_CHUNK = 90
 
 type BilingualSettings = {
+  providerId: string
   baseUrl: string
   model: string
-  apiKey: string
+  hasCredential: boolean
   allowFullDocument: boolean
   translationProvider: 'local' | 'ai'
 }
@@ -261,22 +263,16 @@ export default function BilingualDocument({
       const result = await desktop.translateLocally({ taskId: crypto.randomUUID(), text: segment.translationSource, from: 'en', to: 'zh' })
       return result.text
     }
-    if (!settings.baseUrl || !settings.model || !settings.apiKey) throw new Error('尚未配置可用的 AI 翻译服务。')
-    const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.apiKey}` },
-      body: JSON.stringify({
-        model: settings.model,
-        temperature: 0,
-        messages: [
-          { role: 'system', content: `忠实翻译英文工科论文段落为中文。保留 Markdown、公式、变量、数值、单位、引用编号和行内代码；不要总结、解释或增加原文没有的结论；只返回译文。${terms.length ? `\n术语表（必须优先使用）：\n${terms.map(term => `${term.sourceTerm} = ${term.targetTerm}`).join('\n')}` : ''}` },
-          { role: 'user', content: segment.translationSource },
-        ],
-      }),
+    if (!hasConfiguredAI(settings)) throw new Error('尚未配置可用的 AI 翻译服务。')
+    const result = await completeAI({
+      purpose: 'bilingual-translation',
+      temperature: 0,
+      messages: [
+        { role: 'system', content: `忠实翻译英文工科论文段落为中文。保留 Markdown、公式、变量、数值、单位、引用编号和行内代码；不要总结、解释或增加原文没有的结论；只返回译文。${terms.length ? `\n术语表（必须优先使用）：\n${terms.map(term => `${term.sourceTerm} = ${term.targetTerm}`).join('\n')}` : ''}` },
+        { role: 'user', content: segment.translationSource },
+      ],
     })
-    if (!response.ok) throw new Error(`AI 翻译服务返回 ${response.status}`)
-    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
-    const translated = data.choices?.[0]?.message?.content?.trim()
+    const translated = result.content.trim()
     if (!translated) throw new Error('AI 没有返回译文。')
     return translated
   }
@@ -331,7 +327,7 @@ export default function BilingualDocument({
     if (provider === 'local') {
       const status = await desktop.getLocalTranslationStatus({ from: 'en', to: 'zh' })
       if (!status.available) { setNotice(`${status.message} 请先安装本地翻译组件。`); return }
-    } else if (!settings.allowFullDocument || !settings.model || !settings.apiKey) {
+    } else if (!settings.allowFullDocument || !hasConfiguredAI(settings)) {
       setNotice('云端翻译尚未获得发送许可或 Provider 配置不完整。')
       return
     }
@@ -452,7 +448,7 @@ export default function BilingualDocument({
     </header>
     {confirmCloud && <section className="bilingual-cloud-confirm">
       <WifiOff size={18}/><div><strong>确认发送这次翻译范围？</strong><p>范围：{cloudSegments} 段 / {cloudCharacters} 字符 · Provider：{cloudProviderLabel} · 模型：{settings.model || '未配置'}。只发送用于翻译的派生文本；PDF、批注、其他段落和其他研究库内容不会上传。</p></div>
-      <button onClick={() => setConfirmCloud(undefined)}>取消</button><button className="confirm" disabled={!settings.allowFullDocument || !settings.model || !settings.apiKey} onClick={() => cloudTarget ? void retryOneSegment(cloudTarget.id) : void translateAll()}>确认并发送</button>
+      <button onClick={() => setConfirmCloud(undefined)}>取消</button><button className="confirm" disabled={!settings.allowFullDocument || !hasConfiguredAI(settings)} onClick={() => cloudTarget ? void retryOneSegment(cloudTarget.id) : void translateAll()}>确认并发送</button>
     </section>}
     <div className="bilingual-status"><span>{notice}</span><div>
       <b className={`translation-location ${provider}`}>{provider === 'local' ? <><HardDrive/>本机处理 · 无 Token</> : <><Cloud/>云端发送 · {settings.model || '模型未配置'}</>}</b>

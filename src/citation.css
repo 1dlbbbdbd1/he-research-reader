@@ -115,12 +115,13 @@
 .citation-missing-fields p { margin: 5px 0 0; color: #7a746c; font-size: var(--ui-text-xs, 13px); }
 .citation-dialog > label { display: block; margin: 17px 21px; color: #4b5360; font-size: var(--ui-text-xs, 13px); font-weight: 750; }
 .citation-dialog textarea { width: 100%; min-height: 112px; margin-top: 7px; padding: 12px; resize: vertical; border: 1px solid #cbc3db; border-radius: 9px; background: #faf9fc; color: #222937; font-family: Georgia, "Noto Serif SC", serif; font-size: 13px; line-height: 1.7; }
+.citation-dialog select { width: 100%; min-height: 38px; margin-top: 7px; padding: 8px 10px; border: 1px solid #cbc3db; border-radius: 9px; background: #fff; color: #222937; font-size: var(--ui-text-sm, 14px); }
 .citation-dialog textarea:focus { border-color: #7454a8; outline: 3px solid rgba(116, 84, 168, .13); }
 .citation-dialog dl { margin: 0 21px 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid #ece9f0; border-radius: 8px; background: #ece9f0; }
 .citation-dialog dl div { min-width: 0; padding: 9px 11px; background: #fff; }
 .citation-dialog dt { color: #8a8f98; font-size: var(--ui-text-xs, 13px); }
 .citation-dialog dd { margin: 3px 0 0; overflow-wrap: anywhere; color: #3d4551; font-size: var(--ui-text-xs, 13px); }
-.citation-dialog footer { padding: 14px 21px; display: flex; justify-content: flex-end; border-top: 1px solid #ebe8ef; }
+.citation-dialog footer { padding: 14px 21px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #ebe8ef; }
 
 .research-reader-toolbar .citation-copy-button { max-width: 138px; }
 

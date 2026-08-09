@@ -22,10 +22,16 @@ test('科研 Agent 用上一轮具体问题补足指代型追问，但不把历�
     scopeLabel: '当前论文',
     evidence: [{ id: 'source:1', origin: 'source_evidence', title: '论文 A', excerpt: '固定参数基线在刚度变化时性能下降。' }],
     history: [{ role: 'user', content: '上一轮问题' }, { role: 'assistant', content: '上一轮回答' }],
+    memory: [
+      { kind: 'preferred_term', content: '柔顺控制统一译为 compliant control', reviewState: 'confirmed' },
+      { kind: 'preference', content: '未确认偏好', reviewState: 'draft' },
+    ],
   })
   const payload = JSON.parse(request.user)
   assert.equal(payload.history.length, 2)
+  assert.deepEqual(payload.memory, [{ kind: 'preferred_term', content: '柔顺控制统一译为 compliant control' }])
   assert.match(request.system, /会话历史只用于理解追问，不能作为证据/)
+  assert.match(request.system, /已确认长期记忆只用于理解用户术语/)
 })
 
 test('科研 Agent 把当前选区或当前页作为可回跳的直接证据', async () => {

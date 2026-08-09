@@ -1,0 +1,13 @@
+{
+  "id": "latex",
+  "name": "LaTeX 写作导出",
+  "version": "1.0.0",
+  "description": "导出 source.md、main.tex、references.bib，并在检测到 Tectonic 时生成 PDF。",
+  "category": "writing",
+  "interfaceVersion": 1,
+  "trust": "built-in",
+  "adapter": "latex-export",
+  "capabilities": ["writing.latex-package", "writing.pdf-compile"],
+  "permissions": ["files:export"],
+  "defaultInstalled": true
+}
