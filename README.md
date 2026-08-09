@@ -6,11 +6,17 @@ H’s 科研助手是一款面向个人研究者的 Windows 本地优先科研�
 
 ## 下载与安装
 
-请前往 [GitHub Releases](https://github.com/1dlbbbdbd1/he-research-reader/releases/latest) 下载 Windows x64 版本：
+请前往 [GitHub Releases](https://github.com/1dlbbbdbd1/he-research-reader/releases/latest) 下载 Windows x64 版本。不知道选哪个时，长期使用请选择**安装版**；只是临时试用或没有安装权限，再选择**便携版**。
 
-- `HsResearchAssistant-Setup-0.3.0-x64.exe`：安装版，可选择安装位置并创建桌面快捷方式。
-- `HsResearchAssistant-Portable-0.3.0-x64.exe`：免安装便携版，双击即可运行。
-- `SHA256SUMS.txt`：用于核对下载文件是否完整。
+| 下载文件 | 适合谁 | 安装与本地翻译 |
+| --- | --- | --- |
+| `HsResearchAssistant-Setup-0.3.0-x64.exe` | **推荐**：日常长期使用 | 可选择安装位置，创建桌面和开始菜单快捷方式，并提供卸载程序。约 430 MB，安装包内含可选的 Argos 英文 → 中文本地翻译组件；组件安装后约占 1 GB。 |
+| `HsResearchAssistant-Portable-0.3.0-x64.exe` | 临时试用，或没有软件安装权限 | 约 105 MB，无需安装，双击即可运行；不创建快捷方式和卸载入口。未内置 Argos，本地翻译首次安装时需要联网下载运行时和语言模型。 |
+| `SHA256SUMS.txt` | 需要核对下载完整性 | 保存两个程序文件的 SHA-256 校验值。 |
+
+> **便携版只是“免安装”，不是“所有数据都跟着 exe 走”。** 两个版本都会把软件设置、最近打开记录、本地组件和加密后的 API Key 保存在当前 Windows 用户的 AppData 中；研究库则始终保存在创建时由你选择的文件夹。把便携版复制到另一台电脑时，这些 AppData 数据不会自动随行。卸载安装版或删除便携版 exe 都不会删除研究库。
+
+当前两个版本都不会自动更新，需要从 Release 页面手动下载新版。升级前建议备份整个研究库目录。
 
 当前安装包尚未进行商业代码签名，Windows 首次运行时可能显示 SmartScreen 提示。请只从本仓库的正式 Release 页面下载。
 
