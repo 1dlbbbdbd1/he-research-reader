@@ -67,8 +67,9 @@ jobs:
       - name: Build Windows installers
         shell: pwsh
         run: |
-          # NSIS cannot open deeply nested runtime license paths under the
-          # long GitHub Actions checkout prefix. Build from a short drive.
+          # NSIS cannot open some deeply nested Torch license paths under the
+          # long GitHub Actions checkout prefix. Build from a short mapped
+          # drive so the complete licensed runtime stays in the installer.
           $buildDrive = 'R:'
           & subst.exe $buildDrive $PWD
           if ($LASTEXITCODE -ne 0) {
