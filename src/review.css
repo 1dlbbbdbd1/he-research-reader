@@ -17,7 +17,7 @@
 .review-builder > header > span,
 .review-document-header span {
   color: #898984;
-  font-size: 9px;
+  font-size: var(--ui-text-xs, 13px);
   font-weight: 650;
   letter-spacing: .08em;
 }
@@ -32,7 +32,7 @@
 .review-builder > header p {
   margin: 0;
   color: #777772;
-  font-size: 10px;
+  font-size: var(--ui-text-xs, 13px);
   line-height: 1.55;
 }
 
@@ -41,7 +41,7 @@
   display: grid;
   gap: 5px;
   color: #777772;
-  font-size: 10px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-title-input input {
@@ -52,7 +52,7 @@
   outline: 0;
   color: #343431;
   background: #fff;
-  font: 11px "Segoe UI Variable", "Microsoft YaHei UI", sans-serif;
+  font: var(--ui-text-xs, 13px) "Segoe UI Variable", "Microsoft YaHei UI", sans-serif;
 }
 
 .review-title-input input:focus {
@@ -72,7 +72,7 @@
 }
 
 .review-selection-heading > strong {
-  font-size: 11px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-selection-heading > div {
@@ -83,7 +83,7 @@
 
 .review-selection-heading span {
   color: #878782;
-  font-size: 9px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-selection-heading button {
@@ -93,7 +93,7 @@
   border-radius: 5px;
   color: #585853;
   background: #fff;
-  font-size: 9px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-selection-heading button:hover {
@@ -164,7 +164,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-choice-list > button small {
@@ -173,12 +173,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #858580;
-  font-size: 8px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-choice-list > button .review-paper-status {
   color: #626b73;
-  font-size: 8.5px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-choice-list > button .review-paper-purpose {
@@ -191,7 +191,7 @@
   border: 1px dashed #d7d7d2;
   border-radius: 6px;
   color: #898984;
-  font-size: 9px;
+  font-size: var(--ui-text-xs, 13px);
   text-align: center;
 }
 
@@ -206,7 +206,7 @@
   border-radius: 6px;
   color: #fff;
   background: #30302e;
-  font-size: 11px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-generate-button:hover {
@@ -222,7 +222,7 @@
   margin-top: 6px;
   display: block;
   color: #8a8a85;
-  font-size: 8px;
+  font-size: var(--ui-text-xs, 13px);
   line-height: 1.45;
 }
 
@@ -236,7 +236,7 @@
 
 .review-history > strong {
   margin-bottom: 3px;
-  font-size: 10px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-history > button {
@@ -260,13 +260,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-history small {
   margin-top: 2px;
   color: #888883;
-  font-size: 8px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-document-pane {
@@ -299,7 +299,7 @@
 .review-document-header p {
   margin: 0;
   color: #81817c;
-  font-size: 9px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-document-header > div:last-child {
@@ -314,7 +314,7 @@
   border-radius: 6px;
   color: #4e4e49;
   background: #fff;
-  font-size: 9px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-document-header button:hover {
@@ -341,7 +341,7 @@
 .review-block-label {
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 9px;
+  font-size: var(--ui-text-xs, 13px);
   font-weight: 650;
 }
 
@@ -407,7 +407,7 @@
   margin-top: 7px;
   display: block;
   color: #9a6258;
-  font-size: 9px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-citations {
@@ -426,7 +426,7 @@
   border-radius: 5px;
   color: #4d6e91;
   background: #edf3f8;
-  font-size: 9px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .review-citations button:hover {
@@ -455,7 +455,7 @@
 .review-document-empty span {
   max-width: 360px;
   text-align: center;
-  font-size: 10px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 @media (max-width: 1050px) {

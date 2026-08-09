@@ -37,6 +37,28 @@ export async function pdfPageCount(file: Blob) {
 
 export type LocalPdfDocument = pdfjs.PDFDocumentProxy
 
+const activePdfRenderWork = new WeakMap<LocalPdfDocument, Set<Promise<unknown>>>()
+
+async function trackPdfRenderWork<T>(document: LocalPdfDocument, work: Promise<T>) {
+  let active = activePdfRenderWork.get(document)
+  if (!active) {
+    active = new Set()
+    activePdfRenderWork.set(document, active)
+  }
+  active.add(work)
+  try {
+    return await work
+  } finally {
+    active.delete(work)
+  }
+}
+
+export async function cleanupPdfDocumentWhenIdle(document: LocalPdfDocument) {
+  const active = activePdfRenderWork.get(document)
+  if (active?.size) await Promise.allSettled([...active])
+  await document.cleanup()
+}
+
 export async function loadPdfDocument(file: Blob) {
   return pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise
 }
@@ -59,8 +81,11 @@ export async function renderPdfPageWithTextLayer(
   textLayerContainer: HTMLDivElement,
   pageNumber: number,
   scale = 1.25,
+  signal?: AbortSignal,
 ) {
+  signal?.throwIfAborted()
   const page = await document.getPage(Math.max(1, Math.min(pageNumber, document.numPages)))
+  signal?.throwIfAborted()
   const viewport = page.getViewport({ scale })
   const pixelRatio = Math.max(1, window.devicePixelRatio || 1)
   canvas.width = Math.ceil(viewport.width * pixelRatio)
@@ -69,23 +94,39 @@ export async function renderPdfPageWithTextLayer(
   canvas.style.height = `${viewport.height}px`
   const context = canvas.getContext('2d')
   if (!context) throw new Error('浏览器未提供 Canvas 画布。')
-  await page.render({
+  const renderTask = page.render({
     canvas,
     canvasContext: context,
     viewport,
     transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
-  }).promise
+  })
+  const cancelRender = () => renderTask.cancel()
+  signal?.addEventListener('abort', cancelRender, { once: true })
+  try {
+    await trackPdfRenderWork(document, renderTask.promise)
+  } finally {
+    signal?.removeEventListener('abort', cancelRender)
+  }
 
+  signal?.throwIfAborted()
   textLayerContainer.replaceChildren()
   textLayerContainer.style.setProperty('--total-scale-factor', String(scale))
   textLayerContainer.style.setProperty('--scale-round-x', '1px')
   textLayerContainer.style.setProperty('--scale-round-y', '1px')
+  const textContent = await page.getTextContent()
+  signal?.throwIfAborted()
   const textLayer = new pdfjs.TextLayer({
-    textContentSource: await page.getTextContent(),
+    textContentSource: textContent,
     container: textLayerContainer,
     viewport,
   })
-  await textLayer.render()
+  const cancelTextLayer = () => textLayer.cancel()
+  signal?.addEventListener('abort', cancelTextLayer, { once: true })
+  try {
+    await textLayer.render()
+  } finally {
+    signal?.removeEventListener('abort', cancelTextLayer)
+  }
   return { width: viewport.width, height: viewport.height }
 }
 
@@ -94,8 +135,11 @@ export async function renderPdfThumbnail(
   canvas: HTMLCanvasElement,
   pageNumber: number,
   maxWidth = 168,
+  signal?: AbortSignal,
 ) {
+  signal?.throwIfAborted()
   const page = await document.getPage(Math.max(1, Math.min(pageNumber, document.numPages)))
+  signal?.throwIfAborted()
   const baseViewport = page.getViewport({ scale: 1 })
   const scale = Math.max(.08, maxWidth / baseViewport.width)
   const viewport = page.getViewport({ scale })
@@ -106,12 +150,19 @@ export async function renderPdfThumbnail(
   canvas.style.height = `${viewport.height}px`
   const context = canvas.getContext('2d')
   if (!context) throw new Error('浏览器未提供缩略图画布。')
-  await page.render({
+  const renderTask = page.render({
     canvas,
     canvasContext: context,
     viewport,
     transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
-  }).promise
+  })
+  const cancelRender = () => renderTask.cancel()
+  signal?.addEventListener('abort', cancelRender, { once: true })
+  try {
+    await trackPdfRenderWork(document, renderTask.promise)
+  } finally {
+    signal?.removeEventListener('abort', cancelRender)
+  }
   return { width: viewport.width, height: viewport.height }
 }
 

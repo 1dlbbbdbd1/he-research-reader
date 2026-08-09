@@ -191,7 +191,7 @@ export default function ResearchReviewWorkspace({
 
     <div className="research-review-tabs"><button className={tab === 'reports' ? 'active' : ''} onClick={() => setTab('reports')}><ClipboardCheck/>复盘与组会</button><button className={tab === 'claims' ? 'active' : ''} onClick={() => setTab('claims')}><GitBranch/>论文论断证据</button></div>
 
-    {tab === 'reports' && <div className="research-output-grid">
+    {tab === 'reports' && <div className={`research-output-grid ${reports.length ? 'has-items' : 'is-empty'}`}>
       <aside className="research-output-list"><header><div><p className="section-kicker">Saved outputs</p><h2>正式记录</h2></div><span>{reports.length}</span></header>{reports.length ? reports.map(report => <button key={report.id} className={selectedReportId === report.id ? 'active' : ''} onClick={() => setSelectedReportId(report.id)}><span className={report.status}>{report.status === 'confirmed' ? <ShieldCheck/> : <FileText/>}</span><div><strong>{report.title}</strong><small>{reportTypeLabel[report.type]} · {report.period}</small><em>{report.status === 'confirmed' ? '已确认' : '草稿'} · v{report.revisionNumber}</em></div><ChevronRight/></button>) : <div className="research-output-empty"><FileText/><p>还没有保存复盘。先从右侧生成一份带来源的预览。</p></div>}</aside>
       <section className="research-report-studio">
         {selectedReport ? <ReportDetail report={selectedReport} onEdit={() => editReport(selectedReport)} onConfirm={() => void confirmReport(selectedReport)} onExport={() => void execute(() => onExportReport(selectedReport.id), '报告导出失败。')} onPortableExport={() => void execute(() => onPortableExportReport(selectedReport.id), '可迁移 Markdown 导出失败。')} busy={busy}/> : <>
@@ -205,7 +205,7 @@ export default function ResearchReviewWorkspace({
       </section>
     </div>}
 
-    {tab === 'claims' && <div className="research-output-grid claims">
+    {tab === 'claims' && <div className={`research-output-grid claims ${claims.length ? 'has-items' : 'is-empty'}`}>
       <aside className="research-output-list"><header><div><p className="section-kicker">Writing claims</p><h2>论断清单</h2></div><button onClick={() => { setClaimDraft(initialClaimDraft()); setSelectedClaimId(undefined) }}><Plus/></button></header>{claims.length ? claims.map(claim => {
         const audit = claimAudit.claims.find(item => item.id === claim.id)
         return <button key={claim.id} className={selectedClaimId === claim.id ? 'active' : ''} onClick={() => { setSelectedClaimId(claim.id); setClaimDraft(undefined) }}><span className={audit?.status ?? 'unsupported'}>{audit?.status === 'supported' ? <Check/> : <AlertTriangle/>}</span><div><strong>{claim.text}</strong><small>{claim.section} · {claim.evidenceRefs.length} 条证据</small><em>{audit?.status === 'supported' ? '证据完整' : audit?.status === 'partial' ? '证据不完整' : '缺少证据'} · {claim.status === 'confirmed' ? '已确认' : '草稿'}</em></div><ChevronRight/></button>

@@ -5,6 +5,7 @@ const path = require('node:path')
 const {
   MAX_TRANSLATION_CHARACTERS,
   candidatePythonExecutables,
+  localTranslationError,
   normalizeLanguageCode,
   parseBridgeResult,
   translationEnvironment,
@@ -52,6 +53,13 @@ test('translation bridge parses the explicit result marker only', () => {
   )
 })
 
+test('local translation turns model ACL failures into a recoverable instruction', () => {
+  assert.match(
+    localTranslationError(new Error("[Errno 13] Permission denied: 'resources.json'")).message,
+    /模型文件权限异常.*重新安装.*修复模型目录权限/,
+  )
+})
+
 test('translation environment keeps packages and profile under the chosen runtime', () => {
   const runtimeRoot = 'C:\\ReaderData\\translation-runtime'
   const environment = translationEnvironment(runtimeRoot)
@@ -81,6 +89,7 @@ test('Argos setup and bridge use explicit runtime and stdin translation', () => 
   assert.match(setup, /\[string\]\$RuntimeRoot/)
   assert.match(setup, /argostranslate==1\.11\.0/)
   assert.match(setup, /ARGOS_PACKAGES_DIR/)
+  assert.match(setup, /icacls\.exe.*\/inheritance:e.*\/T.*\/C.*\/Q/)
   assert.match(bridge, /sys\.stdin\.read/)
   assert.match(bridge, /update_package_index/)
   assert.match(bridge, /install_from_path/)

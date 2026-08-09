@@ -25,6 +25,25 @@ export function bilingualDocumentFingerprint(markdown) {
   return bilingualContentHash(normalizeLineEndings(markdown))
 }
 
+export function structuredBlocksToBilingualMarkdown(blocks = []) {
+  return (Array.isArray(blocks) ? blocks : [])
+    .flatMap(block => {
+      const content = normalizeLineEndings(block?.content).trim()
+      if (!content) return []
+      const output = []
+      const inferredHeading = String(block?.inferredHeading || '').trim()
+      if (inferredHeading) output.push(`## ${inferredHeading.replace(/^#{1,6}\s*/, '')}`)
+      if (block?.kind === 'heading' && !/^#{1,6}\s/.test(content)) {
+        const level = Math.max(1, Math.min(6, Number(block?.headingLevel) || 2))
+        output.push(`${'#'.repeat(level)} ${content}`)
+      } else {
+        output.push(content)
+      }
+      return output
+    })
+    .join('\n\n')
+}
+
 export function smartMergeTranslationProse(content) {
   return normalizeLineEndings(content)
     .split(/(\n\s*\n)/)

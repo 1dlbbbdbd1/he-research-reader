@@ -4,7 +4,7 @@
   "description": "本地优先的课题、文献、实验、数据与科研过程管理桌面助手",
   "author": "Research Reader Project",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -32,6 +32,7 @@
     "fast-xml-parser": "^5.10.1",
     "katex": "^0.16.47",
     "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^4.9.0",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0"
@@ -78,22 +79,22 @@
         "from": "scripts/setup-argos.ps1",
         "to": "scripts/setup-argos.ps1"
       },
-        {
-          "from": "scripts/argos-bridge.py",
-          "to": "scripts/argos-bridge.py"
-        },
-        {
-          "from": "scripts/setup-embedding.ps1",
-          "to": "scripts/setup-embedding.ps1"
-        },
-        {
-          "from": "scripts/embedding-bridge.py",
-          "to": "scripts/embedding-bridge.py"
-        },
-        {
-          "from": "build/icon.ico",
-          "to": "brand/icon.ico"
-        }
+      {
+        "from": "scripts/argos-bridge.py",
+        "to": "scripts/argos-bridge.py"
+      },
+      {
+        "from": "scripts/setup-embedding.ps1",
+        "to": "scripts/setup-embedding.ps1"
+      },
+      {
+        "from": "scripts/embedding-bridge.py",
+        "to": "scripts/embedding-bridge.py"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "brand/icon.ico"
+      }
     ],
     "directories": {
       "output": "release"

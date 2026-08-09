@@ -1,8 +1,8 @@
 /* Desktop visual system. Loaded last to retire the prototype's micro-copy. */
 :root {
-  --desktop-caption: 12px;
-  --desktop-body: 14px;
-  --desktop-body-line: 20px;
+  --desktop-caption: var(--ui-text-xs, 13px);
+  --desktop-body: var(--ui-text-sm, 14px);
+  --desktop-body-line: 1.55;
   --desktop-title: 28px;
   --desktop-toolbar-height: 52px;
   --desktop-sidebar-width: 232px;
@@ -36,13 +36,24 @@ button,
 input,
 textarea,
 select {
-  line-height: 1.35;
+  line-height: var(--ui-line-compact, 1.4);
+}
+
+.app-shell :is(h1, h2, h3, h4, h5, h6) {
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.app-shell :is(p, small, label, button, input, textarea, select) {
+  overflow-wrap: anywhere;
 }
 
 .app-shell {
-  height: calc(100dvh / var(--ui-scale, 1));
+  height: 100dvh;
   min-height: 0 !important;
   overflow: hidden;
+  font-size: var(--ui-text-sm, 14px);
+  line-height: var(--ui-line-normal, 1.55);
 }
 
 .app-shell:not(.reader-active) {
@@ -491,7 +502,7 @@ select {
 
 /* Reader chrome stays compact but never uses micro-copy. */
 .reader-active > main {
-  height: calc(100dvh / var(--ui-scale, 1));
+  height: 100dvh;
 }
 
 .research-reader {
@@ -888,7 +899,7 @@ select {
 
 .research-agent-modal.embedded .agent-context span {
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   line-height: 18px;
 }
 
@@ -917,7 +928,7 @@ select {
 .agent-pinned-selection span,
 .agent-pinned-selection small {
   color: #69717a;
-  font-size: 11px;
+  font-size: var(--ui-text-xs, 13px);
   line-height: 16px;
 }
 
@@ -963,7 +974,7 @@ select {
   min-height: 30px;
   padding: 5px 8px;
   color: #62666c;
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .agent-scope-switch button.active {
@@ -985,7 +996,7 @@ select {
   border-radius: 7px;
   color: #4d535a;
   background: #fff;
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .agent-starter-questions button:hover {
@@ -1033,7 +1044,7 @@ select {
   border: 1px solid #dce2df;
   color: #4e5e57;
   background: #f1f5f3;
-  font-size: 12px !important;
+  font-size: var(--ui-text-xs, 13px) !important;
   line-height: 18px;
 }
 
@@ -1059,7 +1070,7 @@ select {
   display: block;
   margin-bottom: 3px;
   color: #747980;
-  font: 11px/16px "Cascadia Code", "SFMono-Regular", monospace;
+  font: var(--ui-text-xs, 13px)/16px "Cascadia Code", "SFMono-Regular", monospace;
 }
 
 .agent-user-message p {
@@ -1103,7 +1114,7 @@ select {
 .agent-evidence-list summary {
   padding: 10px 0;
   color: #4a5057;
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   font-weight: 650;
   cursor: pointer;
 }
@@ -1115,7 +1126,7 @@ select {
   border-radius: 999px;
   color: #656b72;
   background: #e5e7e9;
-  font-size: 11px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .agent-evidence-list > div {
@@ -1142,7 +1153,7 @@ select {
 .agent-evidence-list > div > button > span,
 .agent-evidence-list > div > button > small {
   color: #70767d;
-  font-size: 11px;
+  font-size: var(--ui-text-xs, 13px);
   line-height: 16px;
 }
 
@@ -1169,7 +1180,7 @@ select {
 
 .research-agent-modal.embedded footer p {
   color: #676c72;
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   line-height: 18px;
 }
 

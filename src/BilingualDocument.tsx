@@ -13,10 +13,13 @@ import {
   markBilingualBatchTranslating,
   retryFailedBilingualSegments,
   selectBilingualTranslationBatch,
+  structuredBlocksToBilingualMarkdown,
   updateBilingualSegment,
   type BilingualReadingDocument as BilingualDocumentState,
   type BilingualSegment,
 } from './bilingual-reading.mjs'
+
+const BILINGUAL_RENDER_CHUNK = 90
 
 type BilingualSettings = {
   baseUrl: string
@@ -93,8 +96,9 @@ export default function BilingualDocument({
   settings: BilingualSettings
   onSettings: () => void
 }) {
-  const [documentState, setDocumentState] = useState<BilingualDocumentState>(() => createBilingualReadingDocument(text || ''))
-  const [notice, setNotice] = useState('正在读取本地译文缓存…')
+  const [documentState, setDocumentState] = useState<BilingualDocumentState>(() => createBilingualReadingDocument(''))
+  const [readingSource, setReadingSource] = useState<{ text: string; label: string }>({ text: '', label: '正在读取整理稿…' })
+  const [notice, setNotice] = useState('正在读取当前整理稿…')
   const [busy, setBusy] = useState(false)
   const [installing, setInstalling] = useState(false)
   const [confirmCloud, setConfirmCloud] = useState<{ segmentId?: string }>()
@@ -106,47 +110,72 @@ export default function BilingualDocument({
   const [terms, setTerms] = useState<DesktopReadingTranslationTerm[]>([])
   const [glossaryOpen, setGlossaryOpen] = useState(false)
   const [termDraft, setTermDraft] = useState({ sourceTerm: '', targetTerm: '', note: '' })
+  const [visiblePairCount, setVisiblePairCount] = useState(BILINGUAL_RENDER_CHUNK)
   const stopRef = useRef(false)
+  const readerRef = useRef<HTMLElement>(null)
+  const loadMoreRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => setProvider(settings.translationProvider || 'local'), [settings.translationProvider])
 
   useEffect(() => {
     let disposed = false
-    const base = createBilingualReadingDocument(text || '')
-    setDocumentState(base)
-    setNotice(base.segments.some(segment => segment.translatable) ? '正在读取本地译文缓存…' : '当前内容没有可翻译的英文段落。')
     const desktop = window.readerDesktop as (Window['readerDesktop'] & TranslationCacheBridge) | undefined
-    if (!desktop?.getReadingTranslationSegments || !base.segments.length) {
-      setNotice(desktop ? '尚无译文缓存，可以开始翻译。' : '中英对照需要在桌面客户端中运行。')
-      return () => { disposed = true }
-    }
-    void desktop.getReadingTranslationSegments({
-      sourceId,
-      segments: base.segments.filter(segment => segment.translatable).map(segment => ({ segmentId: segment.id, sourceHash: segment.contentHash })),
-    }).then(result => {
+    stopRef.current = true
+    setDocumentState(createBilingualReadingDocument(''))
+    setReadingSource({ text: '', label: '正在读取整理稿…' })
+    setVisiblePairCount(BILINGUAL_RENDER_CHUNK)
+    setNotice('正在读取当前整理稿；翻译不会直接使用未整理的 Markdown…')
+    void (async () => {
+      let sourceText = text || ''
+      let sourceLabel = '浏览器预览文本'
+      if (desktop && sourceText) {
+        let structured = await desktop.getStructuredReading({ sourceId })
+        if (!structured.currentVersion || structured.stale) {
+          setNotice(structured.stale ? 'MinerU 内容已更新，正在重建整理稿后再进入翻译…' : '正在先生成本地整理稿，再建立中英对照…')
+          structured = await desktop.generateStructuredReading({ sourceId, createdBy: 'rules' })
+        }
+        const version = structured.currentVersion
+        if (!version) throw new Error('当前文献没有可用的整理稿。请先在“整理稿”中重新生成。')
+        sourceText = structuredBlocksToBilingualMarkdown(version.blocks)
+        if (!sourceText.trim()) throw new Error('当前整理稿没有可用于翻译的正文块。')
+        const creator = { rules: '本地整理', ai: 'AI 章节整理', user: '人工调整', restore: '版本恢复' }[version.createdBy]
+        sourceLabel = `${creator} v${version.versionNumber} · ${version.blocks.length} 个结构块`
+      }
+      if (disposed) return
+      setReadingSource({ text: sourceText, label: sourceLabel })
+      const base = createBilingualReadingDocument(sourceText)
+      setDocumentState(base)
+      setNotice(base.segments.some(segment => segment.translatable) ? '正在读取本地译文缓存…' : '当前整理稿没有可翻译的英文段落。')
+      if (!desktop?.getReadingTranslationSegments || !base.segments.length) {
+        setNotice(desktop ? '尚无译文缓存，可以开始翻译。' : '中英对照需要在桌面客户端中运行。')
+        return
+      }
+      const result = await desktop.getReadingTranslationSegments({
+        sourceId,
+        segments: base.segments.filter(segment => segment.translatable).map(segment => ({ segmentId: segment.id, sourceHash: segment.contentHash })),
+      })
       if (disposed) return
       const records = Array.isArray(result) ? result : result?.segments || []
-      const cachedSegments = records
-        .map(record => ({
-          id: record.segmentId,
-          contentHash: record.baseSourceHash || record.sourceHash,
-          baseSourceHash: record.baseSourceHash || record.sourceHash,
-          sourceHash: record.sourceHash,
-          sourceText: record.sourceText,
-          translation: record.translatedText || record.translation || '',
-          status: record.status,
-          error: record.error,
-          attempts: record.attempts || 0,
-          locked: Boolean(record.locked),
-          provider: record.provider,
-          model: record.model,
-        }))
-      const restored = createBilingualReadingDocument(text || '', { cachedSegments })
+      const cachedSegments = records.map(record => ({
+        id: record.segmentId,
+        contentHash: record.baseSourceHash || record.sourceHash,
+        baseSourceHash: record.baseSourceHash || record.sourceHash,
+        sourceHash: record.sourceHash,
+        sourceText: record.sourceText,
+        translation: record.translatedText || record.translation || '',
+        status: record.status,
+        error: record.error,
+        attempts: record.attempts || 0,
+        locked: Boolean(record.locked),
+        provider: record.provider,
+        model: record.model,
+      }))
+      const restored = createBilingualReadingDocument(sourceText, { cachedSegments })
       setDocumentState(restored)
       const translated = restored.segments.filter(segment => segment.status === 'translated').length
-      setNotice(translated ? `已恢复 ${translated} 段本地译文缓存。` : '尚无可复用译文，可以开始翻译。')
-    }).catch(error => {
-      if (!disposed) setNotice(error instanceof Error ? `译文缓存读取失败：${error.message}` : '译文缓存读取失败。')
+      setNotice(translated ? `已按当前整理稿顺序恢复 ${translated} 段本地译文缓存。` : '整理稿顺序已就绪，可以开始翻译。')
+    })().catch(error => {
+      if (!disposed) setNotice(error instanceof Error ? `整理稿加载失败：${error.message}` : '整理稿加载失败。')
     })
     return () => { disposed = true; stopRef.current = true }
   }, [sourceId, sourceRevision, text])
@@ -173,6 +202,8 @@ export default function BilingualDocument({
   }, [sourceId, sourceRevision])
 
   const pairs = useMemo(() => buildBilingualReadingPairs(documentState.segments), [documentState.segments])
+  const readablePairs = useMemo(() => pairs.filter(pair => pair.kind !== 'whitespace'), [pairs])
+  const visiblePairs = useMemo(() => readablePairs.slice(0, visiblePairCount), [readablePairs, visiblePairCount])
   const translatableCount = documentState.segments.filter(segment => segment.translatable).length
   const translatedCount = documentState.segments.filter(segment => segment.status === 'translated').length
   const failedCount = documentState.segments.filter(segment => segment.status === 'failed').length
@@ -181,6 +212,19 @@ export default function BilingualDocument({
     .filter(segment => segment.translatable && !segment.locked && ['pending', 'failed'].includes(segment.status))
     .reduce((sum, segment) => sum + segment.translationSource.length, 0)
   const components = useMemo(() => markdownComponents(resolveImage), [assets])
+
+  useEffect(() => {
+    const root = readerRef.current
+    const target = loadMoreRef.current
+    if (!root || !target || visiblePairCount >= readablePairs.length) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setVisiblePairCount(count => Math.min(readablePairs.length, count + BILINGUAL_RENDER_CHUNK))
+      }
+    }, { root, rootMargin: '500px 0px' })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [readablePairs.length, visiblePairCount])
 
   function resolveImage(src?: string) {
     if (!src) return undefined
@@ -380,6 +424,7 @@ export default function BilingualDocument({
   }
 
   if (!text) return <div className="reader-empty-state"><Languages size={28}/><strong>还没有可用于对照翻译的派生文本</strong><span>请先使用本地 MinerU 生成 Markdown；原 PDF 始终保留为引用依据。</span></div>
+  if (!readingSource.text) return <div className="reader-empty-state"><Languages size={28}/><strong>{/失败/.test(notice) ? '整理稿暂时无法用于翻译' : '正在准备整理稿顺序'}</strong><span>{notice}</span></div>
 
   let cloudProviderLabel = 'AI Provider'
   try { cloudProviderLabel = new URL(settings.baseUrl).host || cloudProviderLabel } catch { /* Settings UI owns URL validation. */ }
@@ -387,9 +432,9 @@ export default function BilingualDocument({
   const cloudCharacters = cloudTarget?.translationSource.length || pendingCharacters
   const cloudSegments = cloudTarget ? 1 : documentState.segments.filter(segment => segment.translatable && !segment.locked && ['pending', 'failed'].includes(segment.status)).length
 
-  return <article className="bilingual-reader">
+  return <article ref={readerRef} className="bilingual-reader">
     <header className="bilingual-reader-header">
-      <div><span>英文原文 × 中文译文</span><strong>{title}</strong><small>译文是本地派生阅读层；修正文、译文和术语均不会覆盖 PDF 或原始 Markdown。</small></div>
+      <div><span>整理稿原文 × 中文译文</span><strong>{title}</strong><small>翻译顺序来自：{readingSource.label}。译文、修正文和术语不会覆盖 PDF 或原始 Markdown。</small></div>
       <div className="bilingual-progress" aria-label={`已翻译 ${translatedCount}，共 ${translatableCount} 段`}>
         <span><i style={{ width: `${translatableCount ? translatedCount / translatableCount * 100 : 0}%` }}/></span>
         <small>{translatedCount}/{translatableCount} 段{failedCount ? ` · ${failedCount} 段失败` : ''}</small>
@@ -429,7 +474,7 @@ export default function BilingualDocument({
     </section>}
     <div className={`bilingual-column-labels mode-${displayMode}`}>{displayMode !== 'translation' && <span>EN · 权威原文</span>}{displayMode !== 'source' && <span>ZH · 辅助译文</span>}</div>
     <div className="bilingual-segments">
-      {pairs.filter(pair => pair.kind !== 'whitespace').map(pair => pair.translatable ? <section className={`bilingual-segment ${pair.status} mode-${displayMode} ${pair.locked ? 'locked' : ''}`} key={pair.segmentId} data-bilingual-segment={pair.segmentId}>
+      {visiblePairs.map(pair => pair.translatable ? <section className={`bilingual-segment ${pair.status} mode-${displayMode} ${pair.locked ? 'locked' : ''}`} key={pair.segmentId} data-bilingual-segment={pair.segmentId}>
         <div className="bilingual-segment-tools">
           <span>{pair.sourceWasAdjusted ? '已修正提取文本 · 新指纹' : pair.translationSource !== pair.sourceMarkdown ? '已智能合并段落' : '原始分段'}</span>
           {pair.provider && <small>{pair.provider === 'local' ? '本地' : '云端'}{pair.model ? ` · ${pair.model}` : ''}</small>}
@@ -445,6 +490,7 @@ export default function BilingualDocument({
       </section> : <section className={`bilingual-structural ${pair.kind}`} key={pair.segmentId}>
         <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} skipHtml components={components}>{pair.sourceMarkdown}</ReactMarkdown>
       </section>)}
+      {visiblePairCount < readablePairs.length && <div ref={loadMoreRef} className="bilingual-render-more"><span>已加载 {visiblePairs.length}/{readablePairs.length} 个整理稿内容块</span><button onClick={() => setVisiblePairCount(count => Math.min(readablePairs.length, count + BILINGUAL_RENDER_CHUNK))}>继续加载</button></div>}
     </div>
   </article>
 }

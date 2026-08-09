@@ -131,10 +131,17 @@ function matchLayout(blocks, layoutBlocks) {
       ? { layout, index, rect, pageNumber, text }
       : undefined
   }).filter(Boolean)
+  const exactByText = new Map()
+  for (const candidate of candidates) {
+    if (!exactByText.has(candidate.text)) exactByText.set(candidate.text, [])
+    exactByText.get(candidate.text).push(candidate)
+  }
   const claimed = new Set()
   return blocks.map(block => {
     const text = normalizedText(block.content)
-    const matches = candidates.map(candidate => {
+    const exact = exactByText.get(text)
+    const candidatePool = exact?.length ? exact : candidates
+    const matches = candidatePool.map(candidate => {
       const score = text === candidate.text
         ? 1
         : text.includes(candidate.text) || candidate.text.includes(text)

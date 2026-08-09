@@ -123,6 +123,7 @@ test('今日科研通过受限现场 IPC 恢复五项真实上下文，并保留
     assert.match(preload, new RegExp(`ipcRenderer\\.invoke\\('${channel}'`))
   }
   assert.match(app, /label="今日科研"/)
+  assert.match(app, /label="课题与实验"/)
   assert.match(app, /active === 'research-workspace'/)
   assert.equal((today.match(/data-today-answer=/g) || []).length, 5)
   assert.match(today, /继续上次工作/)
@@ -176,6 +177,81 @@ test('翻译阅读在阅读器内提供跨页范围、引擎边界、修正文�
   assert.match(bilingual, /单独重试/)
   assert.match(bilingual, /当前文献术语表/)
   assert.match(bilingual, /PDF 与 MinerU 原始 Markdown 未被修改/)
+  assert.match(bilingual, /getStructuredReading/)
+  assert.match(bilingual, /structuredBlocksToBilingualMarkdown/)
+  assert.match(bilingual, /翻译顺序来自/)
+})
+
+test('派生阅读视图隔离崩溃、限制长文首屏渲染并保留可恢复操作', () => {
+  const boundary = fs.readFileSync(path.join(root, 'src', 'features', 'reader', 'ReaderViewBoundary.tsx'), 'utf8')
+  const structured = fs.readFileSync(path.join(root, 'src', 'features', 'reader', 'VersionedStructuredReading.tsx'), 'utf8')
+  const readerCss = fs.readFileSync(path.join(root, 'src', 'reader.css'), 'utf8')
+  const structuredCss = fs.readFileSync(path.join(root, 'src', 'structured-reading.css'), 'utf8')
+
+  assert.match(boundary, /getDerivedStateFromError/)
+  assert.match(boundary, /componentDidCatch/)
+  assert.match(boundary, /重试当前视图/)
+  assert.match(boundary, /返回 PDF 原文/)
+  assert.match(structured, /STRUCTURED_RENDER_CHUNK = 80/)
+  assert.match(structured, /IntersectionObserver/)
+  assert.match(readerCss, /\.bilingual-reader\s*\{[\s\S]*?height:\s*100%;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*auto;/)
+  assert.match(structuredCss, /\.versioned-structured-reader\s*\{[\s\S]*?height:\s*100%;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*auto;/)
+})
+
+test('版面对照使用可访问的可调面板、默认收起目录并提供单侧专注', () => {
+  const ui = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
+  const structured = fs.readFileSync(path.join(root, 'src', 'features', 'reader', 'VersionedStructuredReading.tsx'), 'utf8')
+  const css = fs.readFileSync(path.join(root, 'src', 'reader.css'), 'utf8')
+
+  assert.match(ui, /react-resizable-panels/)
+  assert.match(ui, /<ResizableSeparator/)
+  assert.match(ui, /resizeTargetMinimumSize=\{\{ fine: 18, coarse: 32 \}\}/)
+  assert.match(ui, /reader-parallel-layout-v1/)
+  assert.match(ui, />专注 PDF</)
+  assert.match(ui, />专注整理稿</)
+  assert.match(ui, /parallelOutlineOpen \? '隐藏目录' : '显示目录'/)
+  assert.match(structured, /presentation = 'full'/)
+  assert.match(structured, /showToc && current\.toc\.length/)
+  assert.match(css, /\.reader-parallel-divider/)
+  assert.match(css, /\.reader-parallel-toolbar/)
+})
+
+test('界面缩放使用语义字号而非 CSS zoom，样式表不再声明 13px 以下正文', () => {
+  const ui = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
+  const cssFiles = fs.readdirSync(path.join(root, 'src')).filter(name => name.endsWith('.css'))
+  const microType = []
+  for (const name of cssFiles) {
+    const css = fs.readFileSync(path.join(root, 'src', name), 'utf8')
+    for (const match of css.matchAll(/font-size:\s*([0-9.]+)px/g)) {
+      if (Number(match[1]) < 13) microType.push(`${name}:${match[0]}`)
+    }
+    for (const match of css.matchAll(/font:\s*(?:[1-9]00\s+)?([0-9.]+)px(?=[/\s])/g)) {
+      if (Number(match[1]) < 13) microType.push(`${name}:${match[0]}`)
+    }
+  }
+
+  assert.doesNotMatch(ui, /zoom:\s*effectiveUIScale/)
+  assert.match(ui, /'--ui-text-xs': scaledText\(13\)/)
+  assert.match(ui, /'--ui-control-min-height'/)
+  assert.deepEqual(microType, [])
+})
+
+test('空课题与空复盘使用内容收敛布局，不再生成固定高度的长短空框', () => {
+  const commandCenter = fs.readFileSync(path.join(root, 'src', 'ResearchCommandCenter.tsx'), 'utf8')
+  const review = fs.readFileSync(path.join(root, 'src', 'ResearchReviewWorkspace.tsx'), 'utf8')
+  const functionalCss = fs.readFileSync(path.join(root, 'src', 'functional.css'), 'utf8')
+  const reviewCss = fs.readFileSync(path.join(root, 'src', 'research-review.css'), 'utf8')
+
+  assert.match(commandCenter, /research-command-grid \$\{milestones\.length \? 'has-milestones' : 'is-empty'\}/)
+  assert.match(functionalCss, /\.research-command-grid\.is-empty\s*\{\s*grid-template-columns:\s*1fr;/)
+  assert.match(functionalCss, /\.research-command-grid\.is-empty \.research-next-panel\s*\{[^}]*grid-template-columns:\s*repeat\(2,/)
+  assert.match(functionalCss, /\.research-command-grid\.is-empty \.research-guided-empty\s*\{[^}]*min-height:\s*0;/)
+
+  assert.match(review, /research-output-grid \$\{reports\.length \? 'has-items' : 'is-empty'\}/)
+  assert.match(reviewCss, /\.research-output-grid\.is-empty\s*\{\s*grid-template-columns:\s*1fr;/)
+  assert.match(reviewCss, /\.research-output-grid\.is-empty \.research-output-list\s*\{[^}]*grid-template-columns:/)
+  assert.doesNotMatch(reviewCss, /\.research-output-list, \.research-report-studio, \.research-claim-studio\s*\{[^}]*min-height:\s*600px;/)
+  assert.match(reviewCss, /\.research-report-placeholder\s*\{\s*min-height:\s*280px;/)
 })
 
 test('Zotero 增量边界和四类可迁移 Markdown 通过最小 IPC 接入真实页面', () => {

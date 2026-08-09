@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useState } from 'react'
+import { createElement, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
@@ -39,6 +39,8 @@ const changeLabels: Record<string, string> = {
   manualHeadingChanges: '手调标题',
 }
 
+const STRUCTURED_RENDER_CHUNK = 80
+
 function generatedByLabel(value: DesktopStructuredReadingVersion['createdBy']) {
   return { rules: '本地规则', ai: 'AI 章节识别', user: '人工调整', restore: '版本恢复' }[value]
 }
@@ -54,6 +56,8 @@ export default function VersionedStructuredReading({
   paper,
   settings,
   activeMarkdownBlockId,
+  presentation = 'full',
+  showToc = true,
   onMineruLayoutBlocks,
   onSettings,
 }: {
@@ -63,6 +67,8 @@ export default function VersionedStructuredReading({
   paper?: Paper
   settings: AISettings
   activeMarkdownBlockId?: string
+  presentation?: 'full' | 'comparison'
+  showToc?: boolean
   onMineruLayoutBlocks: (blocks: LayoutBlock[]) => void
   onSettings: () => void
 }) {
@@ -76,6 +82,9 @@ export default function VersionedStructuredReading({
   const [historyOpen, setHistoryOpen] = useState(false)
   const [orderedIds, setOrderedIds] = useState<string[]>([])
   const [headingLevels, setHeadingLevels] = useState<Record<string, number>>({})
+  const [visibleBlockCount, setVisibleBlockCount] = useState(STRUCTURED_RENDER_CHUNK)
+  const readerRef = useRef<HTMLElement>(null)
+  const loadMoreRef = useRef<HTMLDivElement>(null)
   const current = state?.currentVersion
 
   useEffect(() => {
@@ -113,12 +122,17 @@ export default function VersionedStructuredReading({
     if (!current) return
     setOrderedIds(current.blocks.map(block => block.id))
     setHeadingLevels(Object.fromEntries(current.blocks.map(block => [block.id, block.headingLevel || 0])))
+    setVisibleBlockCount(STRUCTURED_RENDER_CHUNK)
   }, [current?.id])
 
   useEffect(() => {
     if (!activeMarkdownBlockId || !current) return
-    const target = document.querySelector<HTMLElement>(`[data-markdown-block="${activeMarkdownBlockId}"]`)
-    target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    const index = current.blocks.findIndex(block => block.originalBlockIds.includes(activeMarkdownBlockId))
+    if (index >= 0) setVisibleBlockCount(count => Math.max(count, index + 12))
+    window.requestAnimationFrame(() => {
+      const target = readerRef.current?.querySelector<HTMLElement>(`[data-markdown-block="${activeMarkdownBlockId}"]`)
+      target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
   }, [activeMarkdownBlockId, current?.id])
 
   const blocks = useMemo(() => {
@@ -126,6 +140,26 @@ export default function VersionedStructuredReading({
     const byId = new Map(current.blocks.map(block => [block.id, block]))
     return editing ? orderedIds.map(id => byId.get(id)).filter(Boolean) as DesktopStructuredReadingBlock[] : current.blocks
   }, [current, editing, orderedIds])
+  const visibleBlocks = useMemo(() => blocks.slice(0, visibleBlockCount), [blocks, visibleBlockCount])
+
+  useEffect(() => {
+    const root = readerRef.current
+    const target = loadMoreRef.current
+    if (!root || !target || visibleBlockCount >= blocks.length) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setVisibleBlockCount(count => Math.min(blocks.length, count + STRUCTURED_RENDER_CHUNK))
+      }
+    }, { root, rootMargin: '500px 0px' })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [blocks.length, visibleBlockCount])
+
+  function openTocBlock(blockId: string) {
+    const index = blocks.findIndex(block => block.id === blockId)
+    if (index >= 0) setVisibleBlockCount(count => Math.max(count, index + 12))
+    window.requestAnimationFrame(() => readerRef.current?.querySelector<HTMLElement>(`[data-structured-block="${blockId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  }
 
   function resolvedImage(src?: string) {
     if (!src) return undefined
@@ -185,6 +219,21 @@ export default function VersionedStructuredReading({
     }
   }
 
+  async function regenerateWithRules() {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    setBusy(true)
+    setNotice('正在根据 MinerU 版面证据生成本地整理稿…')
+    try {
+      setState(await desktop.generateStructuredReading({ sourceId, createdBy: 'rules' }))
+      setNotice('本地整理稿已重新生成；PDF 与 MinerU 原始 Markdown 未改动。')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '本地整理稿生成失败。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function requestAI() {
     if (!settings.baseUrl || !settings.model || !settings.apiKey) {
       setNotice('尚未配置可用的 AI 服务。请先在设置中填写服务地址、模型和密钥。')
@@ -227,14 +276,16 @@ export default function VersionedStructuredReading({
   }
 
   const previousVersion = state?.versions.find(version => version.id !== current?.id)
-  return <article className="versioned-structured-reader">
+  const comparison = presentation === 'comparison'
+  const effectiveMode = comparison ? 'structured' : mode
+  return <article ref={readerRef} className={`versioned-structured-reader ${comparison ? 'comparison' : ''}`}>
     <header className="versioned-structured-header">
       <div>
-        <span>第三层 · 可重建派生稿</span>
+        <span>整理稿 · 保留原文证据</span>
         <strong>{paper?.title || sourceName.replace(/\.[^.]+$/, '')}</strong>
-        {current && <small>v{current.versionNumber} · {generatedByLabel(current.createdBy)} · 原文指纹 {current.sourceFingerprint.slice(0, 10)}</small>}
+        {current && <small>当前：{generatedByLabel(current.createdBy)} v{current.versionNumber} · {current.blocks.length} 个结构块 · 原文指纹 {current.sourceFingerprint.slice(0, 10)}</small>}
       </div>
-      <div className="versioned-structured-actions">
+      {!comparison && <div className="versioned-structured-actions">
         <div className="structured-mode-switch">
           <button className={mode === 'structured' ? 'active' : ''} onClick={() => setMode('structured')}>整理稿</button>
           <button className={mode === 'raw' ? 'active' : ''} onClick={() => setMode('raw')}>原始 MD</button>
@@ -242,19 +293,19 @@ export default function VersionedStructuredReading({
         <button onClick={() => setHistoryOpen(value => !value)}><History size={14}/>版本</button>
         {previousVersion && <button disabled={busy} onClick={() => void restoreVersion(previousVersion.id)}><RotateCcw size={14}/>撤销</button>}
         <button disabled={busy || !current} onClick={() => setEditing(value => !value)}>{editing ? <X size={14}/> : <BookOpen size={14}/>} {editing ? '退出调整' : '调整结构'}</button>
-        <button disabled={busy} onClick={requestAI}><Sparkles size={14}/>AI 识别章节</button>
-      </div>
+        <button disabled={busy} onClick={requestAI}><Sparkles size={14}/>使用 AI 再整理</button>
+      </div>}
     </header>
 
     {notice && <div className="structured-reading-notice"><span>{notice}</span>{notice.includes('设置') && <button onClick={onSettings}>打开设置</button>}</div>}
 
-    {confirmAI && <section className="academic-ai-confirm">
-      <div><strong>确认发送 MinerU 派生 Markdown 做章节识别？</strong><p>将发送题录和约 {rawMarkdown.length.toLocaleString('zh-CN')} 个字符到 {settings.model}。只接收原始块 ID 对应的章节边界；PDF、原始 MD 和用户笔记不会被覆盖。</p></div>
+    {!comparison && confirmAI && <section className="academic-ai-confirm">
+      <div><strong>确认让 AI 进一步识别章节结构？</strong><p>将发送题录和约 {rawMarkdown.length.toLocaleString('zh-CN')} 个字符到 {settings.model}。AI 只返回原始块 ID 对应的章节边界，不采用 AI 改写正文；PDF、原始 MD 和用户笔记不会被覆盖。</p></div>
       <button onClick={() => setConfirmAI(false)}>取消</button>
       <button className="confirm" disabled={busy} onClick={() => void generateWithAI()}>{busy ? '识别中…' : '确认发送'}</button>
     </section>}
 
-    {historyOpen && <section className="structured-version-history">
+    {!comparison && historyOpen && <section className="structured-version-history">
       <header><strong>派生稿版本</strong><span>恢复会创建新版本，不覆盖历史</span></header>
       {state?.versions.map(version => <div key={version.id} className={version.id === current?.id ? 'current' : ''}>
         <span><b>v{version.versionNumber}</b>{generatedByLabel(version.createdBy)} · {new Date(version.createdAt).toLocaleString('zh-CN')}</span>
@@ -263,20 +314,20 @@ export default function VersionedStructuredReading({
       </div>)}
     </section>}
 
-    {current && <section className="structured-change-summary">
+    {!comparison && current && <section className="structured-change-summary">
       <div><strong>本版变化</strong><span>所有正文片段仍指向 MinerU 原始块</span></div>
       {Object.entries(current.changeSummary).filter(([key, value]) => changeLabels[key] && typeof value === 'number' && value > 0).map(([key, value]) => <span key={key}><b>{String(value)}</b>{changeLabels[key]}</span>)}
     </section>}
 
-    {current?.qualityIssues.length ? <section className="structured-quality-issues">
+    {!comparison && current?.qualityIssues.length ? <section className="structured-quality-issues">
       <header><AlertTriangle size={15}/><strong>需要人工核查</strong><span>{current.qualityIssues.length}</span></header>
       {current.qualityIssues.map((issue, index) => <p key={`${issue.code}-${index}`}>{issue.pageNumber ? `第 ${issue.pageNumber} 页 · ` : ''}{issue.message}</p>)}
     </section> : null}
 
-    {mode === 'raw' ? <pre className="structured-raw-markdown">{rawMarkdown}</pre> : current ? <div className={`versioned-structured-body ${editing ? 'editing' : ''}`}>
-      {current.toc.length > 1 && !editing && <nav className="structured-toc"><strong>章节目录</strong>{current.toc.map(entry => <button key={`${entry.blockId}-${entry.title}`} style={{ paddingLeft: `${10 + (entry.level - 1) * 10}px` }} onClick={() => document.querySelector<HTMLElement>(`[data-structured-block="${entry.blockId}"]`)?.scrollIntoView({ behavior: 'smooth' })}>{entry.title}</button>)}</nav>}
+    {effectiveMode === 'raw' ? <pre className="structured-raw-markdown">{rawMarkdown}</pre> : current ? <div className={`versioned-structured-body ${editing ? 'editing' : ''} ${comparison ? 'comparison' : ''}`}>
+      {showToc && current.toc.length > 1 && !editing && <nav className="structured-toc"><strong>章节目录</strong>{current.toc.map(entry => <button key={`${entry.blockId}-${entry.title}`} style={{ paddingLeft: `${10 + (entry.level - 1) * 10}px` }} onClick={() => openTocBlock(entry.blockId)}>{entry.title}</button>)}</nav>}
       <div className="versioned-structured-content">
-        {blocks.map((block, index) => <section
+        {visibleBlocks.map((block, index) => <section
           key={block.id}
           data-structured-block={block.id}
           data-markdown-block={block.originalBlockIds[0]}
@@ -309,8 +360,9 @@ export default function VersionedStructuredReading({
             >{block.content}</ReactMarkdown>}
           <footer><span>{block.pageRange ? `第 ${block.pageRange[0]}–${block.pageRange[1]} 页` : block.pageNumber ? `第 ${block.pageNumber} 页` : '页码待核对'}</span><span>{block.originalBlockIds.join(' · ')}</span>{block.transformation && <span>高置信度跨页合并</span>}</footer>
         </section>)}
+        {visibleBlockCount < blocks.length && <div ref={loadMoreRef} className="structured-render-more"><span>已加载 {visibleBlocks.length}/{blocks.length} 个结构块</span><button onClick={() => setVisibleBlockCount(count => Math.min(blocks.length, count + STRUCTURED_RENDER_CHUNK))}>继续加载</button></div>}
       </div>
       {editing && <div className="structured-edit-save"><span>保存会创建新版本；不会修改原始 Markdown。</span><button className="primary-button" disabled={busy} onClick={() => void saveAdjustment()}><Save size={14}/>{busy ? '保存中…' : '保存新版本'}</button></div>}
-    </div> : <div className="reader-empty-state"><BookOpen size={28}/><strong>正在建立结构化阅读稿</strong><span>原始 Markdown 会原样保留。</span></div>}
+    </div> : <div className="reader-empty-state"><BookOpen size={28}/><strong>{busy || /正在/.test(notice) ? '正在建立本地整理稿' : '整理稿尚未生成'}</strong><span>{notice || '原始 Markdown 会原样保留。'}</span>{!busy && notice && !/正在/.test(notice) && <button className="primary-button" onClick={() => void regenerateWithRules()}><RotateCcw size={14}/>重新生成本地整理稿</button>}</div>}
   </article>
 }

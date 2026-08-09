@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
+import { Group as ResizableGroup, Panel as ResizablePanel, Separator as ResizableSeparator } from 'react-resizable-panels'
 import xiaoheLogoMark from '../brand/xiaohe-logo-mark.svg'
 import {
   AlertTriangle, ArrowLeft, ArrowRight, BookOpen, Bug, Check, ChevronRight, ClipboardCheck, Cloud,
@@ -29,6 +30,7 @@ import 'katex/dist/katex.min.css'
 import {
   fileHash,
   kindOf as detectedKind,
+  cleanupPdfDocumentWhenIdle,
   loadPdfDocument,
   parseFile,
   pdfPageCount,
@@ -91,6 +93,7 @@ import ResearchCommandCenter from './ResearchCommandCenter'
 import ResearchReviewWorkspace from './ResearchReviewWorkspace'
 import TodayResearch, { ResearchReturnGreeting } from './TodayResearch'
 import ResearchTasks from './ResearchTasks'
+import ReaderViewBoundary from './features/reader/ReaderViewBoundary'
 import VersionedStructuredReading from './features/reader/VersionedStructuredReading'
 import {
   CitationButton,
@@ -1476,11 +1479,16 @@ function App() {
     cool: { page: '#f3f5f6', sidebar: '#edf0f2', paper: '#fcfdfe' },
   }[uiSettings.surfaceTone]
   const effectiveUIScale = Math.max(1, uiSettings.uiScale)
+  const scaledText = (base: number) => `${Math.round(base * effectiveUIScale * 10) / 10}px`
   const appShellStyle = {
-    zoom: effectiveUIScale,
-    width: `${100 / effectiveUIScale}%`,
-    minHeight: `${100 / effectiveUIScale}vh`,
     '--ui-scale': effectiveUIScale,
+    '--ui-text-xs': scaledText(13),
+    '--ui-text-sm': scaledText(14),
+    '--ui-text-md': scaledText(15),
+    '--ui-text-lg': scaledText(17),
+    '--ui-line-compact': 1.4,
+    '--ui-line-normal': 1.55,
+    '--ui-control-min-height': `${Math.round(36 * effectiveUIScale)}px`,
     '--ui-accent': accentPalette.main,
     '--ui-accent-soft': accentPalette.soft,
     '--ui-accent-contrast': accentPalette.contrast,
@@ -1542,6 +1550,7 @@ function App() {
       </div>
       <nav>
         <Nav active={active === 'today'} icon={<LayoutDashboard/>} label="今日科研" count={(researchTasks?.summary.today ?? 0) + (researchTasks?.summary.waiting ?? 0)} onClick={() => setActive('today')}/>
+        <Nav active={active === 'research-workspace'} icon={<CircleDot/>} label="课题与实验" count={researchWorkspace?.runs.filter(run => run.outcome === 'running' || run.outcome === 'planned').length} onClick={() => setActive('research-workspace')}/>
         <Nav active={active === 'research-review'} icon={<ShieldCheck/>} label="复盘与写作" count={(researchWorkspace?.reports.length ?? 0) + (researchWorkspace?.claims.length ?? 0)} onClick={() => setActive('research-review')}/>
         <Nav active={active === 'sources'} icon={<Files/>} label="资料库" count={sources.length} onClick={() => setActive('sources')}/>
         <Nav active={active === 'reader'} icon={<BookOpen/>} label="阅读" onClick={() => selected && setActive('reader')}/>
@@ -3203,6 +3212,16 @@ function FunctionalReader({
   const [localTranslationStatus, setLocalTranslationStatus] = useState<LocalTranslationStatus>()
   const [translationInstalling, setTranslationInstalling] = useState(false)
   const [translationInstallProgress, setTranslationInstallProgress] = useState('')
+  const [parallelFocus, setParallelFocus] = useState<'both' | 'pdf' | 'draft'>('both')
+  const [parallelOutlineOpen, setParallelOutlineOpen] = useState(false)
+  const [parallelLayoutRevision, setParallelLayoutRevision] = useState(0)
+  const [parallelLayout, setParallelLayout] = useState<Record<string, number>>(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem('reader-parallel-layout-v1') || '')
+      if (saved && Number(saved['parallel-pdf']) >= 30 && Number(saved['parallel-draft']) >= 30) return saved
+    } catch { /* A missing or old local preference falls back to an even split. */ }
+    return { 'parallel-pdf': 50, 'parallel-draft': 50 }
+  })
   const [mineruLayoutBlocks, setMineruLayoutBlocks] = useState<MineruLayoutBlock[]>([])
   const [activeAnnotationId, setActiveAnnotationId] = useState<string>()
   const [citationAnchor, setCitationAnchor] = useState<FragmentAnchor>()
@@ -3293,6 +3312,8 @@ function FunctionalReader({
     setPdfSearchQuery('')
     setPdfSearchResults([])
     setPdfSearchState('')
+    setParallelFocus('both')
+    setParallelOutlineOpen(false)
     pdfSearchRunRef.current += 1
     if (!source.fileId) {
       setFile(undefined)
@@ -3313,7 +3334,7 @@ function FunctionalReader({
           const document = await loadPdfDocument(value)
           loadedDocument = document
           if (!alive) {
-            await document.cleanup()
+            await cleanupPdfDocumentWhenIdle(document)
             return
           }
           setPdfDocument(document)
@@ -3323,7 +3344,7 @@ function FunctionalReader({
       .catch(error => alive && setLoadState(error instanceof Error ? error.message : '读取本地原文件失败。'))
     return () => {
       alive = false
-      void loadedDocument?.cleanup()
+      if (loadedDocument) void cleanupPdfDocumentWhenIdle(loadedDocument).catch(() => undefined)
     }
   }, [source.id, source.fileId, source.isDemo, source.kind])
 
@@ -3752,6 +3773,14 @@ function FunctionalReader({
     setZoom(current => readerZoomAfterWheel(current, event.deltaY, true))
   }
 
+  function setParallelBalance(pdfPercent: number) {
+    const layout = { 'parallel-pdf': pdfPercent, 'parallel-draft': 100 - pdfPercent }
+    setParallelFocus('both')
+    setParallelLayout(layout)
+    window.localStorage.setItem('reader-parallel-layout-v1', JSON.stringify(layout))
+    setParallelLayoutRevision(value => value + 1)
+  }
+
   const readerClasses = [
     'research-reader',
     leftOpen ? 'with-library' : 'library-collapsed',
@@ -3773,8 +3802,8 @@ function FunctionalReader({
         </div>
       </div>
       <div className="reader-view-switch" aria-label="阅读视图">
-        <button className={viewMode === 'original' ? 'active' : ''} disabled={source.kind !== 'PDF'} onClick={() => setViewMode('original')}><FileText size={14}/>原文</button>
-        <button className={viewMode === 'parallel' ? 'active' : ''} disabled={source.kind !== 'PDF' || !readableText} onClick={() => setViewMode('parallel')}><Columns2 size={14}/>版面对照</button>
+        <button className={viewMode === 'original' ? 'active' : ''} disabled={source.kind !== 'PDF'} onClick={() => setViewMode('original')}><FileText size={14}/>PDF 原文</button>
+        <button className={viewMode === 'parallel' ? 'active' : ''} disabled={source.kind !== 'PDF' || !readableText} title="可调节宽度的 PDF 与整理稿对照" onClick={() => { setViewMode('parallel'); setLeftOpen(false); setRightOpen(false); setParallelFocus('both') }}><Columns2 size={14}/>版面对照</button>
         <button className={viewMode === 'bilingual' ? 'active' : ''} disabled={!readableText} onClick={() => setViewMode('bilingual')}><Languages size={14}/>中英对照</button>
         <button className={viewMode === 'markdown' ? 'active' : ''} disabled={!readableText} onClick={() => setViewMode('markdown')}><BookOpen size={14}/>整理稿</button>
       </div>
@@ -3872,11 +3901,73 @@ function FunctionalReader({
         onActivePage={setActivePage}
         onScroll={() => setSelection(undefined)}
       />}
-      {viewMode === 'parallel' && pdfDocument && <div className="reader-parallel">
-        <PdfContinuousReader document={pdfDocument} zoom={Math.max(.52, zoom * .55)} annotations={renderedAnnotations} activeAnnotationId={activeAnnotationId} onActivePage={setActivePage} onScroll={() => setSelection(undefined)}/>
+      {viewMode === 'parallel' && pdfDocument && <ReaderViewBoundary viewLabel="版面对照" resetKey={`${source.id}:${source.mineruRevision || source.hash}:parallel`} onReturnToOriginal={() => setViewMode('original')}>
+        <div className="reader-parallel">
+          <header className="reader-parallel-toolbar">
+            <div><strong>证据双页台</strong><span>拖动中线调节宽度；目录默认收起，不挤压正文。</span></div>
+            <div className="reader-parallel-layouts" aria-label="版面对照布局">
+              <button className={parallelFocus === 'pdf' ? 'active' : ''} onClick={() => setParallelFocus(value => value === 'pdf' ? 'both' : 'pdf')}>专注 PDF</button>
+              <button className={parallelFocus === 'both' && parallelLayout['parallel-pdf'] > 54 ? 'active' : ''} onClick={() => setParallelBalance(62)}>PDF 更宽</button>
+              <button className={parallelFocus === 'both' && parallelLayout['parallel-pdf'] >= 46 && parallelLayout['parallel-pdf'] <= 54 ? 'active' : ''} onClick={() => setParallelBalance(50)}>均分</button>
+              <button className={parallelFocus === 'both' && parallelLayout['parallel-pdf'] < 46 ? 'active' : ''} onClick={() => setParallelBalance(38)}>整理稿更宽</button>
+              <button className={parallelFocus === 'draft' ? 'active' : ''} onClick={() => setParallelFocus(value => value === 'draft' ? 'both' : 'draft')}>专注整理稿</button>
+            </div>
+            <div className="reader-parallel-actions">
+              <button className={parallelOutlineOpen ? 'active' : ''} onClick={() => setParallelOutlineOpen(value => !value)}><BookOpen size={14}/>{parallelOutlineOpen ? '隐藏目录' : '显示目录'}</button>
+              <button onClick={() => setViewMode('markdown')}><Expand size={14}/>完整整理稿</button>
+            </div>
+          </header>
+          <div className="reader-parallel-stage">
+            {parallelFocus === 'pdf' ? <div className="reader-parallel-pane pdf-pane"><PdfContinuousReader document={pdfDocument} zoom={zoom} annotations={renderedAnnotations} activeAnnotationId={activeAnnotationId} onActivePage={setActivePage} onScroll={() => setSelection(undefined)}/></div>
+              : parallelFocus === 'draft' ? <div className="reader-parallel-pane draft-pane"><StructuredDocument
+                text={readableText} title="当前整理稿" source={source} paper={paper} settings={settings}
+                presentation="comparison" showToc={parallelOutlineOpen}
+                activeMarkdownBlockId={activeMarkdownTarget?.state === 'resolved' ? activeMarkdownTarget.markdownBlockId : undefined}
+                mineruLayoutBlocks={mineruLayoutBlocks} onMineruLayoutBlocks={setMineruLayoutBlocks}
+                onSaveLayout={layout => onSaveMarkdownLayout(source.id, layout)} onSettings={onSettings}
+              /></div> : <ResizableGroup
+                key={`${source.id}:${parallelLayoutRevision}`}
+                className="reader-parallel-group"
+                id={`parallel-${source.id}`}
+                orientation="horizontal"
+                defaultLayout={parallelLayout}
+                resizeTargetMinimumSize={{ fine: 18, coarse: 32 }}
+                onLayoutChanged={layout => {
+                  setParallelLayout(layout)
+                  window.localStorage.setItem('reader-parallel-layout-v1', JSON.stringify(layout))
+                }}
+              >
+                <ResizablePanel id="parallel-pdf" minSize="340px" className="reader-parallel-pane pdf-pane">
+                  <PdfContinuousReader document={pdfDocument} zoom={Math.max(.68, zoom * .72)} annotations={renderedAnnotations} activeAnnotationId={activeAnnotationId} onActivePage={setActivePage} onScroll={() => setSelection(undefined)}/>
+                </ResizablePanel>
+                <ResizableSeparator id="parallel-divider" className="reader-parallel-divider"><span/></ResizableSeparator>
+                <ResizablePanel id="parallel-draft" minSize="380px" className="reader-parallel-pane draft-pane">
+                  <StructuredDocument
+                    text={readableText} title="当前整理稿" source={source} paper={paper} settings={settings}
+                    presentation="comparison" showToc={parallelOutlineOpen}
+                    activeMarkdownBlockId={activeMarkdownTarget?.state === 'resolved' ? activeMarkdownTarget.markdownBlockId : undefined}
+                    mineruLayoutBlocks={mineruLayoutBlocks} onMineruLayoutBlocks={setMineruLayoutBlocks}
+                    onSaveLayout={layout => onSaveMarkdownLayout(source.id, layout)} onSettings={onSettings}
+                  />
+                </ResizablePanel>
+              </ResizableGroup>}
+          </div>
+        </div>
+      </ReaderViewBoundary>}
+      {viewMode === 'bilingual' && <ReaderViewBoundary viewLabel="中英对照" resetKey={`${source.id}:${source.mineruRevision || source.hash}:bilingual`} returnLabel={source.kind === 'PDF' ? '返回 PDF 原文' : '返回整理稿'} onReturnToOriginal={() => setViewMode(source.kind === 'PDF' ? 'original' : 'markdown')}>
+        <BilingualDocument
+          sourceId={source.id}
+          sourceRevision={source.mineruRevision || source.hash}
+          text={readableText}
+          title={paper?.title || source.name.replace(/\.[^.]+$/, '')}
+          settings={settings}
+          onSettings={onSettings}
+        />
+      </ReaderViewBoundary>}
+      {(viewMode === 'markdown' || (source.kind !== 'PDF' && viewMode !== 'bilingual')) && <ReaderViewBoundary viewLabel="整理稿" resetKey={`${source.id}:${source.mineruRevision || source.hash}:markdown`} returnLabel={source.kind === 'PDF' ? '返回 PDF 原文' : '返回资料库'} onReturnToOriginal={() => source.kind === 'PDF' ? setViewMode('original') : onBack()}>
         <StructuredDocument
           text={readableText}
-          title="本地结构化版本"
+          title={source.mineruMarkdown ? 'MinerU Markdown' : '结构化提取文本'}
           source={source}
           paper={paper}
           settings={settings}
@@ -3886,27 +3977,7 @@ function FunctionalReader({
           onSaveLayout={layout => onSaveMarkdownLayout(source.id, layout)}
           onSettings={onSettings}
         />
-      </div>}
-      {viewMode === 'bilingual' && <BilingualDocument
-        sourceId={source.id}
-        sourceRevision={source.mineruRevision || source.hash}
-        text={readableText}
-        title={paper?.title || source.name.replace(/\.[^.]+$/, '')}
-        settings={settings}
-        onSettings={onSettings}
-      />}
-      {(viewMode === 'markdown' || (source.kind !== 'PDF' && viewMode !== 'bilingual')) && <StructuredDocument
-        text={readableText}
-        title={source.mineruMarkdown ? 'MinerU Markdown' : '结构化提取文本'}
-        source={source}
-        paper={paper}
-        settings={settings}
-        activeMarkdownBlockId={activeMarkdownTarget?.state === 'resolved' ? activeMarkdownTarget.markdownBlockId : undefined}
-        mineruLayoutBlocks={mineruLayoutBlocks}
-        onMineruLayoutBlocks={setMineruLayoutBlocks}
-        onSaveLayout={layout => onSaveMarkdownLayout(source.id, layout)}
-        onSettings={onSettings}
-      />}
+      </ReaderViewBoundary>}
       {!loadState && source.kind === 'PDF' && !pdfDocument && <div className="reader-empty-state"><BookOpen size={28}/><strong>原始 PDF 暂不可用</strong><span>请从资料库重新导入原文件。</span></div>}
     </main>
 
@@ -4304,12 +4375,13 @@ function PdfThumbnail({
   useEffect(() => {
     if (!visible || !canvasRef.current) return
     let disposed = false
+    const controller = new AbortController()
     setError('')
-    void renderPdfThumbnail(document, canvasRef.current, pageNumber)
+    void renderPdfThumbnail(document, canvasRef.current, pageNumber, 168, controller.signal)
       .catch(reason => {
-        if (!disposed) setError(reason instanceof Error ? reason.message : '缩略图失败')
+        if (!disposed && !controller.signal.aborted) setError(reason instanceof Error ? reason.message : '缩略图失败')
       })
-    return () => { disposed = true }
+    return () => { disposed = true; controller.abort() }
   }, [document, pageNumber, visible])
 
   return <button
@@ -4393,11 +4465,12 @@ function PdfPage({
   useEffect(() => {
     if (!shouldRender || !canvasRef.current || !textLayerRef.current) return
     let alive = true
+    const controller = new AbortController()
     setError('')
-    renderPdfPageWithTextLayer(document, canvasRef.current, textLayerRef.current, pageNumber, scale)
+    renderPdfPageWithTextLayer(document, canvasRef.current, textLayerRef.current, pageNumber, scale, controller.signal)
       .then(next => alive && setDimensions(next))
-      .catch(reason => alive && setError(reason instanceof Error ? reason.message : '页面渲染失败。'))
-    return () => { alive = false }
+      .catch(reason => alive && !controller.signal.aborted && setError(reason instanceof Error ? reason.message : '页面渲染失败。'))
+    return () => { alive = false; controller.abort() }
   }, [document, pageNumber, scale, shouldRender])
 
   return <section
@@ -4438,6 +4511,8 @@ type StructuredDocumentProps = {
   onMineruLayoutBlocks: (blocks: MineruLayoutBlock[]) => void
   onSaveLayout: (layout: AcademicMarkdownLayout) => void
   onSettings: () => void
+  presentation?: 'full' | 'comparison'
+  showToc?: boolean
 }
 
 function StructuredDocument(props: StructuredDocumentProps) {
@@ -4449,6 +4524,8 @@ function StructuredDocument(props: StructuredDocumentProps) {
       paper={props.paper}
       settings={props.settings}
       activeMarkdownBlockId={props.activeMarkdownBlockId}
+      presentation={props.presentation}
+      showToc={props.showToc}
       onMineruLayoutBlocks={props.onMineruLayoutBlocks}
       onSettings={props.onSettings}
     />
@@ -5219,10 +5296,10 @@ function SettingsModal({
           <p>选择会立即显示在下方预览中；保存后应用到课题驾驶舱、资料库、阅读与复查界面。</p>
         </div>
         <div className="settings-two-column">
-          <label>界面可读性<select value={Math.max(1, uiDraft.uiScale)} onChange={event => setUIDraft({ ...uiDraft, uiScale: Number(event.target.value) })}>
-            <option value={1}>标准</option>
-            <option value={1.05}>稍大</option>
-            <option value={1.1}>较大</option>
+          <label>界面文字与控件<select value={Math.max(1, uiDraft.uiScale)} onChange={event => setUIDraft({ ...uiDraft, uiScale: Number(event.target.value) })}>
+            <option value={1}>舒适（最小 13px）</option>
+            <option value={1.05}>清晰（约大 5%）</option>
+            <option value={1.1}>大字（约大 10%）</option>
           </select></label>
           <label>信息密度<select value={uiDraft.density} onChange={event => setUIDraft({ ...uiDraft, density: event.target.value as UISettings['density'] })}>
             <option value="comfortable">舒适</option>

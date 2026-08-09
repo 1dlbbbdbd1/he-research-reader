@@ -34,6 +34,12 @@ export const BILINGUAL_READING_DEFAULTS: Readonly<{
 
 export function bilingualContentHash(content?: string): string
 export function bilingualDocumentFingerprint(markdown?: string): string
+export function structuredBlocksToBilingualMarkdown(blocks?: Array<{
+  content?: string
+  kind?: string
+  headingLevel?: number
+  inferredHeading?: string
+}>): string
 export function smartMergeTranslationProse(content?: string): string
 export function prepareTranslationSelection(text?: string, startPageNumber?: number, endPageNumber?: number): {
   originalText: string

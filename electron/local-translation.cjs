@@ -49,6 +49,14 @@ function parseBridgeResult(output) {
   return payload.result
 }
 
+function localTranslationError(error) {
+  const message = error instanceof Error ? error.message : String(error || '本地翻译失败。')
+  if (/\[Errno\s+13\]|permission denied/i.test(message)) {
+    return new Error('本地翻译模型文件权限异常。请在设置中重新安装本地翻译组件；安装程序会修复模型目录权限。')
+  }
+  return error instanceof Error ? error : new Error(message)
+}
+
 function runBridge({ pythonExecutable, bridgeScript, runtimeRoot, stateRoot, command, from, to, text, onProgress }) {
   return new Promise((resolve, reject) => {
     const child = spawn(pythonExecutable, [
@@ -143,23 +151,28 @@ async function translateLocally(options) {
   const to = normalizeLanguageCode(options.to, 'zh')
   const pythonExecutable = findPythonExecutable(options)
   if (!pythonExecutable) throw new Error('本地翻译组件尚未安装。')
-  return runBridge({
-    pythonExecutable,
-    bridgeScript: options.bridgeScript,
-    runtimeRoot: options.runtimeRoot,
-    stateRoot: options.stateRoot,
-    command: 'translate',
-    from,
-    to,
-    text,
-    onProgress: options.onProgress,
-  })
+  try {
+    return await runBridge({
+      pythonExecutable,
+      bridgeScript: options.bridgeScript,
+      runtimeRoot: options.runtimeRoot,
+      stateRoot: options.stateRoot,
+      command: 'translate',
+      from,
+      to,
+      text,
+      onProgress: options.onProgress,
+    })
+  } catch (error) {
+    throw localTranslationError(error)
+  }
 }
 
 module.exports = {
   MAX_TRANSLATION_CHARACTERS,
   candidatePythonExecutables,
   findPythonExecutable,
+  localTranslationError,
   localTranslationStatus,
   normalizeLanguageCode,
   parseBridgeResult,

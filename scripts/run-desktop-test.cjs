@@ -32,6 +32,26 @@ for (const requiredPath of [electronExecutable, mainScript, path.join(projectRoo
 
 fs.mkdirSync(userDataPath, { recursive: true })
 if (smokeMode) {
+  fs.writeFileSync(path.join(userDataPath, 'settings.json'), `${JSON.stringify({
+    version: 1,
+    ai: {
+      baseUrl: 'https://api.openai.com/v1',
+      model: '',
+      allowFullDocument: false,
+      translationProvider: 'local',
+    },
+    ui: {
+      uiScale: 1.1,
+      density: 'comfortable',
+      surfaceTone: 'neutral',
+      accentColor: 'slate',
+      readerFontSize: 16,
+      readerLineHeight: 1.8,
+      readerWidth: 820,
+    },
+    encryptedApiKey: '',
+    updatedAt: new Date().toISOString(),
+  }, null, 2)}\n`, 'utf8')
   const { WorkspaceService } = require('../electron/workspace-service.cjs')
   const smokeVaultPath = path.join(runRoot, 'vault')
   fs.mkdirSync(smokeVaultPath, { recursive: true })
@@ -42,10 +62,18 @@ if (smokeMode) {
       id: 'desktop-structured-smoke',
       fileName: 'structured-smoke.pdf',
       kind: 'PDF',
-      bytes: Buffer.from('%PDF-1.4 structured reading smoke'),
+      bytes: fs.readFileSync(path.join(projectRoot, 'test-fixtures', 'pdf-render-check.pdf')),
     })
-    const markdown = 'Abstract\n\nThis is the first evidence sentence.\nSecond glued paragraph begins here.\n\nMethods\n\nRaw evidence remains traceable.'
+    service.importSourceFile({
+      id: 'desktop-reader-error-smoke',
+      fileName: 'reader-error-recovery.pdf',
+      kind: 'PDF',
+      bytes: fs.readFileSync(path.join(projectRoot, 'test-fixtures', 'pdf-render-check.pdf')),
+    })
+    const longReadingBlocks = Array.from({ length: 220 }, (_, index) => `Long-form evidence block ${index + 1} remains in deterministic reading order and keeps the desktop reader scrollable.`)
+    const markdown = ['Abstract', '', 'This is the first evidence sentence.\nSecond glued paragraph begins here.', '', 'Methods', '', 'Raw evidence remains traceable.', '', ...longReadingBlocks.flatMap(block => [block, ''])].join('\n').trim()
     const source = service.loadLibraryState().sources.find(item => item.id === 'desktop-structured-smoke')
+    const errorSource = service.loadLibraryState().sources.find(item => item.id === 'desktop-reader-error-smoke')
     service.syncLibraryState({
       workspaceId: vault.id,
       sources: [{
@@ -55,12 +83,25 @@ if (smokeMode) {
         mineruState: '完成',
         mineruMarkdown: markdown,
         readerState: { viewMode: 'markdown', zoom: 1.1 },
+      }, {
+        ...errorSource,
+        status: '已解析',
+        pages: 2,
+        mineruState: '完成',
+        mineruMarkdown: 'Abstract\n\nThis isolated source intentionally verifies reader error recovery.',
+        readerState: { viewMode: 'markdown', zoom: 1 },
       }],
       annotations: [],
     })
+    const errorStructured = service.generateStructuredReading({ sourceId: 'desktop-reader-error-smoke', createdBy: 'rules' })
+    service.database.exec('DROP TRIGGER structured_reading_versions_cannot_be_updated')
+    service.database.prepare('UPDATE structured_reading_versions SET blocks_json = ? WHERE id = ?').run(JSON.stringify([{
+      id: 'corrupted-block', content: 'Corrupted isolated smoke block', kind: 'paragraph', originalBlockIds: null,
+      sourceSlices: [], contentFingerprint: 'isolated-corruption', sourceVersion: 1,
+    }]), errorStructured.currentVersion.id)
     const item = service.loadLibraryState().bibliographicItems.find(entry => entry.sourceId === 'desktop-structured-smoke')
-    const translatedBase = 'This is the first evidence sentence.\nSecond glued paragraph begins here.'
-    const translatedWorking = 'This is the first evidence sentence. Second glued paragraph begins here.'
+    const translatedBase = 'This is the first evidence sentence.'
+    const translatedWorking = translatedBase
     const translatedBaseHash = bilingualSourceHash(translatedBase)
     service.saveReadingTranslationSegment({
       sourceId: 'desktop-structured-smoke',
@@ -68,7 +109,7 @@ if (smokeMode) {
       baseSourceHash: translatedBaseHash,
       sourceHash: bilingualSourceHash(translatedWorking),
       sourceText: translatedWorking,
-      translatedText: '这是第一句证据。第二个粘连段落从这里开始。',
+      translatedText: '这是第一句证据。',
       provider: 'local',
       model: 'Argos en_zh',
       status: 'translated',
@@ -139,6 +180,7 @@ const child = spawn(electronExecutable, [mainScript], {
   env: {
     ...process.env,
     RESEARCH_READER_DEV_USER_DATA: userDataPath,
+    RESEARCH_READER_DESKTOP_TEST_ROOT: runRoot,
     RESEARCH_READER_DESKTOP_SMOKE: smokeMode ? '1' : '0',
     RESEARCH_READER_ISOLATED_DESKTOP_TEST: '1',
     ELECTRON_ENABLE_LOGGING: '1',

@@ -20,6 +20,20 @@ test('双栏重排后的 Markdown 按阅读顺序分段且能够无损重建', a
   ])
 })
 
+test('中英对照只从当前整理稿块顺序建立翻译源，并保留章节层级', async () => {
+  const { reconstructBilingualSource, segmentBilingualMarkdown, structuredBlocksToBilingualMarkdown } = await import('../src/bilingual-reading.mjs')
+  const blocks = [
+    { id: 'right', kind: 'paragraph', content: 'Right column evidence.' },
+    { id: 'left', kind: 'paragraph', content: 'Left column evidence.', inferredHeading: 'Methods' },
+    { id: 'heading', kind: 'heading', headingLevel: 3, content: 'Results' },
+  ]
+  const markdown = structuredBlocksToBilingualMarkdown(blocks)
+  assert.equal(markdown, 'Right column evidence.\n\n## Methods\n\nLeft column evidence.\n\n### Results')
+  const segments = segmentBilingualMarkdown(markdown)
+  assert.equal(reconstructBilingualSource(segments), markdown)
+  assert.ok(markdown.indexOf('Right column') < markdown.indexOf('Left column'))
+})
+
 test('GFM 表格可翻译，但公式、代码、图片与纯结构保持原样并跳过翻译', async () => {
   const { buildBilingualReadingPairs, reconstructBilingualSource, segmentBilingualMarkdown } = await import('../src/bilingual-reading.mjs')
   const markdown = [

@@ -87,4 +87,18 @@ if ($LASTEXITCODE -ne 0) {
     throw "Argos Translate 语言模型安装失败，退出码：$LASTEXITCODE"
 }
 
+# Some Argos/Stanza package archives preserve a protected Windows ACL on a few
+# model files (notably stanza/resources.json).  That can make a runtime created
+# by an installer or a managed development account unreadable when the desktop
+# app is later launched by the interactive Windows user.  Re-enable inheritance
+# for the complete model tree so it follows the deliberately writable runtime
+# root instead of keeping archive-specific owner-only permissions.
+if ($env:OS -eq 'Windows_NT') {
+    Write-Host '正在校准本地模型文件权限…'
+    & "$env:SystemRoot\System32\icacls.exe" $packagesRoot /inheritance:e /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Argos Translate 模型权限校准失败，退出码：$LASTEXITCODE"
+    }
+}
+
 Write-Host "本地翻译已就绪：$FromCode → $ToCode"

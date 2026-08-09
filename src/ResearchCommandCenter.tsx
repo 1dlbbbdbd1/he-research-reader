@@ -272,7 +272,7 @@ export default function ResearchCommandCenter({
       {data?.history?.length ? <footer><History/>定位修改已保留 {data.history.length} 个历史版本，不会覆盖旧结论。</footer> : null}
     </section>
 
-    <div className="research-command-grid">
+    <div className={`research-command-grid ${milestones.length ? 'has-milestones' : 'is-empty'}`}>
       <section className="research-milestone-panel">
         <header><div><p className="section-kicker">Milestones</p><h2>里程碑与验收</h2></div><button className="outline-button compact" onClick={() => setMilestoneDraft(emptyMilestone())}><Plus/>新建</button></header>
         {milestones.length ? <div className="research-milestone-list">{milestones.map(milestone => {

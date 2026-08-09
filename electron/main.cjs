@@ -629,7 +629,8 @@ function createWindow() {
       mainWindow.setContentSize(1024, 768)
       const previousClipboardText = clipboard.readText()
       const smokeCitation = `H’s 科研助手 GB/T 7714—2015 剪贴板验收 ${Date.now()}`
-      const expectedRawMarkdown = 'Abstract\n\nThis is the first evidence sentence.\nSecond glued paragraph begins here.\n\nMethods\n\nRaw evidence remains traceable.'
+      const expectedLongBlocks = Array.from({ length: 220 }, (_, index) => `Long-form evidence block ${index + 1} remains in deterministic reading order and keeps the desktop reader scrollable.`)
+      const expectedRawMarkdown = ['Abstract', '', 'This is the first evidence sentence.\nSecond glued paragraph begins here.', '', 'Methods', '', 'Raw evidence remains traceable.', '', ...expectedLongBlocks.flatMap(block => [block, ''])].join('\n').trim()
       const script = `(async () => {
         const waitFor = async (read, timeout = 12000, label = 'unknown') => {
           const started = Date.now()
@@ -640,12 +641,33 @@ function createWindow() {
           }
           throw new Error('structured-ui-timeout:' + label)
         }
+        const setValue = (element, value) => {
+          const prototype = element instanceof HTMLInputElement
+            ? HTMLInputElement.prototype
+            : element instanceof HTMLSelectElement
+              ? HTMLSelectElement.prototype
+              : HTMLTextAreaElement.prototype
+          const setter = Object.getOwnPropertyDescriptor(prototype, 'value').set
+          setter.call(element, value)
+          element.dispatchEvent(new Event('input', { bubbles: true }))
+          element.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        const onboarding = await waitFor(() => document.querySelector('.settings-modal'))
+        const onboardingInputs = onboarding.querySelectorAll('input')
+        setValue(onboardingInputs[0], 'https://api.example.invalid/v1')
+        setValue(onboardingInputs[1], 'desktop-smoke-model')
+        setValue(onboardingInputs[2], 'desktop-smoke-secret')
+        const finishOnboarding = [...onboarding.querySelectorAll('button')].find(button => button.textContent.includes('保存并进入'))
+        finishOnboarding.click()
+        await waitFor(() => !document.querySelector('.settings-modal'), 12000, 'onboarding-close')
         const clipboardResult = await window.readerDesktop.writeClipboardText({ text: ${JSON.stringify(smokeCitation)} })
         const greeting = await waitFor(() => document.querySelector('.research-return-dialog'))
         const greetingVisible = greeting.textContent.includes('终于回来了')
         const dismissGreeting = [...greeting.querySelectorAll('button')].find(button => button.textContent.includes('先看今日科研'))
         dismissGreeting.click()
         const todayRoot = await waitFor(() => document.querySelector('.today-research'))
+        const appShell = document.querySelector('.app-shell')
+        const uiScale10Applied = parseFloat(getComputedStyle(appShell).getPropertyValue('--ui-text-xs')) >= 14.2
         const desktop1024NoOverflow = document.documentElement.scrollWidth === document.documentElement.clientWidth
           && [...document.querySelectorAll('button')].every(button => {
             const rect = button.getBoundingClientRect()
@@ -669,11 +691,6 @@ function createWindow() {
         problemKind.click()
         const recordInput = recordDialog.querySelector('input')
         const recordText = recordDialog.querySelector('textarea')
-        const setValue = (element, value) => {
-          const setter = Object.getOwnPropertyDescriptor(element instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype, 'value').set
-          setter.call(element, value)
-          element.dispatchEvent(new Event('input', { bubbles: true }))
-        }
         setValue(recordInput, '桌面烟测记录的真实阻塞')
         setValue(recordText, '这条记录通过今日科研主要动作写入隔离研究库。')
         const saveRecord = [...recordDialog.querySelectorAll('button')].find(button => button.textContent.includes('保存到当前研究库'))
@@ -700,24 +717,83 @@ function createWindow() {
         const quickSave = [...document.querySelectorAll('.research-quick-inbox button')].find(button => button.textContent.includes('收下'))
         quickSave.click()
         const quickInboxSaved = Boolean(await waitFor(() => [...document.querySelectorAll('.research-task-card')].find(card => card.textContent.includes('桌面烟测快速收件箱'))))
+        const reviewNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('复盘与写作'))
+        reviewNav.click()
+        const reviewRoot = await waitFor(() => document.querySelector('.research-review-workspace'), 12000, 'review-after-ui-scale')
+        const reviewTypeSamples = [...reviewRoot.querySelectorAll('.section-kicker, .research-report-controls label, .research-report-studio > header > span')]
+        const reviewMinimumTypeReadable = reviewTypeSamples.length >= 4 && reviewTypeSamples.every(node => parseFloat(getComputedStyle(node).fontSize) >= 14.2)
+        const reportControls = reviewRoot.querySelector('.research-report-controls')
+        const reportControlRects = [...reportControls.children].map(node => node.getBoundingClientRect()).filter(rect => rect.width > 0)
+        const reportControlsDoNotOverlap = reportControlRects.every((rect, index) => reportControlRects.slice(index + 1).every(other => rect.right <= other.left + 1 || other.right <= rect.left + 1 || rect.bottom <= other.top + 1 || other.bottom <= rect.top + 1))
+          && reportControls.scrollWidth <= reportControls.clientWidth + 1
         const todayNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('今日科研'))
         todayNav.click()
-        const returnedTodayRoot = await waitFor(() => document.querySelector('.today-research'))
+        const returnedTodayRoot = await waitFor(() => document.querySelector('.today-research'), 12000, 'today-after-ui-scale')
+        const workspaceNavVisible = Boolean([...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('课题与实验')))
         const continueResearch = returnedTodayRoot.querySelector('.today-continue')
         continueResearch.click()
-        const structuredView = await waitFor(() => [...document.querySelectorAll('button')].find(button => button.textContent.trim() === '整理稿'))
+        const structuredView = await waitFor(() => [...document.querySelectorAll('button')].find(button => button.textContent.trim() === '整理稿'), 12000, 'structured-switch-after-ui-scale')
         const readerModeRestored = structuredView.classList.contains('active')
         structuredView.click()
-        const structuredRoot = await waitFor(() => document.querySelector('.versioned-structured-reader'))
-        await waitFor(() => structuredRoot.querySelectorAll('.structured-version-block').length >= 3)
+        const structuredRoot = await waitFor(() => document.querySelector('.versioned-structured-reader'), 12000, 'structured-root-after-ui-scale')
+        await waitFor(() => structuredRoot.querySelectorAll('.structured-version-block').length >= 3, 12000, 'structured-blocks-after-ui-scale')
         const versionVisible = /v1/.test(structuredRoot.textContent) && structuredRoot.textContent.includes('本版变化')
-        const structuredBlockCount = structuredRoot.querySelectorAll('.structured-version-block').length
+        const structuredInitialBlockCount = structuredRoot.querySelectorAll('.structured-version-block').length
         const rawSwitch = [...structuredRoot.querySelectorAll('button')].find(button => button.textContent.trim() === '原始 MD')
         rawSwitch.click()
         const raw = await waitFor(() => structuredRoot.querySelector('.structured-raw-markdown'))
+        const rawMarkdownPreserved = raw.textContent === ${JSON.stringify(expectedRawMarkdown)}
+        const organizedSwitch = [...structuredRoot.querySelectorAll('button')].find(button => button.textContent.trim() === '整理稿')
+        organizedSwitch.click()
+        await waitFor(() => structuredRoot.querySelector('.structured-version-block'))
+        const structuredScrollable = structuredRoot.scrollHeight > structuredRoot.clientHeight && structuredRoot.clientHeight > 0
+        for (let attempt = 0; attempt < 12 && structuredRoot.querySelector('.structured-render-more'); attempt += 1) {
+          structuredRoot.scrollTop = structuredRoot.scrollHeight
+          structuredRoot.dispatchEvent(new Event('scroll'))
+          await new Promise(resolve => setTimeout(resolve, 120))
+          structuredRoot.querySelector('.structured-render-more button')?.click()
+        }
+        await waitFor(() => structuredRoot.textContent.includes('Long-form evidence block 220'), 12000, 'structured-last-block')
+        structuredRoot.scrollTop = structuredRoot.scrollHeight
+        const structuredReachedEnd = structuredRoot.scrollTop + structuredRoot.clientHeight >= structuredRoot.scrollHeight - 4
+        const structuredBlockCount = structuredRoot.querySelectorAll('.structured-version-block').length
+        const parallelSwitch = [...document.querySelectorAll('.reader-view-switch button')].find(button => button.textContent.includes('版面对照'))
+        if (!parallelSwitch || parallelSwitch.disabled) throw new Error('parallel-switch-unavailable')
+        parallelSwitch.click()
+        await new Promise(resolve => setTimeout(resolve, 300))
+        const activeReaderView = [...document.querySelectorAll('.reader-view-switch button')].find(button => button.classList.contains('active'))?.textContent.trim()
+        if (activeReaderView !== '版面对照') throw new Error('parallel-state-not-active:' + String(activeReaderView))
+        const parallelOutcome = await waitFor(() => document.querySelector('.reader-parallel') || document.querySelector('.reader-view-failure'), 12000, 'parallel-root')
+        if (parallelOutcome.classList.contains('reader-view-failure')) throw new Error('parallel-view-failed:' + parallelOutcome.textContent)
+        const parallelRoot = parallelOutcome
+        const parallelPdf = parallelRoot.querySelector('.pdf-scroll')
+        const parallelStructured = parallelRoot.querySelector('.versioned-structured-reader')
+        const parallelPanesVisible = Boolean(parallelPdf && parallelStructured && parallelPdf.getBoundingClientRect().width > 0 && parallelStructured.getBoundingClientRect().width > 0)
+        const parallelStructuredScrollable = Boolean(parallelStructured && parallelStructured.scrollHeight > parallelStructured.clientHeight && parallelStructured.clientHeight > 0)
+        const parallelSeparatorAccessible = Boolean(parallelRoot.querySelector('[role="separator"]')?.getBoundingClientRect().width >= 8)
+        const parallelTocInitiallyHidden = !parallelRoot.querySelector('.structured-toc')
+        const showParallelToc = [...parallelRoot.querySelectorAll('button')].find(button => button.textContent.includes('显示目录'))
+        showParallelToc.click()
+        const parallelTocCanToggle = Boolean(await waitFor(() => parallelRoot.querySelector('.structured-toc'), 12000, 'parallel-toc'))
+        const hideParallelToc = [...parallelRoot.querySelectorAll('button')].find(button => button.textContent.includes('隐藏目录'))
+        hideParallelToc.click()
+        await waitFor(() => !parallelRoot.querySelector('.structured-toc'), 12000, 'parallel-toc-hidden')
+        const pdfWiderButton = [...parallelRoot.querySelectorAll('button')].find(button => button.textContent.includes('PDF 更宽'))
+        pdfWiderButton.click()
+        await new Promise(resolve => setTimeout(resolve, 180))
+        const parallelPdfPanel = parallelRoot.querySelector('[data-panel][id="parallel-pdf"]')
+        const parallelDraftPanel = parallelRoot.querySelector('[data-panel][id="parallel-draft"]')
+        const parallelPanelMetrics = {
+          pdf: parallelPdfPanel?.getBoundingClientRect().width || 0,
+          draft: parallelDraftPanel?.getBoundingClientRect().width || 0,
+          panelCount: parallelRoot.querySelectorAll('[data-panel]').length,
+        }
+        const parallelLayoutAdjustable = parallelPanelMetrics.pdf > parallelPanelMetrics.draft
         const bilingualSwitch = [...document.querySelectorAll('button')].find(button => button.textContent.trim() === '中英对照')
         bilingualSwitch.click()
         const bilingualRoot = await waitFor(() => document.querySelector('.bilingual-reader'), 12000, 'bilingual-root')
+        const bilingualUsesStructuredOrder = bilingualRoot.textContent.includes('翻译顺序来自：本地整理 v1')
+        const bilingualScrollable = bilingualRoot.scrollHeight > bilingualRoot.clientHeight && bilingualRoot.clientHeight > 0
         const translationEngineCount = bilingualRoot.querySelectorAll('.bilingual-engine-switch button').length
         const translationViewCount = bilingualRoot.querySelectorAll('.bilingual-view-switch button').length
         const translatedSegment = await waitFor(() => [...bilingualRoot.querySelectorAll('.bilingual-segment.translated')].find(segment => segment.textContent.includes('这是第一句证据')), 12000, 'translated-cache')
@@ -742,6 +818,54 @@ function createWindow() {
         startCloud.click()
         const cloudConfirm = await waitFor(() => document.querySelector('.bilingual-cloud-confirm'), 12000, 'cloud-confirm')
         const cloudScopeVisible = cloudConfirm.textContent.includes('Provider') && cloudConfirm.textContent.includes('字符') && cloudConfirm.textContent.includes('模型')
+        for (let attempt = 0; attempt < 12 && bilingualRoot.querySelector('.bilingual-render-more'); attempt += 1) {
+          bilingualRoot.scrollTop = bilingualRoot.scrollHeight
+          bilingualRoot.dispatchEvent(new Event('scroll'))
+          await new Promise(resolve => setTimeout(resolve, 120))
+          bilingualRoot.querySelector('.bilingual-render-more button')?.click()
+        }
+        await waitFor(() => bilingualRoot.textContent.includes('Long-form evidence block 220'), 12000, 'bilingual-last-block')
+        bilingualRoot.scrollTop = bilingualRoot.scrollHeight
+        const bilingualReachedEnd = bilingualRoot.scrollTop + bilingualRoot.clientHeight >= bilingualRoot.scrollHeight - 4
+        cloudConfirm.querySelector('button')?.click()
+        const viewExpectations = [
+          ['PDF 原文', '.pdf-scroll'],
+          ['整理稿', '.versioned-structured-reader'],
+          ['版面对照', '.reader-parallel'],
+          ['中英对照', '.bilingual-reader'],
+          ['PDF 原文', '.pdf-scroll'],
+          ['版面对照', '.reader-parallel'],
+          ['整理稿', '.versioned-structured-reader'],
+          ['中英对照', '.bilingual-reader'],
+          ['PDF 原文', '.pdf-scroll'],
+          ['中英对照', '.bilingual-reader'],
+        ]
+        let switchStressPassed = true
+        for (const [label, selector] of viewExpectations) {
+          const button = [...document.querySelectorAll('.reader-view-switch button')].find(item => item.textContent.trim() === label)
+          if (!button || button.disabled) { switchStressPassed = false; break }
+          button.click()
+          const outcome = await waitFor(() => document.querySelector(selector) || document.querySelector('.reader-view-failure'), 12000, 'switch-' + label)
+          if (outcome.classList.contains('reader-view-failure')) { switchStressPassed = false; break }
+        }
+        const libraryToggle = document.querySelector('.reader-title-group button[title="文献与 PDF 导航"]')
+        libraryToggle.click()
+        const readerLibrary = await waitFor(() => document.querySelector('.reader-paper-list'))
+        const errorPaper = [...readerLibrary.querySelectorAll('button')].find(button => button.textContent.includes('reader-error-recovery.pdf'))
+        errorPaper.click()
+        const errorFallback = await waitFor(() => document.querySelector('.reader-view-failure'), 12000, 'reader-error-fallback')
+        const errorFallbackVisible = errorFallback.textContent.includes('整理稿没有成功打开')
+          && errorFallback.textContent.includes('重试当前视图')
+          && errorFallback.textContent.includes('返回 PDF 原文')
+        const returnToPdf = [...errorFallback.querySelectorAll('button')].find(button => button.textContent.includes('返回 PDF 原文'))
+        returnToPdf.click()
+        const errorBoundaryRecovered = Boolean(await waitFor(() => document.querySelector('.pdf-scroll'), 12000, 'reader-error-return-pdf'))
+        const mainPaper = [...document.querySelectorAll('.reader-paper-list button')].find(button => button.textContent.includes('structured-smoke.pdf'))
+        mainPaper.click()
+        await waitFor(() => [...document.querySelectorAll('.reader-view-switch button')].find(button => button.textContent.trim() === '中英对照' && !button.disabled), 12000, 'main-reader-return')
+        const finalBilingualSwitch = [...document.querySelectorAll('.reader-view-switch button')].find(button => button.textContent.trim() === '中英对照')
+        finalBilingualSwitch.click()
+        await waitFor(() => document.querySelector('.bilingual-reader'), 12000, 'final-bilingual-return')
         const readerRoot = document.querySelector('.research-reader')
         const reader1024FillsViewport = readerRoot?.getBoundingClientRect().bottom === innerHeight
           && readerRoot?.getBoundingClientRect().height === innerHeight
@@ -759,10 +883,30 @@ function createWindow() {
           aiProposalVisible,
           aiTaskConfirmed,
           quickInboxSaved,
+          uiScale10Applied,
+          workspaceNavVisible,
           readerModeRestored,
           versionVisible,
+          structuredInitialBlockCount,
           structuredBlockCount,
-          rawMarkdownPreserved: raw.textContent === ${JSON.stringify(expectedRawMarkdown)},
+          rawMarkdownPreserved,
+          structuredScrollable,
+          structuredReachedEnd,
+          parallelPanesVisible,
+          parallelStructuredScrollable,
+          parallelSeparatorAccessible,
+          parallelTocInitiallyHidden,
+          parallelTocCanToggle,
+          parallelLayoutAdjustable,
+          parallelPanelMetrics,
+          reviewMinimumTypeReadable,
+          reportControlsDoNotOverlap,
+          bilingualUsesStructuredOrder,
+          bilingualScrollable,
+          bilingualReachedEnd,
+          switchStressPassed,
+          errorFallbackVisible,
+          errorBoundaryRecovered,
           translationEngineCount,
           translationViewCount,
           failedRetryVisible,
@@ -774,11 +918,13 @@ function createWindow() {
       })()`
       void mainWindow.webContents.executeJavaScript(script, true)
         .then(async result => {
-          const { title, clipboardResult, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, readerModeRestored, versionVisible, structuredBlockCount, rawMarkdownPreserved, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport } = result
+          const { title, clipboardResult, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport } = result
           mainWindow.setContentSize(1600, 900)
           await new Promise(resolve => setTimeout(resolve, 160))
           const desktop1600 = await mainWindow.webContents.executeJavaScript(`(() => {
             const readerRoot = document.querySelector('.research-reader')
+            const bilingualRoot = document.querySelector('.bilingual-reader')
+            if (bilingualRoot) bilingualRoot.scrollTop = 0
             return {
               noOverflow: document.documentElement.scrollWidth === document.documentElement.clientWidth,
               readerFillsViewport: readerRoot?.getBoundingClientRect().bottom === innerHeight
@@ -786,13 +932,117 @@ function createWindow() {
                 && readerRoot?.scrollWidth === readerRoot?.clientWidth,
             }
           })()`, true)
+          await new Promise(resolve => setTimeout(resolve, 120))
+          const screenshotRoot = process.env.RESEARCH_READER_DESKTOP_TEST_ROOT
+          const screenshotPath = screenshotRoot ? path.join(screenshotRoot, 'reader-long-document-1600x900.png') : undefined
+          if (screenshotPath) fs.writeFileSync(screenshotPath, (await mainWindow.capturePage()).toPNG())
+          const reviewScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'research-review-ergonomic-1600x900.png') : undefined
+          const parallelScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'reader-parallel-1600x900.png') : undefined
+          const commandScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'research-command-empty-layout-1600x900.png') : undefined
+          let emptyStateLayoutMetrics = { reviewConverged: false, commandConverged: false }
+          if (reviewScreenshotPath && parallelScreenshotPath && commandScreenshotPath) {
+            await mainWindow.webContents.executeJavaScript(`(async () => {
+              const waitForElement = async selector => {
+                const started = Date.now()
+                while (Date.now() - started < 12000) {
+                  const node = document.querySelector(selector)
+                  if (node) return node
+                  await new Promise(resolve => setTimeout(resolve, 40))
+                }
+                throw new Error('visual-wait:' + selector)
+              }
+              const waitForStableParallel = async () => {
+                const started = Date.now()
+                while (Date.now() - started < 12000) {
+                  const ready = document.querySelector('.reader-parallel .pdf-page-shell canvas')
+                    && document.querySelector('.reader-parallel .structured-version-block')
+                    && !document.querySelector('.reader-state-banner')
+                  if (ready) {
+                    await new Promise(resolve => setTimeout(resolve, 600))
+                    if (document.querySelector('.reader-parallel .pdf-page-shell canvas')
+                      && document.querySelector('.reader-parallel .structured-version-block')
+                      && !document.querySelector('.reader-state-banner')) return
+                  }
+                  await new Promise(resolve => setTimeout(resolve, 60))
+                }
+                throw new Error('visual-wait:stable-parallel')
+              }
+              const parallel = [...document.querySelectorAll('.reader-view-switch button')].find(button => button.textContent.includes('版面对照'))
+              parallel.click()
+              const parallelRoot = await waitForElement('.reader-parallel')
+              await waitForStableParallel()
+              const pdfWider = [...parallelRoot.querySelectorAll('button')].find(button => button.textContent.includes('PDF 更宽'))
+              pdfWider.click()
+              await waitForStableParallel()
+            })()`, true)
+            fs.writeFileSync(parallelScreenshotPath, (await mainWindow.capturePage()).toPNG())
+            const reviewLayoutMetrics = await mainWindow.webContents.executeJavaScript(`(async () => {
+              const started = Date.now()
+              const reviewNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('复盘与写作'))
+              reviewNav.click()
+              while (Date.now() - started < 12000) {
+                const root = document.querySelector('.research-review-workspace')
+                const grid = root?.querySelector('.research-output-grid.is-empty')
+                if (grid) {
+                  const list = grid.querySelector('.research-output-list')
+                  const studio = grid.querySelector('.research-report-studio')
+                  const placeholder = grid.querySelector('.research-report-placeholder')
+                  const gridRect = grid.getBoundingClientRect()
+                  const listRect = list.getBoundingClientRect()
+                  const studioRect = studio.getBoundingClientRect()
+                  return {
+                    fullWidthRows: Math.abs(gridRect.width - listRect.width) <= 2 && Math.abs(gridRect.width - studioRect.width) <= 2,
+                    compactEmptyRail: listRect.height <= 130,
+                    compactPlaceholder: placeholder.getBoundingClientRect().height <= 320,
+                  }
+                }
+                await new Promise(resolve => setTimeout(resolve, 40))
+              }
+              throw new Error('visual-wait:.research-output-grid.is-empty')
+            })()`, true)
+            await new Promise(resolve => setTimeout(resolve, 160))
+            fs.writeFileSync(reviewScreenshotPath, (await mainWindow.capturePage()).toPNG())
+            const commandLayoutMetrics = await mainWindow.webContents.executeJavaScript(`(async () => {
+              const started = Date.now()
+              const commandNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('课题与实验'))
+              commandNav.click()
+              while (Date.now() - started < 12000) {
+                const root = document.querySelector('.research-command-center')
+                const grid = root?.querySelector('.research-command-grid.is-empty')
+                if (grid) {
+                  const milestone = grid.querySelector('.research-milestone-panel')
+                  const nextPanel = grid.querySelector('.research-next-panel')
+                  const supportCards = [...nextPanel.children]
+                  const gridRect = grid.getBoundingClientRect()
+                  const milestoneRect = milestone.getBoundingClientRect()
+                  const nextRect = nextPanel.getBoundingClientRect()
+                  const supportHeights = supportCards.map(card => card.getBoundingClientRect().height)
+                  return {
+                    fullWidthRows: Math.abs(gridRect.width - milestoneRect.width) <= 2 && Math.abs(gridRect.width - nextRect.width) <= 2,
+                    compactMilestoneEmpty: milestone.querySelector('.research-guided-empty').getBoundingClientRect().height <= 140,
+                    balancedSupportCards: supportHeights.length === 2 && Math.abs(supportHeights[0] - supportHeights[1]) <= 2,
+                  }
+                }
+                await new Promise(resolve => setTimeout(resolve, 40))
+              }
+              throw new Error('visual-wait:.research-command-grid.is-empty')
+            })()`, true)
+            await new Promise(resolve => setTimeout(resolve, 160))
+            fs.writeFileSync(commandScreenshotPath, (await mainWindow.capturePage()).toPNG())
+            emptyStateLayoutMetrics = {
+              reviewConverged: Object.values(reviewLayoutMetrics).every(Boolean),
+              commandConverged: Object.values(commandLayoutMetrics).every(Boolean),
+              review: reviewLayoutMetrics,
+              command: commandLayoutMetrics,
+            }
+          }
           const clipboardVerified = clipboard.readText() === smokeCitation && clipboardResult?.written === true
           clipboard.writeText(previousClipboardText)
-          if (!clipboardVerified || !desktop1024NoOverflow || !escapeClosedAndRestoredFocus || !greetingVisible || todayAnswerCount !== 5 || !todayContextRestored || !recordSaved || taskBucketCount !== 7 || !aiProposalVisible || !aiTaskConfirmed || !quickInboxSaved || !readerModeRestored || !versionVisible || structuredBlockCount < 3 || !rawMarkdownPreserved || translationEngineCount !== 2 || translationViewCount !== 3 || !failedRetryVisible || !translationLocked || !glossarySaved || !cloudScopeVisible || !reader1024FillsViewport || !desktop1600.noOverflow || !desktop1600.readerFillsViewport) {
-            finishDesktopSmoke({ reason: 'desktop-acceptance-failed', title, clipboardVerified, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, readerModeRestored, versionVisible, structuredBlockCount, rawMarkdownPreserved, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, userData: app.getPath('userData') }, true)
+          if (!clipboardVerified || !desktop1024NoOverflow || !escapeClosedAndRestoredFocus || !greetingVisible || todayAnswerCount !== 5 || !todayContextRestored || !recordSaved || taskBucketCount !== 7 || !aiProposalVisible || !aiTaskConfirmed || !quickInboxSaved || !uiScale10Applied || !workspaceNavVisible || !readerModeRestored || !versionVisible || structuredInitialBlockCount >= structuredBlockCount || structuredBlockCount < 220 || !rawMarkdownPreserved || !structuredScrollable || !structuredReachedEnd || !parallelPanesVisible || !parallelStructuredScrollable || !parallelSeparatorAccessible || !parallelTocInitiallyHidden || !parallelTocCanToggle || !parallelLayoutAdjustable || !reviewMinimumTypeReadable || !reportControlsDoNotOverlap || !bilingualUsesStructuredOrder || !bilingualScrollable || !bilingualReachedEnd || !switchStressPassed || !errorFallbackVisible || !errorBoundaryRecovered || translationEngineCount !== 2 || translationViewCount !== 3 || !failedRetryVisible || !translationLocked || !glossarySaved || !cloudScopeVisible || !reader1024FillsViewport || !desktop1600.noOverflow || !desktop1600.readerFillsViewport || !emptyStateLayoutMetrics.reviewConverged || !emptyStateLayoutMetrics.commandConverged) {
+            finishDesktopSmoke({ reason: 'desktop-acceptance-failed', title, clipboardVerified, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, emptyStateLayoutMetrics, userData: app.getPath('userData') }, true)
             return
           }
-          finishDesktopSmoke({ title, clipboardVerified, clipboardRestored: clipboard.readText() === previousClipboardText, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, readerModeRestored, versionVisible, structuredBlockCount, rawMarkdownPreserved, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, userData: app.getPath('userData') })
+          finishDesktopSmoke({ title, clipboardVerified, clipboardRestored: clipboard.readText() === previousClipboardText, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, emptyStateLayoutMetrics, screenshotPath, reviewScreenshotPath, parallelScreenshotPath, commandScreenshotPath, userData: app.getPath('userData') })
         })
         .catch(error => {
           clipboard.writeText(previousClipboardText)

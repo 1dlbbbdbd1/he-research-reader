@@ -93,3 +93,18 @@ test('手动调整可改变顺序和标题，但不能删除、重复或编造�
   assert.throws(() => validateManualAdjustment(version, { orderedBlockIds: ids.slice(1) }), /必须保留全部结构块/)
   assert.throws(() => validateManualAdjustment(version, { orderedBlockIds: [ids[0], ids[0], ids[2]] }), /必须保留全部结构块/)
 })
+
+test('长文版面匹配保持全部结构块与确定顺序', () => {
+  const markdownBlocks = Array.from({ length: 360 }, (_, index) => `Evidence paragraph ${index + 1} remains traceable.`)
+  const layoutBlocks = markdownBlocks.map((text, index) => ({
+    id: `layout-${index + 1}`,
+    text,
+    pageNumber: Math.floor(index / 6) + 1,
+    bbox: [0.08, 0.08 + index % 6 * 0.12, 0.92, 0.16 + index % 6 * 0.12],
+  }))
+  const result = buildStructuredReadingDraft({ markdown: markdownBlocks.join('\n\n'), layoutBlocks })
+  assert.equal(result.blocks.length, 360)
+  assert.equal(result.blocks[0].pageNumber, 1)
+  assert.equal(result.blocks.at(-1).pageNumber, 60)
+  assert.equal(result.blocks.at(-1).content, 'Evidence paragraph 360 remains traceable.')
+})

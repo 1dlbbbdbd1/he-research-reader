@@ -35,7 +35,7 @@
 .action-pack-list > header span,
 .action-pack-detail-head > div:first-child > span {
   color: var(--action-blue);
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   font-weight: 700;
   letter-spacing: .04em;
 }
@@ -51,7 +51,7 @@
 .action-pack-list p {
   margin: 0;
   color: var(--action-muted);
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   line-height: 18px;
 }
 
@@ -82,7 +82,7 @@
   align-items: center;
   gap: 6px;
   color: var(--action-muted);
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .action-pack-list-scroll i {
@@ -104,7 +104,7 @@
   white-space: nowrap;
 }
 
-.action-pack-list-scroll small { color: var(--action-muted); font-size: 12px; }
+.action-pack-list-scroll small { color: var(--action-muted); font-size: var(--ui-text-xs, 13px); }
 
 .action-pack-new {
   display: flex;
@@ -117,7 +117,7 @@
   border-radius: 7px;
   background: #fff;
   color: #3f6078;
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   font-weight: 650;
 }
 
@@ -169,7 +169,7 @@
 }
 
 .action-pack-detail-head > div:last-child strong { font-size: 13px; }
-.action-pack-detail-head > div:last-child small { color: var(--action-muted); font-size: 12px; line-height: 17px; }
+.action-pack-detail-head > div:last-child small { color: var(--action-muted); font-size: var(--ui-text-xs, 13px); line-height: 17px; }
 
 .action-pack-rule {
   display: flex;
@@ -182,7 +182,7 @@
   border-radius: 6px;
   background: var(--action-amber-soft);
   color: #77532f;
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   line-height: 18px;
 }
 
@@ -216,7 +216,7 @@
   border-right: 1px solid var(--action-rule);
   color: #8d8f8b;
   font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
@@ -236,13 +236,13 @@
 
 .action-docket-body > header span {
   color: var(--action-blue);
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   font-weight: 700;
 }
 
 .action-docket-body > header em {
   color: var(--action-muted);
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   font-style: normal;
 }
 
@@ -274,7 +274,7 @@
   flex: none;
   padding: 6px 4px 0 0;
   color: var(--action-muted);
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
 }
 
 .action-evidence-strip button {
@@ -293,8 +293,8 @@
 
 .action-evidence-strip button:hover:not(:disabled) { border-color: #aebdc7; background: var(--action-blue-soft); }
 .action-evidence-strip button svg { flex: none; margin-top: 2px; }
-.action-evidence-strip button span { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.action-evidence-strip button small { display: block; margin-top: 2px; color: var(--action-muted); font-size: 12px; font-weight: 400; }
+.action-evidence-strip button span { min-width: 0; overflow: hidden; font-size: var(--ui-text-xs, 13px); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.action-evidence-strip button small { display: block; margin-top: 2px; color: var(--action-muted); font-size: var(--ui-text-xs, 13px); font-weight: 400; }
 
 .action-docket-body > footer {
   display: flex;
@@ -316,7 +316,7 @@
   border-radius: 6px;
   background: #fff;
   color: #555b57;
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   font-weight: 650;
 }
 
@@ -334,16 +334,16 @@
 .action-audit summary {
   padding: 12px 2px;
   color: var(--action-muted);
-  font-size: 12px;
+  font-size: var(--ui-text-xs, 13px);
   font-weight: 650;
   cursor: pointer;
 }
 
 .action-audit ol { margin: 0; padding: 0 0 0 22px; }
 .action-audit li { padding: 5px 0 9px 5px; color: var(--action-muted); }
-.action-audit li span { color: var(--action-ink); font-size: 12px; font-weight: 650; }
-.action-audit li p { margin: 2px 0; font-size: 12px; line-height: 17px; }
-.action-audit li small { font-size: 12px; }
+.action-audit li span { color: var(--action-ink); font-size: var(--ui-text-xs, 13px); font-weight: 650; }
+.action-audit li p { margin: 2px 0; font-size: var(--ui-text-xs, 13px); line-height: 17px; }
+.action-audit li small { font-size: var(--ui-text-xs, 13px); }
 
 .action-pack-empty,
 .action-pack-detail-loading {
@@ -392,10 +392,10 @@
   background: #f8f5ef;
 }
 
-.agent-action-proposals > section > span { color: #7d5b31; font-size: 12px; font-weight: 700; }
+.agent-action-proposals > section > span { color: #7d5b31; font-size: var(--ui-text-xs, 13px); font-weight: 700; }
 .agent-action-proposals > section > strong { color: var(--desktop-text, #252523); font-size: 13px; line-height: 18px; }
-.agent-action-proposals > section > p { margin: 0; color: var(--desktop-muted, #6e6e69); font-size: 12px; line-height: 18px; }
-.agent-action-proposals > section > small { color: var(--desktop-faint, #858580); font-size: 12px; }
+.agent-action-proposals > section > p { margin: 0; color: var(--desktop-muted, #6e6e69); font-size: var(--ui-text-xs, 13px); line-height: 18px; }
+.agent-action-proposals > section > small { color: var(--desktop-faint, #858580); font-size: var(--ui-text-xs, 13px); }
 
 .action-pack-workspace button:focus-visible,
 .action-pack-empty button:focus-visible,

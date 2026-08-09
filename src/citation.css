@@ -10,7 +10,7 @@
   justify-content: center;
   gap: 6px;
   padding: 6px 10px;
-  font-size: 11px;
+  font-size: var(--ui-text-xs, 13px);
   font-weight: 750;
 }
 
@@ -58,7 +58,7 @@
   margin: 0 0 4px;
   color: #7454a8;
   font-family: "DM Mono", monospace;
-  font-size: 9px;
+  font-size: var(--ui-text-xs, 13px);
   font-weight: 800;
   letter-spacing: .1em;
   text-transform: uppercase;
@@ -70,7 +70,7 @@
 }
 
 .citation-import-panel header strong { font-size: 14px; color: #1e293b; }
-.citation-import-panel header span { margin-top: 4px; color: #6f7681; font-size: 11px; }
+.citation-import-panel header span { margin-top: 4px; color: #6f7681; font-size: var(--ui-text-xs, 13px); }
 
 .citation-import-list { max-height: 360px; overflow: auto; }
 .citation-import-list article {
@@ -85,8 +85,8 @@
 .citation-import-list article > div:last-child { display: flex; align-items: center; gap: 7px; }
 .citation-import-text { min-width: 0; display: flex; align-items: flex-start; gap: 9px; }
 .citation-import-text > svg { flex: none; margin-top: 2px; color: #7454a8; }
-.citation-import-text strong { display: block; color: #283142; font-size: 12px; }
-.citation-import-text p { margin: 5px 0 0; color: #5d6470; font-family: Georgia, "Noto Serif SC", serif; font-size: 12px; line-height: 1.65; }
+.citation-import-text strong { display: block; color: #283142; font-size: var(--ui-text-xs, 13px); }
+.citation-import-text p { margin: 5px 0 0; color: #5d6470; font-family: Georgia, "Noto Serif SC", serif; font-size: var(--ui-text-xs, 13px); line-height: 1.65; }
 
 .citation-dialog {
   width: min(660px, 100%);
@@ -107,19 +107,19 @@
 .citation-dialog h2 { margin: 0; color: #20283a; font-size: 18px; }
 .citation-dialog-warning,
 .citation-missing-fields { margin: 16px 21px 0; border-radius: 9px; }
-.citation-dialog-warning { padding: 11px 13px; display: flex; gap: 9px; background: #fff4df; color: #7f541d; font-size: 12px; line-height: 1.55; }
+.citation-dialog-warning { padding: 11px 13px; display: flex; gap: 9px; background: #fff4df; color: #7f541d; font-size: var(--ui-text-xs, 13px); line-height: 1.55; }
 .citation-dialog-warning svg { flex: none; margin-top: 1px; }
 .citation-missing-fields { padding: 12px 14px; border: 1px solid #ead9bb; background: #fffbf2; }
-.citation-missing-fields strong { margin-right: 8px; color: #724b1d; font-size: 11px; }
-.citation-missing-fields span { color: #8b5b22; font-size: 12px; }
-.citation-missing-fields p { margin: 5px 0 0; color: #7a746c; font-size: 11px; }
-.citation-dialog > label { display: block; margin: 17px 21px; color: #4b5360; font-size: 11px; font-weight: 750; }
+.citation-missing-fields strong { margin-right: 8px; color: #724b1d; font-size: var(--ui-text-xs, 13px); }
+.citation-missing-fields span { color: #8b5b22; font-size: var(--ui-text-xs, 13px); }
+.citation-missing-fields p { margin: 5px 0 0; color: #7a746c; font-size: var(--ui-text-xs, 13px); }
+.citation-dialog > label { display: block; margin: 17px 21px; color: #4b5360; font-size: var(--ui-text-xs, 13px); font-weight: 750; }
 .citation-dialog textarea { width: 100%; min-height: 112px; margin-top: 7px; padding: 12px; resize: vertical; border: 1px solid #cbc3db; border-radius: 9px; background: #faf9fc; color: #222937; font-family: Georgia, "Noto Serif SC", serif; font-size: 13px; line-height: 1.7; }
 .citation-dialog textarea:focus { border-color: #7454a8; outline: 3px solid rgba(116, 84, 168, .13); }
 .citation-dialog dl { margin: 0 21px 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid #ece9f0; border-radius: 8px; background: #ece9f0; }
 .citation-dialog dl div { min-width: 0; padding: 9px 11px; background: #fff; }
-.citation-dialog dt { color: #8a8f98; font-size: 9px; }
-.citation-dialog dd { margin: 3px 0 0; overflow-wrap: anywhere; color: #3d4551; font-size: 11px; }
+.citation-dialog dt { color: #8a8f98; font-size: var(--ui-text-xs, 13px); }
+.citation-dialog dd { margin: 3px 0 0; overflow-wrap: anywhere; color: #3d4551; font-size: var(--ui-text-xs, 13px); }
 .citation-dialog footer { padding: 14px 21px; display: flex; justify-content: flex-end; border-top: 1px solid #ebe8ef; }
 
 .research-reader-toolbar .citation-copy-button { max-width: 138px; }
