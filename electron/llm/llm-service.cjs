@@ -213,7 +213,10 @@ class LLMService {
       model,
       apiKey,
       temperature: 0,
-      maxTokens: 8,
+      // Connection test uses a small but non-trivial token budget.
+      // Reasoning models may consume completion tokens for reasoning_content
+      // before producing final content, so avoid very small values like 8.
+      maxTokens: 256,
       messages: [
         { role: 'system', content: '这是连接测试。只回复 OK，不处理任何科研内容。' },
         { role: 'user', content: 'OK' },
