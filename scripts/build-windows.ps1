@@ -15,6 +15,7 @@ $runtimeRoot = Join-Path $projectRoot '.runtime'
 $builderCache = Join-Path $runtimeRoot 'electron-builder-cache'
 $npmCache = Join-Path $runtimeRoot 'npm-cache'
 $builderExecutable = Join-Path $projectRoot 'node_modules\.bin\electron-builder.cmd'
+$cleanupScript = Join-Path $PSScriptRoot 'cleanup-release-directories.ps1'
 $resolvedProjectRoot = [System.IO.Path]::GetFullPath($projectRoot)
 $resolvedOutputDirectory = if ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
     [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -55,6 +56,8 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Windows 桌面版打包失败，退出码：$LASTEXITCODE"
     }
+
+    & $cleanupScript -ProjectRoot $projectRoot -Keep 3
 }
 finally {
     Pop-Location
