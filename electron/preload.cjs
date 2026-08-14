@@ -96,6 +96,7 @@ contextBridge.exposeInMainWorld('readerDesktop', {
   createWorkspaceInSelectedFolder: input => ipcRenderer.invoke('workspace:create-selected', input),
   switchWorkspace: input => ipcRenderer.invoke('workspace:switch', input),
   loadWorkspaceLibrary: () => ipcRenderer.invoke('workspace:load-library'),
+  discoverWorkspacePdfSources: input => ipcRenderer.invoke('workspace:discover-project-pdfs', input),
   rebuildPortableVault: () => ipcRenderer.invoke('workspace:rebuild-portable-vault'),
   listMigrationBackups: () => ipcRenderer.invoke('workspace:list-migration-backups'),
   openCurrentVaultFolder: () => ipcRenderer.invoke('workspace:open-vault-folder'),

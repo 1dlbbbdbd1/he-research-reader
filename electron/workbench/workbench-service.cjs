@@ -201,14 +201,14 @@ class WorkbenchService {
     }
     const capabilityPack = input.capabilityPack ? getCapabilityPack(input.capabilityPack) : undefined
     if (input.capabilityPack && !capabilityPack) throw new Error('选择的固定工作流不存在。')
-    if (capabilityPack && !project.capabilityPacks.includes(capabilityPack.id)) throw new Error('请先把这个固定工作流加入当前项目。')
     const conversationWorkflow = input.conversationWorkflowId ? getConversationWorkflow(input.conversationWorkflowId) : undefined
     if (input.conversationWorkflowId && !conversationWorkflow) throw new Error('选择的对话工作流不存在。')
     if (capabilityPack && conversationWorkflow) throw new Error('一次任务只能选择一个固定工作流。')
     let conversationWorkflowInput = object(input.conversationWorkflowInput)
     if (conversationWorkflow) {
-      conversationWorkflowInput = { sourceIds: normalizedSourceIds(conversationWorkflowInput) }
-      if (conversationWorkflow.sourceSelection === 'required' && !conversationWorkflowInput.sourceIds.length) throw new Error(`“${conversationWorkflow.name}”需要先选择至少一份项目资料。`)
+      conversationWorkflowInput = { sourceIds: normalizedSourceIds(conversationWorkflowInput, conversationWorkflow.maximumSources ?? 6) }
+      const minimumSources = conversationWorkflow.minimumSources ?? (conversationWorkflow.sourceSelection === 'required' ? 1 : 0)
+      if (conversationWorkflowInput.sourceIds.length < minimumSources) throw new Error(`“${conversationWorkflow.name}”需要先选择至少 ${minimumSources} 份项目资料。`)
       const missingTool = conversationWorkflow.requiredTools.map(name => ({ name, ...this.tools.availability(name) })).find(tool => !tool.available)
       if (missingTool) throw new Error(`“${conversationWorkflow.name}”暂时不能使用：${missingTool.reason || `${missingTool.name} 未就绪`}`)
     }

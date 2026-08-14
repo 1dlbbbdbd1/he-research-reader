@@ -932,12 +932,18 @@ type DesktopProjectFilePreview = {
   message?: string
 }
 type DesktopConversationWorkflow = {
-  id: 'literature-search' | 'literature-summary' | 'method-summary' | 'skill-teaching'
+  id: string
   name: string
+  category: string
+  featured: boolean
   description: string
   prompt: string
-  taskType: 'research' | 'engineering'
+  outputHint: string
+  keywords: string[]
+  taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'
   sourceSelection: 'none' | 'optional' | 'required'
+  minimumSources: number
+  maximumSources: number
   requiredTools: string[]
   optionalTools?: string[]
   permissionRequirements: { domains: string[]; applications: string[]; commands: string[] }
@@ -956,6 +962,7 @@ type DesktopCapabilityPack = {
   outputs: string[]
   highRisk: string[]
   inputSchema?: { type: 'object'; required: string[]; properties: Record<string, { type: string; label: string; optional?: boolean; mode?: 'read' | 'write'; suggested?: string; accepts?: string[]; default?: unknown }>; additionalProperties: false }
+  inputRules?: Array<{ anyOf?: string[]; message: string }>
   outputSchema?: { type: 'object'; required: string[]; properties: Record<string, { type: string; label: string }>; additionalProperties: false }
   optionalTools?: string[]
   allowedTools?: string[]
@@ -1405,6 +1412,14 @@ interface Window {
     createWorkspaceInSelectedFolder(input: { creationRequestId: string; name: string; manageExistingPapers?: boolean }): Promise<WorkspaceDialogResult>
     switchWorkspace(input: { id: string }): Promise<WorkspaceSummary>
     loadWorkspaceLibrary(): Promise<WorkspaceLibraryState>
+    discoverWorkspacePdfSources(input?: { maximum?: number; maximumDepth?: number }): Promise<{
+      root: string
+      scannedCount: number
+      registered: Array<{ sourceId: string; fileName: string; relativePath: string; contentSha256: string }>
+      existing: Array<{ sourceId: string; relativePath: string; matchedBy: 'path' | 'content' }>
+      skipped: Array<{ path: string; reason: string }>
+      limited: boolean
+    }>
     rebuildPortableVault(): Promise<{
       vaultFormatVersion: number
       generatedAt: string

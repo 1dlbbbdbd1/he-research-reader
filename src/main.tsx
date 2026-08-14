@@ -140,6 +140,8 @@ type Source = {
   mineruMarkdownFileRelative?: string
   mineruMarkdownSha256?: string
   mineruGeneratedAt?: string
+  managedInPlace?: boolean
+  projectRelativePath?: string
   markdownLayout?: AcademicMarkdownLayout
   readerState?: ReaderSourceState
 }
@@ -400,6 +402,7 @@ function App() {
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
   const [workspaceName, setWorkspaceName] = useState('我的研究库')
   const [workspaceBusy, setWorkspaceBusy] = useState(false)
+  const [projectPdfScanBusy, setProjectPdfScanBusy] = useState(false)
   const [workspaceCreationRequest, setWorkspaceCreationRequest] = useState<{
     creationRequestId: string
     directory: string
@@ -440,6 +443,7 @@ function App() {
   const [workbenchError, setWorkbenchError] = useState('')
   const [toast, setToast] = useState('')
   const toastTimer = useRef<number | undefined>(undefined)
+  const projectPdfScanToken = useRef(0)
   const fileInput = useRef<HTMLInputElement>(null)
   const selected = sources.find(s => s.id === selectedSource) ?? sources[0]
   const selectedPaper = bibliographicItems.find(item => item.id === selected?.bibliographicItemId || item.sourceId === selected?.id)
@@ -522,6 +526,7 @@ function App() {
         const restoredSource = (library.sources as Source[]).find(source => source.id === resume.sourceId)
         setSelectedSource(restoredSource?.id ?? (library.sources[0] as Source | undefined)?.id ?? '')
         setActive('workbench')
+        void scanWorkspacePdfs(current, true)
       })
       .catch(error => notify(error instanceof Error ? error.message : '研究库初始化失败。'))
     return () => { disposed = true }
@@ -744,6 +749,57 @@ function App() {
     }, 4200)
   }
 
+  async function scanWorkspacePdfs(targetWorkspace = workspace, silent = false) {
+    const desktop = window.readerDesktop
+    if (!desktop || !targetWorkspace) return
+    const scanToken = ++projectPdfScanToken.current
+    setProjectPdfScanBusy(true)
+    try {
+      const discovery = await desktop.discoverWorkspacePdfSources({ maximum: 2000, maximumDepth: 10 })
+      if (scanToken !== projectPdfScanToken.current) return
+      const library = await desktop.loadWorkspaceLibrary()
+      let nextSources = library.sources as Source[]
+      setSources(nextSources)
+      setAnnotations(library.annotations as Annotation[])
+      setBibliographicItems(library.bibliographicItems as BibliographicSummary[])
+      const pending = nextSources.filter(source => source.kind === 'PDF' && source.status !== '已解析' && source.fileId)
+      let parsedCount = 0
+      let failedCount = 0
+      for (const source of pending) {
+        if (scanToken !== projectPdfScanToken.current) return
+        try {
+          const stored = await desktop.readWorkspaceSourceFile({ sourceId: source.id })
+          const sourceBytes = stored.bytes instanceof Uint8Array ? stored.bytes : new Uint8Array(stored.bytes)
+          const file = new File([sourceBytes.slice().buffer], stored.fileName, { type: 'application/pdf' })
+          const [extractedText, pages] = await Promise.all([parseFile(file, 'PDF'), pdfPageCount(file)])
+          const readable = Boolean(extractedText.trim())
+          nextSources = nextSources.map(item => item.id === source.id ? { ...item, extractedText, pages, status: readable ? '已解析' : '需重新分析', error: readable ? undefined : '这份 PDF 没有提取到文字，可在科研工作区使用 MinerU 解析。', updated: '刚刚从项目文件夹解析' } : item)
+          if (readable) parsedCount += 1
+          else failedCount += 1
+        } catch (error) {
+          nextSources = nextSources.map(item => item.id === source.id ? { ...item, status: '解析失败', error: error instanceof Error ? error.message : 'PDF 解析失败', updated: '项目 PDF 解析失败' } : item)
+          failedCount += 1
+        }
+        setSources(nextSources)
+        await new Promise(resolve => window.setTimeout(resolve, 0))
+      }
+      if (scanToken !== projectPdfScanToken.current) return
+      await desktop.syncWorkspaceLibrary({
+        workspaceId: targetWorkspace.id,
+        sources: nextSources as unknown as Array<Record<string, unknown>>,
+        annotations: library.annotations as unknown as Array<Record<string, unknown>>,
+      })
+      setSelectedSource(current => nextSources.some(source => source.id === current) ? current : (nextSources[0]?.id ?? ''))
+      if (!silent || discovery.registered.length || failedCount) {
+        notify(`项目 PDF 扫描完成：发现 ${discovery.scannedCount} 份，新增 ${discovery.registered.length} 份，解析完成 ${parsedCount} 份${failedCount ? `，失败 ${failedCount} 份` : ''}。原文件保持原位。`)
+      }
+    } catch (error) {
+      if (!silent) notify(error instanceof Error ? error.message : '项目 PDF 扫描失败。')
+    } finally {
+      if (scanToken === projectPdfScanToken.current) setProjectPdfScanBusy(false)
+    }
+  }
+
   async function activateWorkspace(next: WorkspaceSummary) {
     const desktop = window.readerDesktop
     if (!desktop) return
@@ -772,6 +828,7 @@ function App() {
     setActive('today')
     setRecentWorkspaces(await desktop.listRecentWorkspaces())
     setWorkspaceMenuOpen(false)
+    void scanWorkspacePdfs(next, true)
   }
 
   async function flushWorkspace() {
@@ -1575,24 +1632,27 @@ function App() {
     finally { setWorkbenchBusy(false) }
   }
 
-  async function sendAgentMessage(input: { objective: string; acceptance: string[]; taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; workflow?: DesktopConversationWorkflow; sourceIds?: string[]; modelRole?: 'planner' | 'executor' | 'vision' | 'verifier' }) {
+  async function sendAgentMessage(input: { objective: string; acceptance: string[]; taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; workflow?: DesktopConversationWorkflow; sourceIds?: string[]; capabilityPack?: DesktopCapabilityPack; capabilityInput?: Record<string, unknown>; modelRole?: 'planner' | 'executor' | 'vision' | 'verifier' }) {
     const desktop = window.readerDesktop
     if (!desktop) return
     setWorkbenchBusy(true)
     try {
       let sessionId = activeAgentSession?.id
-      if (!sessionId) sessionId = (await desktop.createAgentSession({ title: input.objective.slice(0, 60), scope: { workflow: input.workflow?.id || '自由对话' } })).id
+      if (!sessionId) sessionId = (await desktop.createAgentSession({ title: input.objective.slice(0, 60), scope: { workflow: input.workflow?.id || input.capabilityPack?.id || '自由对话' } })).id
       await desktop.appendAgentTurn({ sessionId, role: 'user', content: input.objective })
       const run = await desktop.createWorkbenchRun({
         objective: input.objective,
         acceptance: input.acceptance,
         taskType: input.taskType,
         sessionId,
+        capabilityPack: input.capabilityPack?.id,
+        capabilityInput: input.capabilityInput,
         conversationWorkflowId: input.workflow?.id,
         conversationWorkflowInput: input.workflow ? { sourceIds: input.sourceIds || [] } : undefined,
         modelRoles: input.modelRole ? { selectedRole: input.modelRole } : undefined,
       })
-      await desktop.appendAgentTurn({ sessionId, role: 'assistant', content: input.workflow ? `已建立“${input.workflow.name}”固定工作流，共 ${run.steps.length} 个步骤。开始读取资料或访问网络前，请先检查并确认本次任务范围。` : '我已经根据你的目标整理了执行步骤。开始读取文件或调用工具前，请先检查本次任务范围。', evidenceRefs: [{ type: 'run', id: run.id }] })
+      const selectedName = input.capabilityPack?.name || input.workflow?.name
+      await desktop.appendAgentTurn({ sessionId, role: 'assistant', content: selectedName ? `已建立“${selectedName}”工作流，共 ${run.steps.length} 个步骤。开始读取资料、生成文件或访问网络前，请先检查并确认本次任务范围。` : '我已经根据你的目标整理了执行步骤。开始读取文件或调用工具前，请先检查本次任务范围。', evidenceRefs: [{ type: 'run', id: run.id }] })
       setActiveWorkbenchRun(run)
       setActiveAgentSession(await desktop.getAgentSession({ sessionId }))
       await refreshWorkbench(run.id)
@@ -1763,8 +1823,9 @@ function App() {
     <main>
       <header className="topbar"><button className="mobile-menu"><Menu/></button><div className="crumb">{workspace?.name ?? '个人项目'} <ChevronRight size={14}/> <strong>{active === 'workbench' ? (activeAgentSession?.title || 'Agent 对话') : active === 'runs' ? '任务过程' : active === 'projects' ? '固定工作流' : active === 'research-hub' ? '科研工作区' : active === 'today' ? '今日科研' : active === 'research-workspace' ? '课题与实验' : active === 'research-review' ? '复盘与写作' : active === 'dashboard' ? '文献综述' : active === 'reader' ? '阅读' : active === 'evidence' ? '证据关系' : active === 'knowledge' ? '知识图谱' : active === 'actions' ? '研究任务' : '文献与资料'}</strong></div><div className="top-actions"><button className="icon-button" title="搜索项目资料" onClick={() => { setActive('sources'); setLibrarySearchRequest(value => value + 1) }}><Search size={19}/></button><button className="agent-button" onClick={() => void newAgentSession()}><Plus size={16}/> 新对话</button></div></header>
       {active === 'workbench' && <WorkbenchHome
-        dashboard={workbenchDashboard} session={activeAgentSession} modelRoles={modelRoles} workflows={conversationWorkflows} sources={sources} busy={workbenchBusy} error={workbenchError}
+        dashboard={workbenchDashboard} session={activeAgentSession} modelRoles={modelRoles} workflows={conversationWorkflows} capabilityPacks={capabilityPacks} sources={sources} busy={workbenchBusy} pdfScanBusy={projectPdfScanBusy} error={workbenchError}
         onSend={sendAgentMessage} onOpenProject={() => void openProjectDrawer()}
+        onScanProjectPdfs={() => void scanWorkspacePdfs()}
         onOpenRun={(id) => { void applyWorkbenchAction(() => window.readerDesktop!.getWorkbenchRun({ runId: id })); setActive('runs') }}
       />}
       {active === 'runs' && <WorkbenchRuns
@@ -1859,7 +1920,7 @@ function App() {
         }}
         onReanalyze={reanalyze}
         onMineru={id => { setMineruInstallProgress(''); setMineruTarget(sources.find(source => source.id === id)) }}
-      />} 
+      />}
       {active === 'evidence' && <EvidenceGraphWorkspace
         graph={evidenceGraph}
         loading={evidenceGraphBusy}
@@ -1945,7 +2006,7 @@ function App() {
       />}
     </main>
     {memoryOpen && <ProjectMemoryDrawer memory={projectMemory} onClose={() => setMemoryOpen(false)} onSave={saveProjectMemory} onReview={reviewProjectMemory}/>}
-    {projectDrawerOpen && <div className="project-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setProjectDrawerOpen(false) }}><aside className="project-drawer"><header><div><small>当前项目</small><strong>项目内容</strong></div><button type="button" aria-label="关闭项目内容" onClick={() => setProjectDrawerOpen(false)}><X size={18}/></button></header><p className="project-root" title={projectFileRoot}>{projectFileRoot}</p><div className="project-drawer-body"><nav>{projectFiles.map(entry => <button type="button" className={projectFilePreview?.relativePath === entry.relativePath ? 'active' : ''} style={{ paddingLeft: `${12 + Math.min(entry.depth, 5) * 14}px` }} disabled={entry.kind === 'directory'} onClick={() => entry.kind === 'file' && void previewProjectFile(entry.relativePath)} key={entry.relativePath}>{entry.kind === 'directory' ? <Files size={14}/> : <FileText size={14}/>}<span>{entry.name}</span></button>)}</nav><ProjectFilePreview preview={projectFilePreview}/></div></aside></div>}
+    {projectDrawerOpen && <div className="project-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setProjectDrawerOpen(false) }}><aside className="project-drawer"><header><div><small>当前项目</small><strong>项目内容</strong></div><div className="project-drawer-actions"><button type="button" disabled={projectPdfScanBusy} onClick={() => void scanWorkspacePdfs()}>{projectPdfScanBusy ? <RotateCcw className="spin" size={15}/> : <Search size={15}/>}扫描项目 PDF</button><button type="button" aria-label="关闭项目内容" onClick={() => setProjectDrawerOpen(false)}><X size={18}/></button></div></header><p className="project-root" title={projectFileRoot}>{projectFileRoot}</p><div className="project-drawer-body"><nav>{projectFiles.map(entry => <button type="button" className={projectFilePreview?.relativePath === entry.relativePath ? 'active' : ''} style={{ paddingLeft: `${12 + Math.min(entry.depth, 5) * 14}px` }} disabled={entry.kind === 'directory'} onClick={() => entry.kind === 'file' && void previewProjectFile(entry.relativePath)} key={entry.relativePath}>{entry.kind === 'directory' ? <Files size={14}/> : <FileText size={14}/>}<span>{entry.name}</span></button>)}</nav><ProjectFilePreview preview={projectFilePreview}/></div></aside></div>}
     {returnGreetingOpen && researchResume && <ResearchReturnGreeting resume={researchResume} onDismiss={() => setReturnGreetingOpen(false)} onContinue={continueLastResearch}/>}
     {citationDialog && <CitationDialog item={citationDialog.item} reason={citationDialog.reason} onClose={() => setCitationDialog(undefined)}/>}
     <input ref={fileInput} className="hidden" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xlsx,.xls,.md,.txt" onChange={e => addFiles(e.target.files)} />
@@ -1991,7 +2052,7 @@ function App() {
       onClose={() => setMineruTarget(undefined)}
       onInstall={installMineru}
       onConfirm={runMineru}
-    />} 
+    />}
     {toast && <div className="toast"><Check size={16}/><span>{toast}</span>{archivedAnnotation && <button type="button" onClick={() => void restoreArchivedAnnotation()}><RotateCcw size={14}/>撤销</button>}</div>}
   </div>
 }
@@ -2042,43 +2103,124 @@ function ProjectMemoryDrawer({ memory, onClose, onSave, onReview }: { memory: De
   return <div className="project-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><aside className="memory-drawer"><header><div><small>当前项目</small><strong>项目记忆</strong></div><button type="button" aria-label="关闭项目记忆" onClick={onClose}><X size={18}/></button></header><p className="memory-intro">这里保存项目长期需要记住的方向、术语和经验。AI 建议会先等待你确认。</p><div className="memory-create"><select value={kind} onChange={event => setKind(event.target.value as DesktopAgentMemory['kind'])}>{Object.entries(memoryKindLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><select aria-label="重要程度" value={importance} onChange={event => setImportance(Number(event.target.value))}><option value={5}>很重要</option><option value={4}>重要</option><option value={3}>一般</option><option value={2}>较低</option><option value={1}>仅供参考</option></select><textarea value={content} onChange={event => setContent(event.target.value)} placeholder="例如：本项目把 compliant control 统一译为柔顺控制。"/><button type="button" disabled={!content.trim()} onClick={() => void save()}><Plus size={15}/>保存记忆</button></div><div className="project-memory-list">{memory.length ? memory.map(item => <article key={item.id} className={item.reviewState}><header><span>{memoryKindLabels[item.kind]}</span><small>{item.createdBy === 'ai' ? 'AI 建议' : '你保存的'} · 重要度 {item.importance}</small></header><p>{item.content}</p><footer>{item.reviewState === 'draft' && <><button type="button" onClick={() => void onReview(item.id, 'confirm')}><Check size={14}/>确认保留</button><button type="button" onClick={() => void onReview(item.id, 'reject')}><X size={14}/>不采用</button></>} {item.reviewState === 'confirmed' && <button type="button" onClick={() => void onReview(item.id, 'archive')}>移入归档</button>}<small>{item.reviewState === 'confirmed' ? '已确认' : item.reviewState === 'draft' ? '等待确认' : item.reviewState === 'rejected' ? '未采用' : '已归档'}</small></footer></article>) : <div className="memory-empty"><HardDrive size={27}/><strong>还没有项目记忆</strong><p>先保存一条研究方向或术语偏好。</p></div>}</div></aside></div>
 }
 
-function WorkbenchHome({ dashboard, session, modelRoles, workflows, sources, busy, error, onSend, onOpenProject, onOpenRun }: {
+type CapabilityInputValues = Record<string, string | number | boolean | string[]>
+
+function sourceReadyForAgent(source: Source) {
+  return source.status === '已解析' && Boolean(source.extractedText?.trim() || source.mineruMarkdown?.trim())
+}
+
+function initialCapabilityInput(pack: DesktopCapabilityPack): CapabilityInputValues {
+  const values: CapabilityInputValues = {}
+  for (const [key, definition] of Object.entries(pack.inputSchema?.properties ?? {})) {
+    if (definition.default === undefined) continue
+    if (definition.type === 'object') values[key] = JSON.stringify(definition.default, null, 2)
+    else if (Array.isArray(definition.default)) values[key] = definition.default.map(String)
+    else if (typeof definition.default === 'string' || typeof definition.default === 'number' || typeof definition.default === 'boolean') values[key] = definition.default
+    else values[key] = JSON.stringify(definition.default, null, 2)
+  }
+  return values
+}
+
+function CapabilityWorkflowFields({ pack, sources, values, scanBusy, onScanProjectPdfs, onChange }: { pack: DesktopCapabilityPack; sources: Source[]; values: CapabilityInputValues; scanBusy: boolean; onScanProjectPdfs: () => void; onChange: (key: string, value: CapabilityInputValues[string]) => void }) {
+  const required = new Set(pack.inputSchema?.required ?? [])
+  const needsSources = Object.values(pack.inputSchema?.properties ?? {}).some(definition => definition.type === 'source' || definition.type === 'sources')
+  return <div className="capability-workflow-fields">
+    <header><div><strong>准备工作流材料</strong><small>{pack.exampleTask}</small></div>{needsSources ? <button type="button" className="workflow-scan-button" disabled={scanBusy} onClick={onScanProjectPdfs}>{scanBusy ? <RotateCcw className="spin" size={13}/> : <Search size={13}/>}扫描项目 PDF</button> : <span>{Object.keys(pack.inputSchema?.properties ?? {}).length} 项</span>}</header>
+    {Object.entries(pack.inputSchema?.properties ?? {}).map(([key, definition]) => {
+      const value = values[key]
+      const requiredLabel = required.has(key) && definition.default === undefined && !definition.suggested
+      const hint = definition.suggested ? `默认保存到 ${definition.suggested}` : definition.accepts?.length ? `支持 ${definition.accepts.join('、')}` : ''
+      return <label className={`capability-field field-${definition.type}`} key={key}><span>{definition.label}{requiredLabel && <em>必填</em>}</span>
+        {definition.type === 'source' ? <select value={String(value ?? '')} onChange={event => onChange(key, event.target.value)}><option value="">选择项目中的可读资料…</option>{sources.map(source => <option value={source.id} disabled={!sourceReadyForAgent(source)} key={source.id}>{source.name}{sourceReadyForAgent(source) ? '' : `（${source.status}）`}</option>)}</select>
+          : definition.type === 'sources' ? <><select value="" onChange={event => { const id = event.target.value; const selected = Array.isArray(value) ? value : []; if (id && !selected.includes(id)) onChange(key, [...selected, id]) }}><option value="">添加项目中的可读资料…</option>{sources.filter(source => !(Array.isArray(value) ? value : []).includes(source.id)).map(source => <option value={source.id} disabled={!sourceReadyForAgent(source)} key={source.id}>{source.name}{sourceReadyForAgent(source) ? '' : `（${source.status}）`}</option>)}</select>{Array.isArray(value) && value.length > 0 && <div className="capability-source-chips">{value.map(id => <button type="button" key={id} onClick={() => onChange(key, value.filter(item => item !== id))}>{sources.find(source => source.id === id)?.name || id}<X size={12}/></button>)}</div>}</>
+            : definition.type === 'object' ? <textarea value={String(value ?? '')} onChange={event => onChange(key, event.target.value)} placeholder={'例如：{\n  "字段": "值"\n}'}/>
+              : definition.type === 'multiline' ? <textarea value={String(value ?? '')} onChange={event => onChange(key, event.target.value)} placeholder={`填写${definition.label}`}/>
+                : definition.type === 'number' ? <input type="number" value={value === undefined ? '' : Number(value)} onChange={event => onChange(key, event.target.value)} placeholder={definition.default === undefined ? '' : String(definition.default)}/>
+                  : <input value={String(value ?? '')} onChange={event => onChange(key, event.target.value)} placeholder={definition.suggested || `填写${definition.label}`}/>}
+        {hint && <small>{hint}</small>}
+      </label>
+    })}
+    {pack.inputRules?.map((rule, index) => <p className="capability-input-rule" key={index}><AlertTriangle size={13}/>{rule.message}</p>)}
+    <footer><ShieldCheck size={14}/><span>原文件不会被覆盖；正式记录、外部发送和运行程序会再次请你确认。</span></footer>
+  </div>
+}
+
+function WorkflowLibrary({ workflows, capabilityPacks, onClose, onSelectWorkflow, onSelectCapability }: { workflows: DesktopConversationWorkflow[]; capabilityPacks: DesktopCapabilityPack[]; onClose: () => void; onSelectWorkflow: (workflow: DesktopConversationWorkflow) => void; onSelectCapability: (pack: DesktopCapabilityPack) => void }) {
+  const [query, setQuery] = useState('')
+  const dialogRef = useDialogKeyboard<HTMLElement>(onClose)
+  const normalized = query.trim().toLocaleLowerCase()
+  const matches = (parts: Array<string | undefined>) => !normalized || parts.join(' ').toLocaleLowerCase().includes(normalized)
+  const visibleWorkflows = workflows.filter(workflow => matches([workflow.name, workflow.category, workflow.description, workflow.outputHint, ...(workflow.keywords || [])]))
+  const visiblePacks = capabilityPacks.filter(pack => matches([pack.name, pack.category, pack.description, pack.exampleTask, ...pack.outputs]))
+  return <div className="workflow-library-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><section ref={dialogRef} className="workflow-library" role="dialog" aria-modal="true" aria-labelledby="workflow-library-title">
+    <header><div><small>当前项目</small><h2 id="workflow-library-title">科研工作流库</h2><p>先选一个流程，再在对话框里补充任务和材料。每一步都会留下过程，重要操作仍由你确认。</p></div><button type="button" aria-label="关闭工作流库" onClick={onClose}><X size={18}/></button></header>
+    <div className="workflow-library-search"><Search size={17}/><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索文献、实验、写作、图表、因果分析…"/><span>{visibleWorkflows.length + visiblePacks.length} 项</span></div>
+    <div className="workflow-library-body">
+      {visibleWorkflows.length > 0 && <section><header><div><strong>快速辅助</strong><small>小何读取你选择的资料，再按固定方法分析和整理</small></div><em>{visibleWorkflows.length}</em></header><div className="workflow-library-grid">{visibleWorkflows.map(workflow => <button type="button" className="workflow-library-card" disabled={!workflow.available} key={workflow.id} onClick={() => onSelectWorkflow(workflow)}><span><i>辅助</i><em>{workflow.category}</em></span><strong>{workflow.name}</strong><p>{workflow.description}</p><footer><small>{workflow.outputHint}</small><ChevronRight size={16}/></footer>{!workflow.available && <mark>{workflow.message || '所需工具暂未就绪'}</mark>}</button>)}</div></section>}
+      {visiblePacks.length > 0 && <section><header><div><strong>专项执行</strong><small>带固定输入、真实工具、成果文件和质量检查</small></div><em>{visiblePacks.length}</em></header><div className="workflow-library-grid">{visiblePacks.map(pack => <button type="button" className={`workflow-library-card capability ${pack.preflight.ready ? 'ready' : 'blocked'}`} key={pack.id} onClick={() => onSelectCapability(pack)}><span><i>专项</i><em>{pack.category}</em></span><strong>{pack.name}</strong><p>{pack.description}</p><footer><small>{pack.outputs.join(' · ')}</small><ChevronRight size={16}/></footer><mark>{pack.preflight.ready ? '本机已就绪' : '可查看，开始前需准备本机工具'}</mark></button>)}</div></section>}
+      {!visibleWorkflows.length && !visiblePacks.length && <div className="workflow-library-empty"><Search size={26}/><strong>没有找到对应工作流</strong><p>换一个更短的关键词，或直接在对话里描述任务。</p></div>}
+    </div>
+  </section></div>
+}
+
+function WorkbenchHome({ dashboard, session, modelRoles, workflows, capabilityPacks, sources, busy, pdfScanBusy, error, onSend, onOpenProject, onScanProjectPdfs, onOpenRun }: {
   dashboard?: DesktopWorkbenchDashboard
   session?: DesktopAgentSession
   modelRoles?: DesktopAppSettings['modelRoles']
   workflows: DesktopConversationWorkflow[]
+  capabilityPacks: DesktopCapabilityPack[]
   sources: Source[]
   busy: boolean
+  pdfScanBusy: boolean
   error: string
-  onSend: (input: { objective: string; acceptance: string[]; taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; workflow?: DesktopConversationWorkflow; sourceIds?: string[]; modelRole?: 'planner' | 'executor' | 'vision' | 'verifier' }) => void
+  onSend: (input: { objective: string; acceptance: string[]; taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; workflow?: DesktopConversationWorkflow; sourceIds?: string[]; capabilityPack?: DesktopCapabilityPack; capabilityInput?: Record<string, unknown>; modelRole?: 'planner' | 'executor' | 'vision' | 'verifier' }) => void
   onOpenProject: () => void
+  onScanProjectPdfs: () => void
   onOpenRun: (id: string) => void
 }) {
   const [objective, setObjective] = useState('')
   const [selectedWorkflow, setSelectedWorkflow] = useState<(typeof workflows)[number]>()
+  const [selectedCapability, setSelectedCapability] = useState<DesktopCapabilityPack>()
+  const [capabilityInput, setCapabilityInput] = useState<CapabilityInputValues>({})
   const [sourceIds, setSourceIds] = useState<string[]>([])
   const [plusOpen, setPlusOpen] = useState(false)
+  const [libraryOpen, setLibraryOpen] = useState(false)
   const modelOptions = (Object.entries(modelRoles ?? {}) as Array<[keyof DesktopAppSettings['modelRoles'], DesktopAppSettings['modelRoles'][keyof DesktopAppSettings['modelRoles']]]>).filter(([role, profile]) => role !== 'embedding' && profile.model)
   const [modelRole, setModelRole] = useState<'planner' | 'executor' | 'vision' | 'verifier' | ''>('')
   const sessionRuns = (dashboard?.runs ?? []).filter(run => !session?.id || run.sessionId === session.id)
+  const minimumSources = selectedWorkflow?.minimumSources ?? (selectedWorkflow?.sourceSelection === 'required' ? 1 : 0)
+  const maximumSources = selectedWorkflow?.maximumSources ?? 3
+  const requiredCapabilityFields = selectedCapability?.inputSchema?.required ?? []
+  const capabilityFieldsReady = !selectedCapability || requiredCapabilityFields.every(key => {
+    const definition = selectedCapability.inputSchema?.properties[key]
+    if (definition?.default !== undefined || definition?.suggested) return true
+    const value = capabilityInput[key]
+    return Array.isArray(value) ? value.length > 0 : String(value ?? '').trim().length > 0
+  })
+  const canSubmit = Boolean(objective.trim()) && !busy && sourceIds.length >= minimumSources && (!selectedCapability || (selectedCapability.preflight.ready && capabilityFieldsReady))
+  const chooseWorkflow = (workflow: DesktopConversationWorkflow) => { setSelectedWorkflow(workflow); setSelectedCapability(undefined); setCapabilityInput({}); setSourceIds([]); setObjective(''); setLibraryOpen(false); setPlusOpen(false) }
+  const chooseCapability = (pack: DesktopCapabilityPack) => { setSelectedCapability(pack); setSelectedWorkflow(undefined); setCapabilityInput(initialCapabilityInput(pack)); setSourceIds([]); setObjective(''); setLibraryOpen(false); setPlusOpen(false) }
+  const clearSelection = () => { setSelectedWorkflow(undefined); setSelectedCapability(undefined); setCapabilityInput({}); setSourceIds([]) }
   const submit = () => {
-    if (!objective.trim() || busy) return
-    if (selectedWorkflow?.sourceSelection === 'required' && !sourceIds.length) return
-    onSend({ objective: objective.trim(), acceptance: [], taskType: selectedWorkflow?.taskType ?? 'research', workflow: selectedWorkflow, sourceIds, modelRole: modelRole || undefined })
+    if (!canSubmit) return
+    onSend({ objective: objective.trim(), acceptance: [], taskType: selectedWorkflow?.taskType ?? 'research', workflow: selectedWorkflow, sourceIds, capabilityPack: selectedCapability, capabilityInput: selectedCapability ? capabilityInput : undefined, modelRole: modelRole || undefined })
     setObjective('')
   }
   return <section className="workbench-page agent-chat-page">
     <div className="agent-chat-scroll">
-      {!session?.turns.length && <section className="agent-chat-welcome"><div className="agent-welcome-mark"><Sparkles/></div><h1>今天想研究什么？</h1><p>直接描述任务，或选择一个固定工作流。小何会先列出固定步骤和权限，再操作当前项目。</p><div className="workflow-starters">{workflows.map(workflow => <button type="button" disabled={!workflow.available} key={workflow.id} onClick={() => { setSelectedWorkflow(workflow); setSourceIds([]); setObjective('') }}><strong>{workflow.name}</strong><small>{workflow.description}</small><ChevronRight size={16}/></button>)}</div></section>}
+      {!session?.turns.length && <section className="agent-chat-welcome"><div className="agent-welcome-mark"><Sparkles/></div><h1>今天想研究什么？</h1><p>直接描述任务，或从工作流库选择常用科研流程。小何会先列出材料、固定步骤和权限，再操作当前项目。</p><div className="workflow-starters">{workflows.filter(workflow => workflow.featured).map(workflow => <button type="button" disabled={!workflow.available} key={workflow.id} onClick={() => chooseWorkflow(workflow)}><strong>{workflow.name}</strong><small>{workflow.description}</small><ChevronRight size={16}/></button>)}</div><button type="button" className="open-workflow-library" onClick={() => setLibraryOpen(true)}><Blocks size={16}/>浏览全部 {workflows.length + capabilityPacks.length} 个科研工作流<ChevronRight size={16}/></button></section>}
       {session?.turns.map(turn => <article className={`agent-message ${turn.role}`} key={turn.id}><div className="agent-avatar">{turn.role === 'user' ? '你' : turn.role === 'tool' ? <Settings2 size={15}/> : <Sparkles size={15}/>}</div><div><header>{turn.role === 'user' ? '你' : turn.role === 'tool' ? '任务过程' : '小何'}<time>{new Date(turn.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header><p>{turn.content}</p></div></article>)}
       {sessionRuns.map(run => <button type="button" className="agent-run-card" key={run.id} onClick={() => onOpenRun(run.id)}><i className={`run-state ${run.status}`}/><span><strong>{run.objective}</strong><small>{workbenchStatusLabels[run.status]} · 点击查看步骤、授权与成果</small></span><ChevronRight size={17}/></button>)}
       {error && <p className="workbench-error"><AlertTriangle size={16}/>{error}</p>}
     </div>
     <div className="agent-composer-wrap"><div className="agent-composer">
-      {selectedWorkflow && <><div className="selected-workflow"><Sparkles size={14}/><span>{selectedWorkflow.name}</span><small>固定步骤</small><button type="button" aria-label="取消固定工作流" onClick={() => { setSelectedWorkflow(undefined); setSourceIds([]) }}><X size={13}/></button></div>{selectedWorkflow.sourceSelection !== 'none' && <div className="workflow-source-picker"><label>项目资料{selectedWorkflow.sourceSelection === 'required' ? '（至少选择 1 份）' : '（可选）'}</label><select value="" onChange={event => { const id = event.target.value; if (id && !sourceIds.includes(id) && sourceIds.length < 3) setSourceIds(current => [...current, id]) }}><option value="">选择已导入的资料…</option>{sources.filter(source => !sourceIds.includes(source.id)).map(source => <option value={source.id} key={source.id}>{source.name}</option>)}</select>{sourceIds.length > 0 && <div>{sourceIds.map(id => { const source = sources.find(item => item.id === id); return <button type="button" key={id} onClick={() => setSourceIds(current => current.filter(value => value !== id))}>{source?.name || id}<X size={12}/></button> })}</div>}<small>每次最多读取 3 份；原文件不会被修改。</small></div>}</>}
-      <textarea autoFocus value={objective} onChange={event => setObjective(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit() } }} placeholder={selectedWorkflow?.prompt ?? '向小何说明你的研究任务…'}/>
-      <footer><div className="composer-left"><div className="composer-plus"><button type="button" className="composer-icon" aria-label="添加内容或选择工作流" onClick={() => setPlusOpen(open => !open)}><Plus size={18}/></button>{plusOpen && <div className="composer-plus-menu"><button type="button" onClick={() => { setPlusOpen(false); onOpenProject() }}><Files size={16}/><span><strong>项目内容</strong><small>浏览并预览当前仓库文件</small></span></button><div>固定工作流</div>{workflows.map(workflow => <button type="button" disabled={!workflow.available} key={workflow.id} onClick={() => { setSelectedWorkflow(workflow); setSourceIds([]); setPlusOpen(false) }}><Sparkles size={15}/><span>{workflow.name}</span></button>)}</div>}</div><select aria-label="选择模型" value={modelRole} onChange={event => setModelRole(event.target.value as typeof modelRole)}><option value="">默认模型</option>{modelOptions.map(([role, profile]) => <option value={role} key={role}>{profile.model}</option>)}</select></div><button type="button" className="composer-send" disabled={busy || !objective.trim() || (selectedWorkflow?.sourceSelection === 'required' && !sourceIds.length)} onClick={submit}>{busy ? <RotateCcw className="spin" size={17}/> : <ArrowRight size={18}/>}</button></footer>
+      {(selectedWorkflow || selectedCapability) && <div className="selected-workflow"><Sparkles size={14}/><span>{selectedWorkflow?.name || selectedCapability?.name}</span><small>{selectedCapability ? '专项执行' : '固定步骤'}</small><button type="button" aria-label="取消当前工作流" onClick={clearSelection}><X size={13}/></button></div>}
+      {selectedWorkflow && selectedWorkflow.sourceSelection !== 'none' && <div className="workflow-source-picker"><label>项目资料{minimumSources > 0 ? `（至少 ${minimumSources} 份）` : '（可选）'}</label><button type="button" className="workflow-scan-button" disabled={pdfScanBusy} onClick={onScanProjectPdfs}>{pdfScanBusy ? <RotateCcw className="spin" size={13}/> : <Search size={13}/>}扫描项目 PDF</button><select value="" onChange={event => { const id = event.target.value; if (id && !sourceIds.includes(id) && sourceIds.length < maximumSources) setSourceIds(current => [...current, id]) }}><option value="">选择项目中的可读资料…</option>{sources.filter(source => !sourceIds.includes(source.id)).map(source => <option value={source.id} disabled={!sourceReadyForAgent(source)} key={source.id}>{source.name}{sourceReadyForAgent(source) ? '' : `（${source.status}）`}</option>)}</select>{sourceIds.length > 0 && <div>{sourceIds.map(id => { const source = sources.find(item => item.id === id); return <button type="button" key={id} onClick={() => setSourceIds(current => current.filter(value => value !== id))}>{source?.name || id}<X size={12}/></button> })}</div>}<small>项目中的 PDF 会原地登记并在本机解析；本流程最多读取 {maximumSources} 份，原文件不会被移动或修改。</small></div>}
+      {selectedCapability && <><CapabilityWorkflowFields pack={selectedCapability} sources={sources} values={capabilityInput} scanBusy={pdfScanBusy} onScanProjectPdfs={onScanProjectPdfs} onChange={(key, value) => setCapabilityInput(current => ({ ...current, [key]: value }))}/>{!selectedCapability.preflight.ready && <p className="capability-not-ready"><AlertTriangle size={14}/><span><strong>这台电脑还不能开始：</strong>{selectedCapability.preflight.message}</span></p>}</>}
+      <textarea autoFocus value={objective} onChange={event => setObjective(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit() } }} placeholder={selectedWorkflow?.prompt ?? selectedCapability?.exampleTask ?? '向小何说明你的研究任务…'}/>
+      <footer><div className="composer-left"><div className="composer-plus"><button type="button" className="composer-icon" aria-label="添加内容或选择工作流" onClick={() => setPlusOpen(open => !open)}><Plus size={18}/></button>{plusOpen && <div className="composer-plus-menu"><button type="button" onClick={() => { setPlusOpen(false); onOpenProject() }}><Files size={16}/><span><strong>项目内容</strong><small>浏览并预览当前仓库文件</small></span></button><button type="button" onClick={() => { setPlusOpen(false); setLibraryOpen(true) }}><Blocks size={16}/><span><strong>科研工作流库</strong><small>{workflows.length} 个快速辅助 · {capabilityPacks.length} 个专项执行</small></span><ChevronRight size={15}/></button><div>常用工作流</div>{workflows.filter(workflow => workflow.featured).map(workflow => <button type="button" disabled={!workflow.available} key={workflow.id} onClick={() => chooseWorkflow(workflow)}><Sparkles size={15}/><span>{workflow.name}</span></button>)}</div>}</div><select aria-label="选择模型" value={modelRole} onChange={event => setModelRole(event.target.value as typeof modelRole)}><option value="">默认模型</option>{modelOptions.map(([role, profile]) => <option value={role} key={role}>{profile.model}</option>)}</select></div><button type="button" className="composer-send" disabled={!canSubmit} onClick={submit}>{busy ? <RotateCcw className="spin" size={17}/> : <ArrowRight size={18}/>}</button></footer>
     </div><p className="composer-note"><ShieldCheck size={13}/>只在你确认的项目范围内工作；重要结论和高风险操作会请你确认。</p></div>
+    {libraryOpen && <WorkflowLibrary workflows={workflows} capabilityPacks={capabilityPacks} onClose={() => setLibraryOpen(false)} onSelectWorkflow={chooseWorkflow} onSelectCapability={chooseCapability}/>}
   </section>
 }
 
@@ -2140,11 +2282,11 @@ const capabilityMaturityLabels: Record<DesktopCapabilityPack['maturity'], string
 
 function WorkbenchProject({ dashboard, packs, busy, error, onTogglePack, onSettings }: { dashboard?: DesktopWorkbenchDashboard; packs: DesktopCapabilityPack[]; busy: boolean; error: string; onTogglePack: (id: string, enabled: boolean) => void; onSettings: () => void }) {
   const project = dashboard?.project
-  return <section className="workbench-page project-page"><header className="project-heading"><div><p className="section-kicker">项目设置</p><h1>{project?.name ?? '当前项目'}</h1><p>这里选择项目常用工作流；对话、记忆、文件范围和任务记录不会与其他项目混在一起。</p></div><button className="outline-button" onClick={onSettings}><Settings2 size={16}/>模型与本机设置</button></header>
+  return <section className="workbench-page project-page"><header className="project-heading"><div><p className="section-kicker">项目设置</p><h1>{project?.name ?? '当前项目'}</h1><p>这里管理当前项目常用的工作流；全部科研流程仍可从对话框的工作流库随时使用。</p></div><button className="outline-button" onClick={onSettings}><Settings2 size={16}/>模型与本机设置</button></header>
     {error && <p className="workbench-error"><AlertTriangle size={16}/>{error}</p>}
     <div className="project-facts"><article><span>项目类型</span><strong>{project?.kind ?? 'research'}</strong></article><article><span>项目文件夹</span><strong title={project?.vaultPath}>{project?.vaultPath ?? '尚未打开'}</strong></article><article><span>关联文件夹</span><strong>{project?.externalRoots.length ?? 0}</strong></article></div>
-    <header className="capability-heading"><div><p className="section-kicker">专项工作流</p><h2>这个项目可以使用的科研能力</h2><p>把经常使用的能力加入当前项目；缺少本机工具时会明确提示，也不会自动开始任务。</p></div><div className="maturity-legend"><span><i className="trial"/>可试用</span><span><i className="missing_tools"/>缺少工具</span><span><i className="not_connected"/>暂不可用</span></div></header>
-    <div className="capability-grid">{packs.map((pack, index) => <article className={`${pack.enabled ? 'enabled' : ''} ${pack.maturity}`} key={pack.id}><header><span className="capability-number">{String(index + 1).padStart(2, '0')}</span><div><small>{pack.category}</small><h3>{pack.name}</h3></div><em className={pack.maturity}>{capabilityMaturityLabels[pack.maturity]}</em></header><p>{pack.description}</p><div className="capability-outputs"><span>可以得到</span>{pack.outputs.map(output => <code key={output}>{output}</code>)}</div><div className={`capability-preflight ${pack.preflight.ready ? 'ready' : 'blocked'}`}>{pack.preflight.ready ? <Check size={14}/> : <AlertTriangle size={14}/>}<span>{pack.preflight.message}</span></div>{pack.highRisk.length > 0 && <small className="capability-risk"><AlertTriangle size={13}/>其中有些操作会在开始前请你确认</small>}<footer><span>{pack.enabled ? (pack.preflight.ready ? '已加入当前项目' : '已选择，但还缺少本机工具') : '尚未加入当前项目'}</span><button disabled={busy} onClick={() => onTogglePack(pack.id, !pack.enabled)}>{pack.enabled ? '移除' : '加入'}</button></footer></article>)}</div>
+    <header className="capability-heading"><div><p className="section-kicker">常用专项工作流</p><h2>把经常用的能力固定到当前项目</h2><p>固定后更容易找到；没有固定的流程也能在对话框中直接使用。缺少本机工具时会明确提示，不会自动开始。</p></div><div className="maturity-legend"><span><i className="trial"/>可试用</span><span><i className="missing_tools"/>缺少工具</span><span><i className="not_connected"/>暂不可用</span></div></header>
+    <div className="capability-grid">{packs.map((pack, index) => <article className={`${pack.enabled ? 'enabled' : ''} ${pack.maturity}`} key={pack.id}><header><span className="capability-number">{String(index + 1).padStart(2, '0')}</span><div><small>{pack.category}</small><h3>{pack.name}</h3></div><em className={pack.maturity}>{capabilityMaturityLabels[pack.maturity]}</em></header><p>{pack.description}</p><div className="capability-outputs"><span>可以得到</span>{pack.outputs.map(output => <code key={output}>{output}</code>)}</div><div className={`capability-preflight ${pack.preflight.ready ? 'ready' : 'blocked'}`}>{pack.preflight.ready ? <Check size={14}/> : <AlertTriangle size={14}/>}<span>{pack.preflight.message}</span></div>{pack.highRisk.length > 0 && <small className="capability-risk"><AlertTriangle size={13}/>其中有些操作会在开始前请你确认</small>}<footer><span>{pack.enabled ? '已固定到当前项目常用' : '可从对话框随时使用'}</span><button disabled={busy} onClick={() => onTogglePack(pack.id, !pack.enabled)}>{pack.enabled ? '取消固定' : '固定到常用'}</button></footer></article>)}</div>
   </section>
 }
 

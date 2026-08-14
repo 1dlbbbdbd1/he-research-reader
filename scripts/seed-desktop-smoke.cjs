@@ -30,6 +30,9 @@ try {
     contentSha256,
     bytes,
   })
+  const projectMaterials = path.join(vaultPath, 'project-materials')
+  fs.mkdirSync(projectMaterials, { recursive: true })
+  fs.writeFileSync(path.join(projectMaterials, 'auto-discovered-project.pdf'), Buffer.concat([bytes, Buffer.from('\n% auto-discovered project PDF\n')]))
   service.syncLibraryState({
     workspaceId: vault.id,
     sources: [{

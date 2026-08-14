@@ -4275,6 +4275,86 @@ class WorkspaceService {
     return { imported, skipped }
   }
 
+  discoverProjectPdfSources(input = {}) {
+    this.#requireOpen()
+    const maximum = Math.max(1, Math.min(Number(input.maximum) || 1000, 2000))
+    const maximumDepth = Math.max(1, Math.min(Number(input.maximumDepth) || 8, 12))
+    const ignoredDirectories = new Set(['papers', 'exports', 'cache', '.reader-cache', '.git', 'node_modules'])
+    const root = path.resolve(this.current.path)
+    const candidates = []
+    const skipped = []
+    const visit = (directory, depth) => {
+      if (depth > maximumDepth || candidates.length >= maximum) return
+      let entries
+      try { entries = fs.readdirSync(directory, { withFileTypes: true }) }
+      catch (error) {
+        skipped.push({ path: path.relative(root, directory), reason: error instanceof Error ? error.message : '目录不可读取' })
+        return
+      }
+      for (const entry of entries) {
+        if (candidates.length >= maximum) break
+        const absolutePath = path.join(directory, entry.name)
+        if (entry.isDirectory()) {
+          if (!ignoredDirectories.has(entry.name.toLowerCase())) visit(absolutePath, depth + 1)
+        } else if (entry.isFile() && /\.pdf$/i.test(entry.name)) candidates.push(absolutePath)
+      }
+    }
+    visit(root, 0)
+
+    const registered = []
+    const existing = []
+    const timestamp = now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      for (const absolutePath of candidates) {
+        const relativePath = path.relative(root, absolutePath)
+        if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) continue
+        let hash
+        try { hash = sha256File(absolutePath) }
+        catch (error) {
+          skipped.push({ path: relativePath, reason: error instanceof Error ? error.message : 'PDF 无法读取' })
+          continue
+        }
+        const known = this.database.prepare(`
+          SELECT id, path_relative FROM sources
+          WHERE project_id = ? AND archived_at IS NULL
+            AND (path_relative = ? OR content_sha256 = ?)
+          ORDER BY CASE WHEN path_relative = ? THEN 0 ELSE 1 END
+          LIMIT 1
+        `).get(this.current.projectId, relativePath, hash, relativePath)
+        if (known) {
+          existing.push({ sourceId: known.id, relativePath, matchedBy: known.path_relative === relativePath ? 'path' : 'content' })
+          continue
+        }
+        const sourceId = `project-pdf-${crypto.randomUUID()}`
+        const itemId = `item:${sourceId}`
+        const fileName = path.basename(absolutePath)
+        this.#ensureManualItem(itemId, fileName.replace(/\.pdf$/i, ''), timestamp)
+        this.database.prepare(`
+          INSERT INTO sources(
+            id, project_id, bibliographic_item_id, name, kind, version, status,
+            path_relative, content_sha256, source_metadata_json, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'PDF', 1, '待解析', ?, ?, ?, ?, ?)
+        `).run(
+          sourceId, this.current.projectId, itemId, fileName, relativePath, hash,
+          JSON.stringify({ fileId: sourceId, updated: '从项目文件夹发现', isDemo: false, managedInPlace: true, projectRelativePath: relativePath }),
+          timestamp, timestamp,
+        )
+        this.database.prepare(`
+          INSERT INTO bibliographic_attachments(
+            id, item_id, source_id, role, path_original, path_resolved, exists_state, content_sha256
+          ) VALUES (?, ?, ?, 'primary', ?, ?, 'found', ?)
+        `).run(`attachment:${sourceId}`, itemId, sourceId, absolutePath, absolutePath, hash)
+        registered.push({ sourceId, fileName, relativePath, contentSha256: hash })
+      }
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    return { root, scannedCount: candidates.length, registered, existing, skipped, limited: candidates.length >= maximum }
+  }
+
   readSourceFile(sourceId) {
     this.#requireOpen()
     const row = this.database.prepare(

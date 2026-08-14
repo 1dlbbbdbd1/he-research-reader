@@ -83,6 +83,10 @@ if (smokeMode) {
       kind: 'PDF',
       bytes: fs.readFileSync(path.join(projectRoot, 'test-fixtures', 'pdf-render-check.pdf')),
     })
+    const projectMaterials = path.join(smokeVaultPath, 'project-materials')
+    fs.mkdirSync(projectMaterials, { recursive: true })
+    const discoveryBytes = fs.readFileSync(path.join(projectRoot, 'test-fixtures', 'pdf-render-check.pdf'))
+    fs.writeFileSync(path.join(projectMaterials, 'auto-discovered-project.pdf'), Buffer.concat([discoveryBytes, Buffer.from('\n% auto-discovered project PDF\n')]))
     const longReadingBlocks = Array.from({ length: 220 }, (_, index) => `Long-form evidence block ${index + 1} remains in deterministic reading order and keeps the desktop reader scrollable.`)
     const markdown = ['Abstract', '', 'This is the first evidence sentence.\nSecond glued paragraph begins here.', '', 'Methods', '', 'Raw evidence remains traceable.', '', ...longReadingBlocks.flatMap(block => [block, ''])].join('\n').trim()
     const source = service.loadLibraryState().sources.find(item => item.id === 'desktop-structured-smoke')

@@ -33,6 +33,9 @@ test('schema v19 注册 Research Vault，并把能力状态与真实合同和工
   assert.equal(service.listCapabilityPacks().find(pack => pack.id === 'research-document-formatting').maturity, 'missing_tools')
   const enabled = service.setCapabilityPack({ id: 'research-reference-check', enabled: true })
   assert.ok(enabled.project.capabilityPacks.includes('research-reference-check'))
+  service.setCapabilityPack({ id: 'research-reference-check', enabled: false })
+  const directRun = service.createRun({ objective: '直接从对话使用引用核验', capabilityPack: 'research-reference-check', capabilityInput: { pastedText: 'A reference. 2024.' } })
+  assert.equal(directRun.capabilityPackId, 'research-reference-check')
 }))
 
 test('项目内容浏览只读当前项目，并可预览常见文本文件', () => withWorkbench(({ vault, service }) => {
@@ -60,9 +63,11 @@ test('项目内容可在抽屉中安全预览图片与 PDF 数据', () => withWo
   assert.match(pdf.content, /^data:application\/pdf;base64,/)
 }))
 
-test('对话中的四个科研入口生成真实固定步骤，而不是提示词标签', () => withWorkbench(({ workspace, service }) => {
+test('对话中的常见科研辅助生成真实固定步骤，而不是提示词标签', () => withWorkbench(({ workspace, service }) => {
   const workflows = service.listConversationWorkflows()
-  assert.deepEqual(workflows.map(item => item.id), ['literature-search', 'literature-summary', 'method-summary', 'skill-teaching'])
+  assert.equal(workflows.length, 12)
+  for (const id of ['literature-search', 'literature-summary', 'method-summary', 'skill-teaching', 'research-question', 'experiment-design', 'multi-paper-comparison', 'reproducibility-check', 'data-analysis-plan', 'paper-outline', 'research-progress-report', 'result-interpretation']) assert.ok(workflows.some(item => item.id === id))
+  assert.equal(workflows.filter(item => item.featured).length, 4)
   assert.ok(workflows.every(item => item.available))
 
   const search = service.createRun({ objective: '柔顺装配中的阻抗控制', conversationWorkflowId: 'literature-search' })
@@ -71,7 +76,7 @@ test('对话中的四个科研入口生成真实固定步骤，而不是提示�
   assert.deepEqual(search.preflight.permissionRequirements.domains, ['api.crossref.org'])
   assert.match(search.steps[1].input.url, /^https:\/\/api\.crossref\.org\/works\?/)
 
-  assert.throws(() => service.createRun({ objective: '总结方法差异', conversationWorkflowId: 'literature-summary' }), /至少一份项目资料/)
+  assert.throws(() => service.createRun({ objective: '总结方法差异', conversationWorkflowId: 'literature-summary' }), /至少 1 份项目资料/)
   const timestamp = new Date().toISOString()
   workspace.database.prepare(`
     INSERT INTO sources(id, project_id, name, kind, status, pages, content_sha256, extracted_text, source_metadata_json, created_at, updated_at)
@@ -80,6 +85,7 @@ test('对话中的四个科研入口生成真实固定步骤，而不是提示�
   const summary = service.createRun({ objective: '比较实验方法', conversationWorkflowId: 'literature-summary', conversationWorkflowInput: { sourceIds: ['workflow-source-1'] } })
   assert.equal(summary.steps.find(step => step.toolName === 'research.source.read').input.sourceId, 'workflow-source-1')
   assert.equal(summary.steps.at(-2).title, '形成文献分析总结')
+  assert.throws(() => service.createRun({ objective: '比较两篇论文', conversationWorkflowId: 'multi-paper-comparison', conversationWorkflowInput: { sourceIds: ['workflow-source-1'] } }), /至少 2 份/)
 }))
 
 test('文献检索固定工作流按授权范围真实调用检索工具并完成模型整理', () => {

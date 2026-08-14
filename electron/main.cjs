@@ -437,6 +437,7 @@ ipcMain.handle('plugin:uninstall', (_event, input) => pluginService.uninstall(in
 ipcMain.handle('workspace:list-recent', () => workspaceService.listRecent())
 ipcMain.handle('workspace:get-current', () => workspaceService.getCurrent())
 ipcMain.handle('workspace:load-library', () => workspaceService.loadLibraryState())
+ipcMain.handle('workspace:discover-project-pdfs', (_event, input) => workspaceService.discoverProjectPdfSources(input))
 ipcMain.handle('workspace:rebuild-portable-vault', () => workspaceService.rebuildVaultProjections())
 ipcMain.handle('workspace:list-migration-backups', () => workspaceService.listMigrationBackups())
 ipcMain.handle('workspace:open-vault-folder', async () => {
@@ -1106,6 +1107,7 @@ function createWindow() {
           const parallelScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'reader-parallel-1600x900.png') : undefined
           const commandScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'research-command-empty-layout-1600x900.png') : undefined
           const workbenchScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'agent-workbench-home-1600x900.png') : undefined
+          const workflowLibraryScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'research-workflow-library-1600x900.png') : undefined
           let emptyStateLayoutMetrics = { reviewConverged: false, commandConverged: false }
           if (reviewScreenshotPath && parallelScreenshotPath && commandScreenshotPath) {
             await mainWindow.webContents.executeJavaScript(`(async () => {
@@ -1232,6 +1234,7 @@ function createWindow() {
                   inputVisible: textarea?.getBoundingClientRect().height > 50,
                   plusMenuVisible: Boolean(menu),
                   projectEntryVisible: [...(menu?.querySelectorAll('button') || [])].some(button => button.textContent.includes('项目内容')),
+                  workflowLibraryEntryVisible: [...(menu?.querySelectorAll('button') || [])].some(button => button.textContent.includes('科研工作流库')),
                   modelSelectorVisible: Boolean(composer.querySelector('select[aria-label="选择模型"]')),
                   visibleWorkflowCount,
                   primaryNavCount: document.querySelectorAll('aside nav .nav-item').length,
@@ -1251,23 +1254,41 @@ function createWindow() {
           const workbenchInteractionMetrics = await mainWindow.webContents.executeJavaScript(`(async () => {
             const summary = [...document.querySelectorAll('.workflow-starters button')].find(button => button.textContent.includes('文献分析总结'))
             summary?.click()
-            await new Promise(resolve => setTimeout(resolve, 80))
+            await new Promise(resolve => setTimeout(resolve, 240))
             const sourcePickerVisible = Boolean(document.querySelector('.workflow-source-picker select'))
+            const discoveredPdfOption = [...document.querySelectorAll('.workflow-source-picker option')].find(option => option.textContent.includes('auto-discovered-project.pdf'))
+            const autoDiscoveredProjectPdfVisible = Boolean(discoveredPdfOption)
+            const autoDiscoveredProjectPdfReadable = Boolean(discoveredPdfOption && !discoveredPdfOption.disabled)
+            document.querySelector('.composer-icon')?.click()
+            await new Promise(resolve => setTimeout(resolve, 80))
+            const workflowLibraryEntry = [...document.querySelectorAll('.composer-plus-menu button')].find(button => button.textContent.includes('科研工作流库'))
+            workflowLibraryEntry?.click()
+            await new Promise(resolve => setTimeout(resolve, 120))
+            const workflowLibraryVisible = Boolean(document.querySelector('.workflow-library'))
+            const workflowLibraryCount = document.querySelectorAll('.workflow-library-card').length
+            return { sourcePickerVisible, autoDiscoveredProjectPdfVisible, autoDiscoveredProjectPdfReadable, workflowLibraryVisible, workflowLibraryCount }
+          })()`, true)
+          if (workflowLibraryScreenshotPath) fs.writeFileSync(workflowLibraryScreenshotPath, (await mainWindow.capturePage()).toPNG())
+          const workbenchSelectionMetrics = await mainWindow.webContents.executeJavaScript(`(async () => {
+            const referenceWorkflow = [...document.querySelectorAll('.workflow-library-card')].find(button => button.textContent.includes('引用真实性核查'))
+            referenceWorkflow?.click()
+            await new Promise(resolve => setTimeout(resolve, 80))
+            const capabilityFieldsVisible = Boolean(document.querySelector('.capability-workflow-fields'))
             const memoryEntry = document.querySelector('.sidebar-memory-button')
             memoryEntry?.click()
             await new Promise(resolve => setTimeout(resolve, 100))
             const memoryDrawerVisible = Boolean(document.querySelector('.memory-drawer .memory-create textarea'))
             document.querySelector('.memory-drawer button[aria-label="关闭项目记忆"]')?.click()
-            return { sourcePickerVisible, memoryEntryVisible: Boolean(memoryEntry), memoryDrawerVisible }
+            return { capabilityFieldsVisible, memoryEntryVisible: Boolean(memoryEntry), memoryDrawerVisible }
           })()`, true)
-          Object.assign(workbenchLayoutMetrics, workbenchInteractionMetrics)
+          Object.assign(workbenchLayoutMetrics, workbenchInteractionMetrics, workbenchSelectionMetrics)
           const workbenchReachedEnd = await mainWindow.webContents.executeJavaScript(`(() => {
             const root = document.querySelector('.agent-chat-page')
             const composer = root?.querySelector('.agent-composer')
             return Boolean(root && composer && composer.getBoundingClientRect().bottom <= innerHeight)
           })()`)
           workbenchLayoutMetrics.reachedEnd = workbenchReachedEnd
-          const workbenchLayoutPassed = workbenchLayoutMetrics.chatComposerVisible && workbenchLayoutMetrics.inputVisible && workbenchLayoutMetrics.plusMenuVisible && workbenchLayoutMetrics.projectEntryVisible && workbenchLayoutMetrics.modelSelectorVisible && workbenchLayoutMetrics.visibleWorkflowCount === 4 && workbenchLayoutMetrics.primaryNavCount === 2 && workbenchLayoutMetrics.conversationListVisible && workbenchLayoutMetrics.noOverflow && workbenchLayoutMetrics.scrollContainer && workbenchReachedEnd
+          const workbenchLayoutPassed = workbenchLayoutMetrics.chatComposerVisible && workbenchLayoutMetrics.inputVisible && workbenchLayoutMetrics.plusMenuVisible && workbenchLayoutMetrics.projectEntryVisible && workbenchLayoutMetrics.workflowLibraryEntryVisible && workbenchLayoutMetrics.modelSelectorVisible && workbenchLayoutMetrics.visibleWorkflowCount === 4 && workbenchLayoutMetrics.autoDiscoveredProjectPdfVisible && workbenchLayoutMetrics.autoDiscoveredProjectPdfReadable && workbenchLayoutMetrics.workflowLibraryVisible && workbenchLayoutMetrics.workflowLibraryCount === 22 && workbenchLayoutMetrics.capabilityFieldsVisible && workbenchLayoutMetrics.primaryNavCount === 2 && workbenchLayoutMetrics.conversationListVisible && workbenchLayoutMetrics.noOverflow && workbenchLayoutMetrics.scrollContainer && workbenchReachedEnd
           const clipboardVerified = clipboard.readText() === smokeCitation && clipboardResult?.written === true
           clipboard.writeText(previousClipboardText)
           const largeViewportsPassed = largeViewportChecks.every(check => check.actualWidth === check.requestedWidth && check.actualHeight === check.requestedHeight && check.noOverflow && check.shellFillsViewport)
@@ -1275,7 +1296,7 @@ function createWindow() {
             finishDesktopSmoke({ reason: 'desktop-acceptance-failed', title, clipboardVerified, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, workbenchLayoutMetrics, userData: app.getPath('userData') }, true)
             return
           }
-          finishDesktopSmoke({ title, clipboardVerified, clipboardRestored: clipboard.readText() === previousClipboardText, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, workbenchLayoutMetrics, screenshotPath, reviewScreenshotPath, parallelScreenshotPath, commandScreenshotPath, workbenchScreenshotPath, userData: app.getPath('userData') })
+          finishDesktopSmoke({ title, clipboardVerified, clipboardRestored: clipboard.readText() === previousClipboardText, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, workbenchLayoutMetrics, screenshotPath, reviewScreenshotPath, parallelScreenshotPath, commandScreenshotPath, workbenchScreenshotPath, workflowLibraryScreenshotPath, userData: app.getPath('userData') })
         })
         .catch(error => {
           clipboard.writeText(previousClipboardText)

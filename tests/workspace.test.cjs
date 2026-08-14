@@ -138,6 +138,39 @@ test('普通文件夹里的现有 PDF 可按用户确认一键复制纳入研究
   }
 })
 
+test('项目目录中的 PDF 可原地发现并幂等登记，不复制或移动原文件', () => {
+  const fixture = withService()
+  try {
+    const selectedFolder = path.join(fixture.root, '项目原地论文')
+    const nested = path.join(selectedFolder, '资料', '核心论文')
+    fs.mkdirSync(nested, { recursive: true })
+    const original = path.join(nested, 'control-paper.pdf')
+    fs.writeFileSync(original, Buffer.from('%PDF-1.4 project managed in place'))
+    fixture.service.createAt(selectedFolder, '原地管理测试')
+
+    const first = fixture.service.discoverProjectPdfSources()
+    assert.equal(first.scannedCount, 1)
+    assert.equal(first.registered.length, 1)
+    assert.equal(first.registered[0].relativePath, path.join('资料', '核心论文', 'control-paper.pdf'))
+    assert.equal(fs.readFileSync(original, 'utf8'), '%PDF-1.4 project managed in place')
+    assert.equal(fs.existsSync(path.join(selectedFolder, 'papers', first.registered[0].sourceId)), false)
+
+    const library = fixture.service.loadLibraryState()
+    assert.equal(library.sources.length, 1)
+    assert.equal(library.sources[0].managedInPlace, true)
+    assert.equal(library.sources[0].projectRelativePath, path.join('资料', '核心论文', 'control-paper.pdf'))
+    const stored = fixture.service.readSourceFile(library.sources[0].id)
+    assert.equal(Buffer.from(stored.bytes).toString('utf8'), '%PDF-1.4 project managed in place')
+
+    const second = fixture.service.discoverProjectPdfSources()
+    assert.equal(second.registered.length, 0)
+    assert.equal(second.existing.length, 1)
+    assert.equal(fixture.service.loadLibraryState().sources.length, 1)
+  } finally {
+    fixture.close()
+  }
+})
+
 test('已发布的 v1 研究库会事务升级到 v19，并同步清单版本', () => {
   const fixture = withService()
   try {
