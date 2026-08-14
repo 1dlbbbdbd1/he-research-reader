@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('readerDesktop', {
   updateWorkbenchProject: input => ipcRenderer.invoke('workbench:project-update', input),
   listWorkbenchProjectFiles: input => ipcRenderer.invoke('workbench:project-files', input),
   previewWorkbenchProjectFile: input => ipcRenderer.invoke('workbench:project-preview', input),
+  listWorkbenchConversationWorkflows: () => ipcRenderer.invoke('workbench:conversation-workflow-list'),
   listWorkbenchCapabilityPacks: () => ipcRenderer.invoke('workbench:capability-list'),
   setWorkbenchCapabilityPack: input => ipcRenderer.invoke('workbench:capability-set', input),
   createWorkbenchRun: input => ipcRenderer.invoke('workbench:run-create', input),

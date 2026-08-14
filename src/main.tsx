@@ -427,8 +427,11 @@ function App() {
   const [workbenchDashboard, setWorkbenchDashboard] = useState<DesktopWorkbenchDashboard>()
   const [activeWorkbenchRun, setActiveWorkbenchRun] = useState<DesktopWorkbenchRun>()
   const [capabilityPacks, setCapabilityPacks] = useState<DesktopCapabilityPack[]>([])
+  const [conversationWorkflows, setConversationWorkflows] = useState<DesktopConversationWorkflow[]>([])
   const [agentSessions, setAgentSessions] = useState<DesktopAgentSessionSummary[]>([])
   const [activeAgentSession, setActiveAgentSession] = useState<DesktopAgentSession>()
+  const [memoryOpen, setMemoryOpen] = useState(false)
+  const [projectMemory, setProjectMemory] = useState<DesktopAgentMemory[]>([])
   const [projectDrawerOpen, setProjectDrawerOpen] = useState(false)
   const [projectFiles, setProjectFiles] = useState<DesktopProjectFileEntry[]>([])
   const [projectFileRoot, setProjectFileRoot] = useState('')
@@ -1522,9 +1525,10 @@ function App() {
     const desktop = window.readerDesktop
     if (!desktop) return
     try {
-      const [dashboard, packs, sessions] = await Promise.all([desktop.getWorkbenchDashboard(), desktop.listWorkbenchCapabilityPacks(), desktop.listAgentSessions()])
+      const [dashboard, packs, workflows, sessions] = await Promise.all([desktop.getWorkbenchDashboard(), desktop.listWorkbenchCapabilityPacks(), desktop.listWorkbenchConversationWorkflows(), desktop.listAgentSessions()])
       setWorkbenchDashboard(dashboard)
       setCapabilityPacks(packs)
+      setConversationWorkflows(workflows)
       setAgentSessions(sessions)
       if (activeAgentSession) setActiveAgentSession(await desktop.getAgentSession({ sessionId: activeAgentSession.id }))
       if (runId) setActiveWorkbenchRun(await desktop.getWorkbenchRun({ runId }))
@@ -1571,28 +1575,53 @@ function App() {
     finally { setWorkbenchBusy(false) }
   }
 
-  async function sendAgentMessage(input: { objective: string; acceptance: string[]; taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; workflowLabel?: string; modelRole?: 'planner' | 'executor' | 'vision' | 'verifier' }) {
+  async function sendAgentMessage(input: { objective: string; acceptance: string[]; taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; workflow?: DesktopConversationWorkflow; sourceIds?: string[]; modelRole?: 'planner' | 'executor' | 'vision' | 'verifier' }) {
     const desktop = window.readerDesktop
     if (!desktop) return
     setWorkbenchBusy(true)
     try {
       let sessionId = activeAgentSession?.id
-      if (!sessionId) sessionId = (await desktop.createAgentSession({ title: input.objective.slice(0, 60), scope: { workflow: input.workflowLabel || '自由对话' } })).id
+      if (!sessionId) sessionId = (await desktop.createAgentSession({ title: input.objective.slice(0, 60), scope: { workflow: input.workflow?.id || '自由对话' } })).id
       await desktop.appendAgentTurn({ sessionId, role: 'user', content: input.objective })
       const run = await desktop.createWorkbenchRun({
-        objective: input.workflowLabel ? `${input.workflowLabel}：${input.objective}` : input.objective,
+        objective: input.objective,
         acceptance: input.acceptance,
         taskType: input.taskType,
         sessionId,
+        conversationWorkflowId: input.workflow?.id,
+        conversationWorkflowInput: input.workflow ? { sourceIds: input.sourceIds || [] } : undefined,
         modelRoles: input.modelRole ? { selectedRole: input.modelRole } : undefined,
       })
-      await desktop.appendAgentTurn({ sessionId, role: 'assistant', content: `我已经按“${input.workflowLabel || '自由对话'}”整理了执行步骤。开始读取文件或调用工具前，请先检查本次任务的范围。`, evidenceRefs: [{ type: 'run', id: run.id }] })
+      await desktop.appendAgentTurn({ sessionId, role: 'assistant', content: input.workflow ? `已建立“${input.workflow.name}”固定工作流，共 ${run.steps.length} 个步骤。开始读取资料或访问网络前，请先检查并确认本次任务范围。` : '我已经根据你的目标整理了执行步骤。开始读取文件或调用工具前，请先检查本次任务范围。', evidenceRefs: [{ type: 'run', id: run.id }] })
       setActiveWorkbenchRun(run)
       setActiveAgentSession(await desktop.getAgentSession({ sessionId }))
       await refreshWorkbench(run.id)
       setWorkbenchError('')
     } catch (error) { setWorkbenchError(error instanceof Error ? error.message : '消息发送失败。') }
     finally { setWorkbenchBusy(false) }
+  }
+
+  async function openProjectMemory() {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    setMemoryOpen(true)
+    try { setProjectMemory(await desktop.listAgentMemory()); setWorkbenchError('') }
+    catch (error) { setWorkbenchError(error instanceof Error ? error.message : '项目记忆读取失败。') }
+  }
+
+  async function saveProjectMemory(input: { kind: DesktopAgentMemory['kind']; content: string; importance: number }) {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    await desktop.saveAgentMemory({ ...input, createdBy: 'user', sourceType: 'project' })
+    setProjectMemory(await desktop.listAgentMemory())
+    notify('已保存到当前项目记忆。')
+  }
+
+  async function reviewProjectMemory(id: string, decision: 'confirm' | 'reject' | 'archive') {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    await desktop.reviewAgentMemory({ id, decision })
+    setProjectMemory(await desktop.listAgentMemory())
   }
 
   async function openProjectDrawer() {
@@ -1724,6 +1753,7 @@ function App() {
         <Nav active={['research-hub', 'today', 'research-workspace', 'research-review', 'sources', 'reader', 'dashboard', 'evidence', 'knowledge', 'actions'].includes(active)} icon={<FlaskConical/>} label="科研工作区" count={sources.length} onClick={() => setActive('research-hub')}/>
       </nav>
       <section className="sidebar-conversations"><header><span>项目对话</span><button type="button" title="新建对话" onClick={() => void newAgentSession()}><Plus size={14}/></button></header><div>{agentSessions.map(session => <button type="button" className={session.id === activeAgentSession?.id ? 'active' : ''} key={session.id} onClick={() => void openAgentSession(session.id)}><MessageSquareText size={14}/><span>{session.title}</span></button>)}{agentSessions.length === 0 && <p>还没有对话</p>}</div></section>
+      <button type="button" className="sidebar-memory-button" onClick={() => void openProjectMemory()}><HardDrive size={15}/><span>项目记忆</span><small>查看与确认</small></button>
       <div className="sidebar-bottom">
         <button className="nav-item" onClick={() => setFeedbackOpen(true)}><Bug/><span>问题反馈</span></button>
         <button className="nav-item" onClick={() => setSettingsOpen(true)}><Settings2/><span>设置</span></button>
@@ -1733,7 +1763,7 @@ function App() {
     <main>
       <header className="topbar"><button className="mobile-menu"><Menu/></button><div className="crumb">{workspace?.name ?? '个人项目'} <ChevronRight size={14}/> <strong>{active === 'workbench' ? (activeAgentSession?.title || 'Agent 对话') : active === 'runs' ? '任务过程' : active === 'projects' ? '固定工作流' : active === 'research-hub' ? '科研工作区' : active === 'today' ? '今日科研' : active === 'research-workspace' ? '课题与实验' : active === 'research-review' ? '复盘与写作' : active === 'dashboard' ? '文献综述' : active === 'reader' ? '阅读' : active === 'evidence' ? '证据关系' : active === 'knowledge' ? '知识图谱' : active === 'actions' ? '研究任务' : '文献与资料'}</strong></div><div className="top-actions"><button className="icon-button" title="搜索项目资料" onClick={() => { setActive('sources'); setLibrarySearchRequest(value => value + 1) }}><Search size={19}/></button><button className="agent-button" onClick={() => void newAgentSession()}><Plus size={16}/> 新对话</button></div></header>
       {active === 'workbench' && <WorkbenchHome
-        dashboard={workbenchDashboard} session={activeAgentSession} modelRoles={modelRoles} busy={workbenchBusy} error={workbenchError}
+        dashboard={workbenchDashboard} session={activeAgentSession} modelRoles={modelRoles} workflows={conversationWorkflows} sources={sources} busy={workbenchBusy} error={workbenchError}
         onSend={sendAgentMessage} onOpenProject={() => void openProjectDrawer()}
         onOpenRun={(id) => { void applyWorkbenchAction(() => window.readerDesktop!.getWorkbenchRun({ runId: id })); setActive('runs') }}
       />}
@@ -1914,7 +1944,8 @@ function App() {
         onSettings={() => setSettingsOpen(true)}
       />}
     </main>
-    {projectDrawerOpen && <div className="project-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setProjectDrawerOpen(false) }}><aside className="project-drawer"><header><div><small>当前项目</small><strong>项目内容</strong></div><button type="button" aria-label="关闭项目内容" onClick={() => setProjectDrawerOpen(false)}><X size={18}/></button></header><p className="project-root" title={projectFileRoot}>{projectFileRoot}</p><div className="project-drawer-body"><nav>{projectFiles.map(entry => <button type="button" className={projectFilePreview?.relativePath === entry.relativePath ? 'active' : ''} style={{ paddingLeft: `${12 + Math.min(entry.depth, 5) * 14}px` }} disabled={entry.kind === 'directory'} onClick={() => entry.kind === 'file' && void previewProjectFile(entry.relativePath)} key={entry.relativePath}>{entry.kind === 'directory' ? <Files size={14}/> : <FileText size={14}/>}<span>{entry.name}</span></button>)}</nav><section>{projectFilePreview ? <><header><strong>{projectFilePreview.name}</strong><small>{projectFilePreview.size.toLocaleString()} 字节</small></header>{projectFilePreview.previewable ? <pre>{projectFilePreview.content}</pre> : <div className="preview-unavailable"><FileText size={32}/><strong>请在对应工作区打开</strong><p>这里先显示文件位置和类型；PDF、图片和办公文档仍由专用阅读或编辑界面处理。</p></div>}</> : <div className="preview-unavailable"><Files size={32}/><strong>选择一个文件预览</strong><p>项目内容只读展示，不会移动或修改原文件。</p></div>}</section></div></aside></div>}
+    {memoryOpen && <ProjectMemoryDrawer memory={projectMemory} onClose={() => setMemoryOpen(false)} onSave={saveProjectMemory} onReview={reviewProjectMemory}/>}
+    {projectDrawerOpen && <div className="project-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setProjectDrawerOpen(false) }}><aside className="project-drawer"><header><div><small>当前项目</small><strong>项目内容</strong></div><button type="button" aria-label="关闭项目内容" onClick={() => setProjectDrawerOpen(false)}><X size={18}/></button></header><p className="project-root" title={projectFileRoot}>{projectFileRoot}</p><div className="project-drawer-body"><nav>{projectFiles.map(entry => <button type="button" className={projectFilePreview?.relativePath === entry.relativePath ? 'active' : ''} style={{ paddingLeft: `${12 + Math.min(entry.depth, 5) * 14}px` }} disabled={entry.kind === 'directory'} onClick={() => entry.kind === 'file' && void previewProjectFile(entry.relativePath)} key={entry.relativePath}>{entry.kind === 'directory' ? <Files size={14}/> : <FileText size={14}/>}<span>{entry.name}</span></button>)}</nav><ProjectFilePreview preview={projectFilePreview}/></div></aside></div>}
     {returnGreetingOpen && researchResume && <ResearchReturnGreeting resume={researchResume} onDismiss={() => setReturnGreetingOpen(false)} onContinue={continueLastResearch}/>}
     {citationDialog && <CitationDialog item={citationDialog.item} reason={citationDialog.reason} onClose={() => setCitationDialog(undefined)}/>}
     <input ref={fileInput} className="hidden" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xlsx,.xls,.md,.txt" onChange={e => addFiles(e.target.files)} />
@@ -1971,44 +2002,82 @@ const workbenchStatusLabels: Record<DesktopWorkbenchRunStatus, string> = {
   failed: '失败', cancelled: '已取消',
 }
 
-function WorkbenchHome({ dashboard, session, modelRoles, busy, error, onSend, onOpenProject, onOpenRun }: {
+function ProjectPdfPreview({ dataUrl }: { dataUrl: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [message, setMessage] = useState('正在打开 PDF 第 1 页…')
+  useEffect(() => {
+    let cancelled = false
+    let document: LocalPdfDocument | undefined
+    void (async () => {
+      try {
+        const blob = await (await fetch(dataUrl)).blob()
+        document = await loadPdfDocument(blob)
+        if (cancelled || !canvasRef.current) return
+        await renderPdfThumbnail(document, canvasRef.current, 1, 720)
+        if (!cancelled) setMessage(`第 1 页 · 共 ${document.numPages} 页`)
+      } catch (error) { if (!cancelled) setMessage(error instanceof Error ? error.message : 'PDF 预览失败。') }
+    })()
+    return () => { cancelled = true; if (document) void cleanupPdfDocumentWhenIdle(document) }
+  }, [dataUrl])
+  return <div className="project-pdf-preview"><small>{message}</small><canvas ref={canvasRef}/></div>
+}
+
+function ProjectFilePreview({ preview }: { preview?: DesktopProjectFilePreview }) {
+  if (!preview) return <section><div className="preview-unavailable"><Files size={32}/><strong>选择一个文件预览</strong><p>这里只读展示项目内容，不会移动或修改原文件。</p></div></section>
+  return <section><header><strong>{preview.name}</strong><small>{preview.size.toLocaleString()} 字节</small></header>{preview.previewable
+    ? preview.kind === 'text' ? <pre>{preview.content}</pre>
+      : preview.kind === 'image' ? <div className="project-image-preview"><img src={preview.content} alt={preview.name}/></div>
+        : preview.kind === 'pdf' ? <ProjectPdfPreview dataUrl={preview.content}/>
+          : null
+    : <div className="preview-unavailable"><FileText size={32}/><strong>暂时不能在这里预览</strong><p>{preview.message || '请在对应工作区打开这个文件。'}</p></div>}</section>
+}
+
+const memoryKindLabels: Record<DesktopAgentMemory['kind'], string> = { research_direction: '研究方向', preferred_term: '常用术语', reading_history: '阅读线索', experiment_history: '实验经验', preference: '个人偏好' }
+
+function ProjectMemoryDrawer({ memory, onClose, onSave, onReview }: { memory: DesktopAgentMemory[]; onClose: () => void; onSave: (input: { kind: DesktopAgentMemory['kind']; content: string; importance: number }) => Promise<void>; onReview: (id: string, decision: 'confirm' | 'reject' | 'archive') => Promise<void> }) {
+  const [kind, setKind] = useState<DesktopAgentMemory['kind']>('research_direction')
+  const [content, setContent] = useState('')
+  const [importance, setImportance] = useState(3)
+  const save = async () => { if (!content.trim()) return; await onSave({ kind, content: content.trim(), importance }); setContent('') }
+  return <div className="project-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><aside className="memory-drawer"><header><div><small>当前项目</small><strong>项目记忆</strong></div><button type="button" aria-label="关闭项目记忆" onClick={onClose}><X size={18}/></button></header><p className="memory-intro">这里保存项目长期需要记住的方向、术语和经验。AI 建议会先等待你确认。</p><div className="memory-create"><select value={kind} onChange={event => setKind(event.target.value as DesktopAgentMemory['kind'])}>{Object.entries(memoryKindLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><select aria-label="重要程度" value={importance} onChange={event => setImportance(Number(event.target.value))}><option value={5}>很重要</option><option value={4}>重要</option><option value={3}>一般</option><option value={2}>较低</option><option value={1}>仅供参考</option></select><textarea value={content} onChange={event => setContent(event.target.value)} placeholder="例如：本项目把 compliant control 统一译为柔顺控制。"/><button type="button" disabled={!content.trim()} onClick={() => void save()}><Plus size={15}/>保存记忆</button></div><div className="project-memory-list">{memory.length ? memory.map(item => <article key={item.id} className={item.reviewState}><header><span>{memoryKindLabels[item.kind]}</span><small>{item.createdBy === 'ai' ? 'AI 建议' : '你保存的'} · 重要度 {item.importance}</small></header><p>{item.content}</p><footer>{item.reviewState === 'draft' && <><button type="button" onClick={() => void onReview(item.id, 'confirm')}><Check size={14}/>确认保留</button><button type="button" onClick={() => void onReview(item.id, 'reject')}><X size={14}/>不采用</button></>} {item.reviewState === 'confirmed' && <button type="button" onClick={() => void onReview(item.id, 'archive')}>移入归档</button>}<small>{item.reviewState === 'confirmed' ? '已确认' : item.reviewState === 'draft' ? '等待确认' : item.reviewState === 'rejected' ? '未采用' : '已归档'}</small></footer></article>) : <div className="memory-empty"><HardDrive size={27}/><strong>还没有项目记忆</strong><p>先保存一条研究方向或术语偏好。</p></div>}</div></aside></div>
+}
+
+function WorkbenchHome({ dashboard, session, modelRoles, workflows, sources, busy, error, onSend, onOpenProject, onOpenRun }: {
   dashboard?: DesktopWorkbenchDashboard
   session?: DesktopAgentSession
   modelRoles?: DesktopAppSettings['modelRoles']
+  workflows: DesktopConversationWorkflow[]
+  sources: Source[]
   busy: boolean
   error: string
-  onSend: (input: { objective: string; acceptance: string[]; taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; workflowLabel?: string; modelRole?: 'planner' | 'executor' | 'vision' | 'verifier' }) => void
+  onSend: (input: { objective: string; acceptance: string[]; taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; workflow?: DesktopConversationWorkflow; sourceIds?: string[]; modelRole?: 'planner' | 'executor' | 'vision' | 'verifier' }) => void
   onOpenProject: () => void
   onOpenRun: (id: string) => void
 }) {
-  const workflows = [
-    { id: 'literature-search', label: '查找相应的文献', prompt: '请说明研究主题、关键词或需要解决的问题。', type: 'research' as const },
-    { id: 'literature-summary', label: '文献分析总结', prompt: '请说明要分析的文献，以及希望重点比较的内容。', type: 'research' as const },
-    { id: 'method-summary', label: '实验方法指定总结', prompt: '请说明实验目标、已有条件和想了解的方法。', type: 'research' as const },
-    { id: 'skill-teaching', label: '实验技能教学', prompt: '请说明要学习的技能、当前基础和可用设备。', type: 'engineering' as const },
-  ]
   const [objective, setObjective] = useState('')
   const [selectedWorkflow, setSelectedWorkflow] = useState<(typeof workflows)[number]>()
+  const [sourceIds, setSourceIds] = useState<string[]>([])
   const [plusOpen, setPlusOpen] = useState(false)
   const modelOptions = (Object.entries(modelRoles ?? {}) as Array<[keyof DesktopAppSettings['modelRoles'], DesktopAppSettings['modelRoles'][keyof DesktopAppSettings['modelRoles']]]>).filter(([role, profile]) => role !== 'embedding' && profile.model)
   const [modelRole, setModelRole] = useState<'planner' | 'executor' | 'vision' | 'verifier' | ''>('')
   const sessionRuns = (dashboard?.runs ?? []).filter(run => !session?.id || run.sessionId === session.id)
   const submit = () => {
     if (!objective.trim() || busy) return
-    onSend({ objective: objective.trim(), acceptance: [], taskType: selectedWorkflow?.type ?? 'research', workflowLabel: selectedWorkflow?.label, modelRole: modelRole || undefined })
+    if (selectedWorkflow?.sourceSelection === 'required' && !sourceIds.length) return
+    onSend({ objective: objective.trim(), acceptance: [], taskType: selectedWorkflow?.taskType ?? 'research', workflow: selectedWorkflow, sourceIds, modelRole: modelRole || undefined })
     setObjective('')
   }
   return <section className="workbench-page agent-chat-page">
     <div className="agent-chat-scroll">
-      {!session?.turns.length && <section className="agent-chat-welcome"><div className="agent-welcome-mark"><Sparkles/></div><h1>今天想研究什么？</h1><p>直接描述任务，或选择一个常用工作流。小何会先整理步骤和需要的权限，再开始操作当前项目。</p><div className="workflow-starters">{workflows.map(workflow => <button type="button" key={workflow.id} onClick={() => { setSelectedWorkflow(workflow); setObjective('') }}><strong>{workflow.label}</strong><small>{workflow.prompt}</small><ChevronRight size={16}/></button>)}</div></section>}
+      {!session?.turns.length && <section className="agent-chat-welcome"><div className="agent-welcome-mark"><Sparkles/></div><h1>今天想研究什么？</h1><p>直接描述任务，或选择一个固定工作流。小何会先列出固定步骤和权限，再操作当前项目。</p><div className="workflow-starters">{workflows.map(workflow => <button type="button" disabled={!workflow.available} key={workflow.id} onClick={() => { setSelectedWorkflow(workflow); setSourceIds([]); setObjective('') }}><strong>{workflow.name}</strong><small>{workflow.description}</small><ChevronRight size={16}/></button>)}</div></section>}
       {session?.turns.map(turn => <article className={`agent-message ${turn.role}`} key={turn.id}><div className="agent-avatar">{turn.role === 'user' ? '你' : turn.role === 'tool' ? <Settings2 size={15}/> : <Sparkles size={15}/>}</div><div><header>{turn.role === 'user' ? '你' : turn.role === 'tool' ? '任务过程' : '小何'}<time>{new Date(turn.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header><p>{turn.content}</p></div></article>)}
       {sessionRuns.map(run => <button type="button" className="agent-run-card" key={run.id} onClick={() => onOpenRun(run.id)}><i className={`run-state ${run.status}`}/><span><strong>{run.objective}</strong><small>{workbenchStatusLabels[run.status]} · 点击查看步骤、授权与成果</small></span><ChevronRight size={17}/></button>)}
       {error && <p className="workbench-error"><AlertTriangle size={16}/>{error}</p>}
     </div>
     <div className="agent-composer-wrap"><div className="agent-composer">
-      {selectedWorkflow && <div className="selected-workflow"><Sparkles size={14}/><span>{selectedWorkflow.label}</span><button type="button" aria-label="取消固定工作流" onClick={() => setSelectedWorkflow(undefined)}><X size={13}/></button></div>}
+      {selectedWorkflow && <><div className="selected-workflow"><Sparkles size={14}/><span>{selectedWorkflow.name}</span><small>固定步骤</small><button type="button" aria-label="取消固定工作流" onClick={() => { setSelectedWorkflow(undefined); setSourceIds([]) }}><X size={13}/></button></div>{selectedWorkflow.sourceSelection !== 'none' && <div className="workflow-source-picker"><label>项目资料{selectedWorkflow.sourceSelection === 'required' ? '（至少选择 1 份）' : '（可选）'}</label><select value="" onChange={event => { const id = event.target.value; if (id && !sourceIds.includes(id) && sourceIds.length < 3) setSourceIds(current => [...current, id]) }}><option value="">选择已导入的资料…</option>{sources.filter(source => !sourceIds.includes(source.id)).map(source => <option value={source.id} key={source.id}>{source.name}</option>)}</select>{sourceIds.length > 0 && <div>{sourceIds.map(id => { const source = sources.find(item => item.id === id); return <button type="button" key={id} onClick={() => setSourceIds(current => current.filter(value => value !== id))}>{source?.name || id}<X size={12}/></button> })}</div>}<small>每次最多读取 3 份；原文件不会被修改。</small></div>}</>}
       <textarea autoFocus value={objective} onChange={event => setObjective(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit() } }} placeholder={selectedWorkflow?.prompt ?? '向小何说明你的研究任务…'}/>
-      <footer><div className="composer-left"><div className="composer-plus"><button type="button" className="composer-icon" aria-label="添加内容或选择工作流" onClick={() => setPlusOpen(open => !open)}><Plus size={18}/></button>{plusOpen && <div className="composer-plus-menu"><button type="button" onClick={() => { setPlusOpen(false); onOpenProject() }}><Files size={16}/><span><strong>项目内容</strong><small>浏览并预览当前仓库文件</small></span></button><div>固定工作流</div>{workflows.map(workflow => <button type="button" key={workflow.id} onClick={() => { setSelectedWorkflow(workflow); setPlusOpen(false) }}><Sparkles size={15}/><span>{workflow.label}</span></button>)}</div>}</div><select aria-label="选择模型" value={modelRole} onChange={event => setModelRole(event.target.value as typeof modelRole)}><option value="">默认模型</option>{modelOptions.map(([role, profile]) => <option value={role} key={role}>{profile.model}</option>)}</select></div><button type="button" className="composer-send" disabled={busy || !objective.trim()} onClick={submit}>{busy ? <RotateCcw className="spin" size={17}/> : <ArrowRight size={18}/>}</button></footer>
+      <footer><div className="composer-left"><div className="composer-plus"><button type="button" className="composer-icon" aria-label="添加内容或选择工作流" onClick={() => setPlusOpen(open => !open)}><Plus size={18}/></button>{plusOpen && <div className="composer-plus-menu"><button type="button" onClick={() => { setPlusOpen(false); onOpenProject() }}><Files size={16}/><span><strong>项目内容</strong><small>浏览并预览当前仓库文件</small></span></button><div>固定工作流</div>{workflows.map(workflow => <button type="button" disabled={!workflow.available} key={workflow.id} onClick={() => { setSelectedWorkflow(workflow); setSourceIds([]); setPlusOpen(false) }}><Sparkles size={15}/><span>{workflow.name}</span></button>)}</div>}</div><select aria-label="选择模型" value={modelRole} onChange={event => setModelRole(event.target.value as typeof modelRole)}><option value="">默认模型</option>{modelOptions.map(([role, profile]) => <option value={role} key={role}>{profile.model}</option>)}</select></div><button type="button" className="composer-send" disabled={busy || !objective.trim() || (selectedWorkflow?.sourceSelection === 'required' && !sourceIds.length)} onClick={submit}>{busy ? <RotateCcw className="spin" size={17}/> : <ArrowRight size={18}/>}</button></footer>
     </div><p className="composer-note"><ShieldCheck size={13}/>只在你确认的项目范围内工作；重要结论和高风险操作会请你确认。</p></div>
   </section>
 }
@@ -2053,9 +2122,9 @@ function WorkbenchRuns({
   return <section className="workbench-page run-console">
     <aside className="run-list"><header><p className="section-kicker">任务过程</p><h2>对话中的任务</h2></header>{dashboard?.runs.map(item => <button className={run?.id === item.id ? 'active' : ''} key={item.id} onClick={() => onOpen(item.id)}><span><strong>{item.objective}</strong><small>{new Date(item.updatedAt).toLocaleString()}</small></span><em>{workbenchStatusLabels[item.status]}</em></button>)}{!dashboard?.runs.length && <p>还没有需要执行的任务。</p>}</aside>
     <div className="run-stage">{run ? <>
-      <header className="run-heading"><div><p className="section-kicker">RUN {run.id.slice(0, 8)}</p><h1>{run.objective}</h1><span className={`run-status ${run.status}`}>{workbenchStatusLabels[run.status]}</span></div><div className="run-actions">{run.status === 'running' && <><button onClick={() => onNext(run.id)} disabled={busy}>{busy ? '运行中…' : '开始 / 继续运行'}</button><button onClick={() => onPause(run.id)} disabled={busy}>暂停</button></>}{run.status === 'paused' && <button onClick={() => onResume(run.id)} disabled={busy}>恢复</button>}{!['completed', 'failed', 'cancelled'].includes(run.status) && <button className="danger" onClick={() => onCancel(run.id)} disabled={busy}>取消</button>}</div></header>
+      <header className="run-heading"><div><p className="section-kicker">任务编号 {run.id.slice(0, 8)}</p><h1>{run.objective}</h1><span className={`run-status ${run.status}`}>{workbenchStatusLabels[run.status]}</span></div><div className="run-actions">{run.status === 'running' && <><button onClick={() => onNext(run.id)} disabled={busy}>{busy ? '运行中…' : '开始 / 继续运行'}</button><button onClick={() => onPause(run.id)} disabled={busy}>暂停</button></>}{run.status === 'paused' && <button onClick={() => onResume(run.id)} disabled={busy}>恢复</button>}{!['completed', 'failed', 'cancelled'].includes(run.status) && <button className="danger" onClick={() => onCancel(run.id)} disabled={busy}>取消</button>}</div></header>
       {error && <p className="workbench-error"><AlertTriangle size={16}/>{error}</p>}
-      {run.status === 'awaiting_authorization' && <section className="permission-review"><header><div><ShieldCheck size={21}/><span><strong>任务级授权</strong><small>删掉不需要的范围。授权只属于这一个 Run。</small></span></div><em>执行前必审</em></header>
+      {run.status === 'awaiting_authorization' && <section className="permission-review"><header><div><ShieldCheck size={21}/><span><strong>任务级授权</strong><small>删掉不需要的范围；这次授权不会带到其他任务。</small></span></div><em>执行前确认</em></header>
         <div className="permission-grid"><label>可读取目录<textarea value={readRoots} onChange={event => setReadRoots(event.target.value)}/></label><label>可写入目录<textarea value={writeRoots} onChange={event => setWriteRoots(event.target.value)}/></label><label>允许访问的域名<textarea value={domains} onChange={event => setDomains(event.target.value)} placeholder="doi.org&#10;arxiv.org"/></label><label>允许执行的程序<textarea value={commands} onChange={event => setCommands(event.target.value)} placeholder="git&#10;node&#10;pwsh"/></label><label>允许的命令前缀<textarea value={commandPrefixes} onChange={event => setCommandPrefixes(event.target.value)} placeholder="git status&#10;npm test"/></label><label>允许控制的应用<textarea value={applications} onChange={event => setApplications(event.target.value)} placeholder="vscode&#10;word&#10;browser"/></label></div>
         <div className="permission-toggles"><label><input type="checkbox" checked={allowModelFileContent} onChange={event => setAllowModelFileContent(event.target.checked)}/>允许把授权文件内容发送给模型</label><label><input type="checkbox" checked={allowScreenshots} onChange={event => setAllowScreenshots(event.target.checked)}/>允许截取已授权窗口的必要区域</label></div>
         <footer><p>删除/覆盖原件、发布、上传、安装依赖、正式科研结论等仍会再次确认。</p><button className="workbench-primary" disabled={busy || (!splitScopeLines(readRoots).length && !splitScopeLines(writeRoots).length)} onClick={() => onAuthorize(run.id, { readRoots: splitScopeLines(readRoots), writeRoots: splitScopeLines(writeRoots), domains: splitScopeLines(domains), commands: splitScopeLines(commands), commandPrefixes: splitScopeLines(commandPrefixes), applications: splitScopeLines(applications), allowModelFileContent, allowScreenshots })}>确认范围并开始</button></footer>
@@ -5974,12 +6043,12 @@ function SettingsModal({
           <div className="vault-folder-map">
             {[
               ['papers', '论文原件与派生稿'], ['notes', '你的笔记与只读投影'], ['evidence', '原文证据卡'],
-              ['experiments', '实验与 Run'], ['datasets', '数据登记与校验值'], ['reports', '科研报告'],
+              ['experiments', '实验与测试'], ['datasets', '数据登记与校验值'], ['reports', '科研报告'],
               ['attachments', '用户附件'], ['config', '开放布局说明'],
             ].map(([name, description]) => <div key={name}><code>{name}/</code><span>{description}</span></div>)}
           </div>
           {vaultProjection ? <div className="vault-projection-result" role="status">
-            <Check size={16}/><div><strong>投影已重建</strong><small>{new Date(vaultProjection.generatedAt).toLocaleString()} · 笔记 {vaultProjection.counts.notes ?? 0} · 证据 {vaultProjection.counts.evidence ?? 0} · Run {vaultProjection.counts.experiments ?? 0} · 报告 {vaultProjection.counts.reports ?? 0}</small></div>
+            <Check size={16}/><div><strong>项目目录已更新</strong><small>{new Date(vaultProjection.generatedAt).toLocaleString()} · 笔记 {vaultProjection.counts.notes ?? 0} · 证据 {vaultProjection.counts.evidence ?? 0} · 测试 {vaultProjection.counts.experiments ?? 0} · 报告 {vaultProjection.counts.reports ?? 0}</small></div>
           </div> : <p className="vault-projection-note">打开研究库时会自动刷新；也可以在大量修改后手动重建。外部实验文件只登记原路径和 SHA-256，不会被移动。</p>}
           <footer>
             <button type="button" className="outline-button" disabled={!workspaceOpen || !window.readerDesktop} onClick={() => void openVaultFolder()}>打开研究库文件夹</button>
@@ -5988,12 +6057,12 @@ function SettingsModal({
         </article>
         <details className="vault-portability-details">
           <summary>哪些内容可以直接编辑？</summary>
-          <p>你可以自由编辑 notes 里自己创建的 Markdown 和 attachments 中的文件。`index.generated.md`、`VAULT_INDEX.generated.md` 和 `schema.generated.json` 是只读投影，应回到软件里修改正式记录。</p>
+          <p>你可以编辑自己建立的笔记和附件。带有 generated 标记的目录索引由小何自动维护；正式记录请回到对应页面修改。</p>
         </details>
         <section className="migration-backup-list">
           <header><div><ShieldCheck size={17}/><strong>升级前恢复快照</strong></div><span>{migrationBackups.length} 份</span></header>
           {migrationBackups.map(backup => <article key={backup.id}><div><strong>升级前备份 {backup.sourceVersion} → {backup.targetVersion}</strong><small>{new Date(backup.createdAt).toLocaleString()}</small></div><em className={backup.valid ? 'valid' : 'invalid'}>{backup.valid ? '可以恢复' : '备份校验失败'}</em></article>)}
-          {!migrationBackups.length && <p>当前研究库没有发生过需要升级的 schema；首次升级前会自动创建只读快照。</p>}
+          {!migrationBackups.length && <p>当前项目还没有发生过需要备份的数据升级；首次升级前会自动创建只读快照。</p>}
           <small>回滚不会在应用运行时自动覆盖数据库。需要恢复时先退出应用，再按 `docs/migration/v1-rollback.md` 执行带校验的 PowerShell 脚本。</small>
         </section>
       </section> : tab === 'plugins' ? <section className="settings-panel plugin-settings">

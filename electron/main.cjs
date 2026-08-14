@@ -402,6 +402,7 @@ ipcMain.handle('workbench:dashboard', () => workbenchService.getDashboard())
 ipcMain.handle('workbench:project-update', (_event, input) => workbenchService.updateProject(input))
 ipcMain.handle('workbench:project-files', (_event, input) => workbenchService.listProjectFiles(input))
 ipcMain.handle('workbench:project-preview', (_event, input) => workbenchService.previewProjectFile(input))
+ipcMain.handle('workbench:conversation-workflow-list', () => workbenchService.listConversationWorkflows())
 ipcMain.handle('workbench:capability-list', () => workbenchService.listCapabilityPacks())
 ipcMain.handle('workbench:capability-set', (_event, input) => workbenchService.setCapabilityPack(input))
 ipcMain.handle('workbench:run-create', (_event, input) => workbenchService.createRun(input))
@@ -1247,6 +1248,19 @@ function createWindow() {
             await new Promise(resolve => setTimeout(resolve, 160))
             fs.writeFileSync(workbenchScreenshotPath, (await mainWindow.capturePage()).toPNG())
           }
+          const workbenchInteractionMetrics = await mainWindow.webContents.executeJavaScript(`(async () => {
+            const summary = [...document.querySelectorAll('.workflow-starters button')].find(button => button.textContent.includes('文献分析总结'))
+            summary?.click()
+            await new Promise(resolve => setTimeout(resolve, 80))
+            const sourcePickerVisible = Boolean(document.querySelector('.workflow-source-picker select'))
+            const memoryEntry = document.querySelector('.sidebar-memory-button')
+            memoryEntry?.click()
+            await new Promise(resolve => setTimeout(resolve, 100))
+            const memoryDrawerVisible = Boolean(document.querySelector('.memory-drawer .memory-create textarea'))
+            document.querySelector('.memory-drawer button[aria-label="关闭项目记忆"]')?.click()
+            return { sourcePickerVisible, memoryEntryVisible: Boolean(memoryEntry), memoryDrawerVisible }
+          })()`, true)
+          Object.assign(workbenchLayoutMetrics, workbenchInteractionMetrics)
           const workbenchReachedEnd = await mainWindow.webContents.executeJavaScript(`(() => {
             const root = document.querySelector('.agent-chat-page')
             const composer = root?.querySelector('.agent-composer')

@@ -2,6 +2,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { CAPABILITY_PACKS, getCapabilityPack } = require('./capability-packs.cjs')
+const { CONVERSATION_WORKFLOWS, getConversationWorkflow, buildConversationWorkflowSteps, normalizedSourceIds } = require('./conversation-workflows.cjs')
 
 const RUN_STATUSES = Object.freeze(['draft', 'awaiting_authorization', 'running', 'replanning', 'waiting_human', 'paused', 'verifying', 'completed', 'failed', 'cancelled'])
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
@@ -50,6 +51,7 @@ function structuredJson(value) {
 
 const PREVIEW_SKIP_NAMES = new Set(['.git', 'node_modules', 'dist', 'release', '.cache'])
 const TEXT_PREVIEW_EXTENSIONS = new Set(['.txt', '.md', '.markdown', '.json', '.jsonl', '.csv', '.tsv', '.xml', '.yaml', '.yml', '.toml', '.ini', '.log', '.js', '.cjs', '.mjs', '.jsx', '.ts', '.tsx', '.css', '.scss', '.html', '.htm', '.py', '.ps1', '.sh', '.bat', '.cmd', '.c', '.h', '.cpp', '.hpp', '.java', '.rs', '.go', '.sql', '.tex', '.bib'])
+const IMAGE_PREVIEW_MIME = Object.freeze({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' })
 
 function safeProjectPath(project, rootValue, relativeValue = '') {
   const configuredRoots = uniqueStrings([project.vaultPath, ...project.externalRoots]).map(root => path.resolve(root))
@@ -179,6 +181,14 @@ class WorkbenchService {
     return { project: this.updateProject({ id: project.id, capabilityPacks: [...next] }), packs: this.listCapabilityPacks() }
   }
 
+  listConversationWorkflows() {
+    return CONVERSATION_WORKFLOWS.map(workflow => {
+      const tools = [...workflow.requiredTools, ...(workflow.optionalTools || [])].map(name => ({ name, ...this.tools.availability(name) }))
+      const missing = tools.filter(tool => workflow.requiredTools.includes(tool.name) && !tool.available)
+      return { ...workflow, available: missing.length === 0, tools, message: missing.length ? missing.map(tool => tool.reason).filter(Boolean).join('；') : '已就绪' }
+    })
+  }
+
   createRun(input = {}) {
     const { database } = this.#context(); const project = this.ensureProject()
     const objective = text(input.objective, '目标', 12000)
@@ -192,6 +202,16 @@ class WorkbenchService {
     const capabilityPack = input.capabilityPack ? getCapabilityPack(input.capabilityPack) : undefined
     if (input.capabilityPack && !capabilityPack) throw new Error('选择的固定工作流不存在。')
     if (capabilityPack && !project.capabilityPacks.includes(capabilityPack.id)) throw new Error('请先把这个固定工作流加入当前项目。')
+    const conversationWorkflow = input.conversationWorkflowId ? getConversationWorkflow(input.conversationWorkflowId) : undefined
+    if (input.conversationWorkflowId && !conversationWorkflow) throw new Error('选择的对话工作流不存在。')
+    if (capabilityPack && conversationWorkflow) throw new Error('一次任务只能选择一个固定工作流。')
+    let conversationWorkflowInput = object(input.conversationWorkflowInput)
+    if (conversationWorkflow) {
+      conversationWorkflowInput = { sourceIds: normalizedSourceIds(conversationWorkflowInput) }
+      if (conversationWorkflow.sourceSelection === 'required' && !conversationWorkflowInput.sourceIds.length) throw new Error(`“${conversationWorkflow.name}”需要先选择至少一份项目资料。`)
+      const missingTool = conversationWorkflow.requiredTools.map(name => ({ name, ...this.tools.availability(name) })).find(tool => !tool.available)
+      if (missingTool) throw new Error(`“${conversationWorkflow.name}”暂时不能使用：${missingTool.reason || `${missingTool.name} 未就绪`}`)
+    }
     let capabilityInput = object(input.capabilityInput)
     let preflight
     if (capabilityPack) {
@@ -217,7 +237,8 @@ class WorkbenchService {
       if (!validation.valid) throw new Error(validation.errors.join('；'))
       capabilityInput = validation.input
     }
-    const steps = this.#initialSteps(objective, input.taskType, project, capabilityPack, capabilityInput)
+    const workflowPreflight = conversationWorkflow ? { ready: true, status: 'ready', tools: conversationWorkflow.requiredTools.map(name => ({ name, ...this.tools.availability(name) })), connectors: [], missing: [], permissionRequirements: conversationWorkflow.permissionRequirements, message: '固定步骤已就绪；开始前请确认本次任务范围。' } : undefined
+    const steps = this.#initialSteps(objective, input.taskType, project, capabilityPack, capabilityInput, conversationWorkflow, conversationWorkflowInput)
     database.exec('BEGIN IMMEDIATE')
     try {
       database.prepare(`INSERT INTO agent_runs(id, workbench_project_id, legacy_session_id, objective, acceptance_json, status, budget_json, model_roles_json, created_at, updated_at)
@@ -226,14 +247,15 @@ class WorkbenchService {
       steps.forEach((step, position) => database.prepare(`INSERT INTO agent_run_steps(id, run_id, plan_version, position, kind, tool_name, title, rationale, input_json, status, max_attempts, high_risk, created_at, updated_at)
         VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, 'queued', 2, ?, ?, ?)`)
         .run(crypto.randomUUID(), runId, position, step.kind, step.toolName || null, step.title, step.rationale || '', JSON.stringify(step.input || {}), step.highRisk ? 1 : 0, createdAt, createdAt))
-      this.#event(database, runId, 'run_created', 'user', { objective, acceptance, capabilityPack: capabilityPack?.id, capabilityVersion: capabilityPack?.version, capabilityInput, preflight })
+      this.#event(database, runId, 'run_created', 'user', { objective, acceptance, capabilityPack: capabilityPack?.id, capabilityVersion: capabilityPack?.version, capabilityInput, conversationWorkflowId: conversationWorkflow?.id, conversationWorkflowInput, preflight: workflowPreflight || preflight })
       database.exec('COMMIT')
     } catch (error) { database.exec('ROLLBACK'); throw error }
     this.#transition(runId, 'awaiting_authorization', { reason: 'plan_ready' })
     return this.getRun(runId)
   }
 
-  #initialSteps(objective, taskType, project, capabilityPack, capabilityInput = {}) {
+  #initialSteps(objective, taskType, project, capabilityPack, capabilityInput = {}, conversationWorkflow, conversationWorkflowInput = {}) {
+    if (conversationWorkflow) return buildConversationWorkflowSteps(conversationWorkflow, objective, project, conversationWorkflowInput)
     const root = project.externalRoots[0] || project.vaultPath
     const type = ['research', 'engineering', 'document', 'code', 'data', 'desktop'].includes(taskType) ? taskType : 'engineering'
     const common = [{ kind: 'tool', toolName: 'project.inspect', title: '观察项目现场', rationale: '先读取授权范围内的真实结构。', input: { root } }]
@@ -285,6 +307,8 @@ class WorkbenchService {
       capabilityPackId: creation.capabilityPack || undefined,
       capabilityVersion: creation.capabilityVersion || undefined,
       capabilityInput: creation.capabilityInput || {},
+      conversationWorkflowId: creation.conversationWorkflowId || undefined,
+      conversationWorkflowInput: creation.conversationWorkflowInput || {},
       preflight: creation.preflight,
       steps: database.prepare('SELECT * FROM agent_run_steps WHERE run_id = ? AND plan_version = ? ORDER BY position').all(id, run.planVersion).map(stepView),
       permission: this.#activeGrant(database, id),
@@ -419,7 +443,7 @@ class WorkbenchService {
       database.prepare("UPDATE agent_run_steps SET status = 'failed', error = ?, updated_at = ? WHERE id = ?").run(message.slice(0, 2000), failedAt, step.id)
       database.prepare('UPDATE agent_runs SET failure_count = failure_count + 1, updated_at = ? WHERE id = ?').run(failedAt, run.id)
       this.#event(database, run.id, 'step_failed', 'tool', { error: message, attempts }, step.id)
-      if (run.capabilityPackId && step.input?._workflowStepId) {
+      if ((run.capabilityPackId && step.input?._workflowStepId) || (run.conversationWorkflowId && step.input?._conversationWorkflowStep)) {
         this.#transition(run.id, 'waiting_human', { reason: 'fixed_workflow_step_failed', stepId: step.id })
         this.#requestDecision(database, run.id, step, 'recovery', `固定工作流的“${step.title}”没有成功。为避免改变科研方法，请修正输入后重试，或取消任务。`, ['重试', '取消任务'])
       } else if (attempts >= step.maxAttempts) {
@@ -728,10 +752,19 @@ class WorkbenchService {
     if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error('请选择项目中的文件。')
     const stat = fs.statSync(target)
     const extension = path.extname(target).toLowerCase()
+    const base = { root, relativePath: path.relative(root, target), name: path.basename(target), extension, size: stat.size }
+    if (extension === '.pdf') {
+      if (stat.size > 25 * 1024 * 1024) return { ...base, kind: 'pdf', previewable: false, content: '', message: 'PDF 超过 25 MB，请在文献阅读区打开。' }
+      return { ...base, kind: 'pdf', previewable: true, content: `data:application/pdf;base64,${fs.readFileSync(target).toString('base64')}` }
+    }
+    if (IMAGE_PREVIEW_MIME[extension]) {
+      if (stat.size > 12 * 1024 * 1024) return { ...base, kind: 'image', previewable: false, content: '', message: '图片超过 12 MB，请用原文件查看。' }
+      return { ...base, kind: 'image', previewable: true, content: `data:${IMAGE_PREVIEW_MIME[extension]};base64,${fs.readFileSync(target).toString('base64')}` }
+    }
     const textLike = TEXT_PREVIEW_EXTENSIONS.has(extension) || stat.size === 0
-    if (!textLike) return { root, relativePath: path.relative(root, target), name: path.basename(target), extension, size: stat.size, kind: extension === '.pdf' ? 'pdf' : ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'].includes(extension) ? 'image' : 'binary', previewable: false, content: '' }
+    if (!textLike) return { ...base, kind: 'binary', previewable: false, content: '', message: '这个文件需要在对应工作区打开。' }
     if (stat.size > 2 * 1024 * 1024) throw new Error('文件超过 2 MB，请用对应工作区打开。')
-    return { root, relativePath: path.relative(root, target), name: path.basename(target), extension, size: stat.size, kind: 'text', previewable: true, content: fs.readFileSync(target, 'utf8') }
+    return { ...base, kind: 'text', previewable: true, content: fs.readFileSync(target, 'utf8') }
   }
 }
 

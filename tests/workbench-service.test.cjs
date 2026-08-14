@@ -47,6 +47,58 @@ test('项目内容浏览只读当前项目，并可预览常见文本文件', ()
   assert.throws(() => service.previewProjectFile({ relativePath: path.join('..', 'outside.txt') }), /超出了当前项目/)
 }))
 
+test('项目内容可在抽屉中安全预览图片与 PDF 数据', () => withWorkbench(({ vault, service }) => {
+  const imagePath = path.join(vault.path, 'figure.png')
+  const pdfPath = path.join(vault.path, 'paper.pdf')
+  fs.writeFileSync(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB', 'base64'))
+  fs.writeFileSync(pdfPath, Buffer.from('%PDF-1.4\n% preview test', 'utf8'))
+  const image = service.previewProjectFile({ relativePath: 'figure.png' })
+  const pdf = service.previewProjectFile({ relativePath: 'paper.pdf' })
+  assert.equal(image.kind, 'image')
+  assert.match(image.content, /^data:image\/png;base64,/)
+  assert.equal(pdf.kind, 'pdf')
+  assert.match(pdf.content, /^data:application\/pdf;base64,/)
+}))
+
+test('对话中的四个科研入口生成真实固定步骤，而不是提示词标签', () => withWorkbench(({ workspace, service }) => {
+  const workflows = service.listConversationWorkflows()
+  assert.deepEqual(workflows.map(item => item.id), ['literature-search', 'literature-summary', 'method-summary', 'skill-teaching'])
+  assert.ok(workflows.every(item => item.available))
+
+  const search = service.createRun({ objective: '柔顺装配中的阻抗控制', conversationWorkflowId: 'literature-search' })
+  assert.equal(search.conversationWorkflowId, 'literature-search')
+  assert.deepEqual(search.steps.map(step => step.toolName || step.kind), ['project.inspect', 'web.fetch', 'model', 'verify'])
+  assert.deepEqual(search.preflight.permissionRequirements.domains, ['api.crossref.org'])
+  assert.match(search.steps[1].input.url, /^https:\/\/api\.crossref\.org\/works\?/)
+
+  assert.throws(() => service.createRun({ objective: '总结方法差异', conversationWorkflowId: 'literature-summary' }), /至少一份项目资料/)
+  const timestamp = new Date().toISOString()
+  workspace.database.prepare(`
+    INSERT INTO sources(id, project_id, name, kind, status, pages, content_sha256, extracted_text, source_metadata_json, created_at, updated_at)
+    VALUES (?, ?, ?, 'PDF', '已解析', 3, ?, ?, '{}', ?, ?)
+  `).run('workflow-source-1', workspace.getCurrent().projectId, '方法论文.pdf', 'workflow-source-hash', '实验方法与结果正文', timestamp, timestamp)
+  const summary = service.createRun({ objective: '比较实验方法', conversationWorkflowId: 'literature-summary', conversationWorkflowInput: { sourceIds: ['workflow-source-1'] } })
+  assert.equal(summary.steps.find(step => step.toolName === 'research.source.read').input.sourceId, 'workflow-source-1')
+  assert.equal(summary.steps.at(-2).title, '形成文献分析总结')
+}))
+
+test('文献检索固定工作流按授权范围真实调用检索工具并完成模型整理', () => {
+  let requestedUrl = ''
+  const fetchImpl = async url => {
+    requestedUrl = String(url)
+    return { ok: true, headers: { get: () => 'application/json' }, text: async () => JSON.stringify({ message: { items: [{ DOI: '10.1000/test', title: ['Compliant assembly'] }] } }), url: requestedUrl }
+  }
+  return withWorkbench(async ({ vault, service }) => {
+    const run = service.createRun({ objective: '柔顺装配阻抗控制', conversationWorkflowId: 'literature-search' })
+    service.authorizeRun({ runId: run.id, scope: { readRoots: [vault.path], writeRoots: [vault.path], domains: ['api.crossref.org'] } })
+    const completed = await service.executeUntilBlocked(run.id)
+    assert.equal(completed.status, 'completed')
+    assert.match(requestedUrl, /api\.crossref\.org\/works/)
+    assert.equal(completed.steps.find(step => step.toolName === 'web.fetch').status, 'completed')
+    assert.equal(completed.steps.find(step => step.title === '整理候选文献').output.content, 'role:executor')
+  }, { fetchImpl })
+})
+
 test('任务可归入当前项目对话且不能绑定其他项目的对话 ID', () => withWorkbench(({ workspace, service }) => {
   const now = new Date().toISOString()
   const sessionId = 'session-workbench-link'
