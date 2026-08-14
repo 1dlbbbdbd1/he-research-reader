@@ -90,7 +90,7 @@ jobs:
         shell: pwsh
         run: |
           $artifacts = Get-ChildItem -LiteralPath release -File |
-            Where-Object { $_.Name -match '^HsResearchAssistant-(Setup|Portable)-.+-x64\.exe$' }
+            Where-Object { $_.Name -match '^XiaoHeResearchAssistant-(Setup|Portable)-.+-x64\.exe$' }
           if ($artifacts.Count -ne 2) {
             throw "Expected one setup installer and one portable executable, found $($artifacts.Count)."
           }
@@ -108,7 +108,7 @@ jobs:
         run: |
           $assets = Get-ChildItem -LiteralPath release -File |
             Where-Object {
-              $_.Name -match '^HsResearchAssistant-(Setup|Portable)-.+-x64\.exe$' -or
+              $_.Name -match '^XiaoHeResearchAssistant-(Setup|Portable)-.+-x64\.exe$' -or
               $_.Name -eq 'SHA256SUMS.txt'
             } |
             ForEach-Object { $_.FullName }
