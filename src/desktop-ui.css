@@ -314,7 +314,7 @@ select {
 
 .paper-library-table > header,
 .paper-library-row {
-  grid-template-columns: minmax(330px, 2.2fr) 126px 154px 58px minmax(128px, .9fr) 190px;
+  grid-template-columns: minmax(310px, 1.8fr) 126px 154px 58px minmax(120px, .75fr) 330px;
 }
 
 .paper-library-table > header {
@@ -737,7 +737,7 @@ select {
   .page { padding-right: 24px; padding-left: 24px; }
   .library-filters { grid-template-columns: 76px repeat(3, minmax(128px, 1fr)); }
   .paper-library-table > header,
-  .paper-library-row { grid-template-columns: minmax(280px, 1.8fr) 116px 136px 52px 164px; }
+  .paper-library-row { grid-template-columns: minmax(260px, 1.6fr) 116px 136px 52px 310px; }
   .paper-library-table > header > span:nth-child(5),
   .paper-purpose-cell { display: none; }
   .paper-parse-state { grid-column: 1 / -1; }
@@ -751,7 +751,7 @@ select {
   .library-page .page-title { align-items: flex-start; }
   .paper-library-overview > div { min-width: 0; flex: 1; padding-right: 8px; padding-left: 8px; }
   .paper-library-table > header,
-  .paper-library-row { grid-template-columns: minmax(250px, 1.7fr) 106px 118px 138px; }
+  .paper-library-row { grid-template-columns: minmax(230px, 1.5fr) 106px 118px 270px; }
   .paper-library-table > header > span:nth-child(4),
   .paper-annotation-count { display: none; }
   .review-workspace { grid-template-columns: 342px minmax(0, 1fr); }

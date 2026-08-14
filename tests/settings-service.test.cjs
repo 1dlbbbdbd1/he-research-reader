@@ -117,6 +117,19 @@ test('v3 为五个模型角色保留独立配置与加密凭据', () => withTemp
   assert.equal(JSON.parse(raw).version, 3)
 }))
 
+test('未单独配置角色模型时使用已保存 API 的默认模型', () => withTemporaryStore(({ store }) => {
+  store.save({
+    ai: { providerId: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'default-research-model', apiKey: 'default-secret' },
+    modelRoles: {
+      executor: { providerId: 'openai', baseUrl: 'https://api.openai.com/v1', model: '' },
+    },
+  })
+  const executor = store.loadModelRoleConfig('executor')
+  assert.equal(executor.model, 'default-research-model')
+  assert.equal(executor.providerId, 'deepseek')
+  assert.equal(executor.apiKey, 'default-secret')
+}))
+
 test('清除密钥只删除当前连接的凭据槽', () => withTemporaryStore(({ store }) => {
   store.save({ ai: { providerId: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-model', apiKey: 'deepseek-key' } })
   store.save({ ai: { providerId: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'openai-model', apiKey: 'openai-key' } })

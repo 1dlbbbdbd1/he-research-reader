@@ -219,7 +219,8 @@ class AppSettingsStore {
     const role = MODEL_ROLES.includes(roleValue) ? roleValue : 'executor'
     const settings = this.load()
     let profile = settings.modelRoles[role]
-    if ((!profile.model || !profile.hasCredential) && role === 'verifier' && settings.modelRoles.planner.model) profile = settings.modelRoles.planner
+    if ((!profile.model || !profile.hasCredential) && role === 'verifier' && settings.modelRoles.planner.model && settings.modelRoles.planner.hasCredential) profile = settings.modelRoles.planner
+    if (!profile.model || !profile.hasCredential) profile = settings.ai
     const apiKey = this.credentialFor(profile)
     return { ...profile, role, apiKey }
   }

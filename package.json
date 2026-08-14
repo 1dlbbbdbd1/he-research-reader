@@ -4,7 +4,7 @@
   "description": "本地优先的课题、文献、实验、数据与科研过程管理桌面助手",
   "author": "Research Reader Project",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {

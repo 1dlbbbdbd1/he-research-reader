@@ -3,6 +3,31 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
+
+test('常用工作流按项目历史使用次数和最近时间排序', async () => {
+  const { rankFrequentWorkflows } = await import('../src/workflow-history.mjs')
+  const workflows = [
+    { id: 'literature-search', featured: true },
+    { id: 'literature-summary', featured: true },
+    { id: 'experiment-method-summary', featured: true },
+    { id: 'skill-teaching', featured: true },
+  ]
+  const packs = [{ id: 'systematic-review' }]
+  const ranked = rankFrequentWorkflows([
+    { conversationWorkflowId: 'literature-search', updatedAt: '2026-08-01T00:00:00.000Z' },
+    { conversationWorkflowId: 'literature-search', updatedAt: '2026-08-02T00:00:00.000Z' },
+    { capabilityPackId: 'systematic-review', updatedAt: '2026-08-03T00:00:00.000Z' },
+    { conversationWorkflowId: 'literature-summary', updatedAt: '2026-08-04T00:00:00.000Z' },
+    { conversationWorkflowId: 'removed-workflow', updatedAt: '2026-08-05T00:00:00.000Z' },
+  ], workflows, packs, 4)
+
+  assert.deepEqual(ranked.map(item => [item.kind, item.id, item.useCount]), [
+    ['workflow', 'literature-search', 2],
+    ['workflow', 'literature-summary', 1],
+    ['capability', 'systematic-review', 1],
+    ['workflow', 'experiment-method-summary', 0],
+  ])
+})
 const { WorkspaceService } = require('../electron/workspace-service.cjs')
 const { PolicyEngine } = require('../electron/workbench/policy-engine.cjs')
 const { ToolRegistry } = require('../electron/workbench/tool-registry.cjs')

@@ -9,6 +9,7 @@ type GraphState = {
 }
 
 type NodePosition = { x: number; y: number }
+type GraphLayout = { positions: Map<string, NodePosition>; height: number }
 
 const nodeTypeLabels: Record<DesktopKnowledgeNode['type'], string> = {
   paper: '论文', author: '作者', concept: '概念', method: '方法', experiment: '实验',
@@ -20,23 +21,25 @@ const edgeTypeLabels: Record<DesktopKnowledgeEdge['type'], string> = {
   derived_from: '源自', supports: '支持', contradicts: '反驳', related_to: '相关',
 }
 
-function positionsFor(nodes: DesktopKnowledgeNode[]) {
+function layoutFor(nodes: DesktopKnowledgeNode[]): GraphLayout {
   const lanes: Array<DesktopKnowledgeNode['type'][]> = [
     ['paper', 'author', 'evidence'],
     ['concept', 'method', 'idea', 'claim'],
     ['experiment', 'dataset', 'code'],
   ]
   const positions = new Map<string, NodePosition>()
+  let maximumLaneSize = 0
   lanes.forEach((lane, laneIndex) => {
-    const laneNodes = nodes.filter(node => lane.includes(node.type))
+    const laneNodes = nodes.filter(node => lane.includes(node.type)).sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'))
+    maximumLaneSize = Math.max(maximumLaneSize, laneNodes.length)
     laneNodes.forEach((node, index) => {
       positions.set(node.id, {
-        x: 14 + laneIndex * 36,
-        y: 12 + ((index + 0.5) / Math.max(laneNodes.length, 1)) * 76,
+        x: 16.5 + laneIndex * 33.5,
+        y: 82 + index * 86,
       })
     })
   })
-  return positions
+  return { positions, height: Math.max(565, 126 + maximumLaneSize * 86) }
 }
 
 function stateLabel(state: DesktopKnowledgeNode['reviewState']) {
@@ -93,7 +96,8 @@ export default function KnowledgeGraphWorkspace({
   const visibleNodes = useMemo(() => filter === 'all' ? graph.nodes : graph.nodes.filter(node => node.type === filter), [filter, graph.nodes])
   const visibleNodeIds = useMemo(() => new Set(visibleNodes.map(node => node.id)), [visibleNodes])
   const visibleEdges = useMemo(() => graph.edges.filter(edge => visibleNodeIds.has(edge.fromNodeId) && visibleNodeIds.has(edge.toNodeId)), [graph.edges, visibleNodeIds])
-  const positions = useMemo(() => positionsFor(visibleNodes), [visibleNodes])
+  const graphLayout = useMemo(() => layoutFor(visibleNodes), [visibleNodes])
+  const positions = graphLayout.positions
   const selectedNode = graph.nodes.find(node => node.id === selectedNodeId)
   const selectedEdges = selectedNode ? graph.edges.filter(edge => edge.fromNodeId === selectedNode.id || edge.toNodeId === selectedNode.id) : []
   const draftNodes = graph.nodes.filter(node => node.reviewState === 'draft')
@@ -159,9 +163,10 @@ export default function KnowledgeGraphWorkspace({
           <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button>
           {Object.entries(nodeTypeLabels).map(([type, label]) => <button key={type} className={filter === type ? 'active' : ''} onClick={() => setFilter(type as DesktopKnowledgeNode['type'])}>{label}</button>)}
         </div>
-        <div className="knowledge-network" aria-label="可交互知识图谱">
+        <div className="knowledge-network-scroll">
+        <div className="knowledge-network" aria-label="可交互知识图谱" style={{ height: `${graphLayout.height}px` }}>
           <div className="knowledge-lane-labels"><span>论文与证据</span><span>研究理解</span><span>实验与产物</span></div>
-          <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <svg viewBox={`0 0 100 ${graphLayout.height}`} preserveAspectRatio="none" aria-hidden="true" style={{ height: `${graphLayout.height}px` }}>
             {visibleEdges.map(edge => {
               const from = positions.get(edge.fromNodeId)
               const to = positions.get(edge.toNodeId)
@@ -174,12 +179,13 @@ export default function KnowledgeGraphWorkspace({
             return <button
               key={node.id}
               className={`knowledge-node ${node.type} ${node.reviewState} ${selectedNodeId === node.id ? 'selected' : ''}`}
-              style={{ left: `${position.x}%`, top: `${position.y}%` }}
+              style={{ left: `${position.x}%`, top: `${position.y}px` }}
               onClick={() => setSelectedNodeId(node.id)}
               title={`${nodeTypeLabels[node.type]} · ${stateLabel(node.reviewState)}`}
             ><span>{nodeTypeLabels[node.type]}</span><strong>{node.label}</strong>{node.reviewState === 'draft' && <small>待确认</small>}</button>
           })}
           {!loading && !visibleNodes.length && <div className="knowledge-network-empty"><CircleDot size={30}/><strong>当前筛选没有节点</strong><span>导入论文、提取原文证据或记录实验后可重建。</span></div>}
+        </div>
         </div>
       </section>
 

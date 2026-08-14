@@ -386,6 +386,9 @@ test('知识图谱与 Evidence Card 通过受限 IPC 接入可复核工作区', 
   assert.match(workspace, /确认/)
   assert.match(workspace, /拒绝/)
   assert.match(workspace, /原文（只读）/)
+  assert.match(workspace, /index \* 86/)
+  assert.match(workspace, /knowledge-network-scroll/)
+  assert.match(fs.readFileSync(path.join(root, 'src', 'knowledge-graph.css'), 'utf8'), /\.knowledge-network-scroll\{height:620px;overflow:auto/)
 })
 
 test('插件、主题与 LaTeX 高级路线在设置和写作页面拥有真实能力门', () => {
@@ -446,6 +449,10 @@ test('Agent 对话拥有完整科研工作流库、模型选择和按需项目�
   assert.match(app, /全部科研流程仍可从对话框的工作流库随时使用/)
   assert.match(app, /项目记忆/)
   assert.match(app, /aria-label="选择模型"/)
+  assert.match(app, /profile\.model && profile\.hasCredential/)
+  assert.match(app, /rankFrequentWorkflows/)
+  assert.match(app, /按使用次数排序/)
+  assert.match(css, /\.app-shell \.agent-composer>textarea:focus-visible\{outline:none/)
   assert.match(app, /listAgentSessions/)
   assert.match(app, /listWorkbenchProjectFiles/)
   assert.match(app, /discoverWorkspacePdfSources/)
@@ -453,4 +460,18 @@ test('Agent 对话拥有完整科研工作流库、模型选择和按需项目�
   assert.match(app, /原文件不会被移动或修改/)
   assert.match(main, /workspace:discover-project-pdfs/)
   assert.match(preload, /workspace:discover-project-pdfs/)
+})
+
+test('资料库可对单篇论文提问且操作按钮不会被压成竖排', () => {
+  const app = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
+  const library = fs.readFileSync(path.join(root, 'src', 'library.css'), 'utf8')
+  const citation = fs.readFileSync(path.join(root, 'src', 'citation.css'), 'utf8')
+  const desktop = fs.readFileSync(path.join(root, 'src', 'desktop-ui.css'), 'utf8')
+
+  assert.match(app, /className="paper-ai-button"/)
+  assert.match(app, />问 AI<\/button>/)
+  assert.match(app, /提取指定信息/)
+  assert.match(library, /\.paper-library-actions \{[\s\S]*flex-wrap: wrap;/)
+  assert.match(citation, /\.citation-review-button \{[\s\S]*white-space: nowrap;/)
+  assert.match(desktop, /330px;/)
 })

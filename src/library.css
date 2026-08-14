@@ -700,9 +700,36 @@
 
 .paper-library-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 5px;
+}
+
+.paper-library-actions > button,
+.paper-library-actions .citation-copy-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.paper-ai-button {
+  min-height: 30px;
+  padding: 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #d7ceeb;
+  border-radius: 8px;
+  color: #5d43a3;
+  background: #f7f4fd;
+  font-size: var(--ui-text-xs, 13px);
+  font-weight: 750;
+}
+
+.paper-ai-button:hover,
+.paper-ai-button:focus-visible {
+  border-color: #8a70c4;
+  background: #efe9fa;
 }
 
 .paper-library-actions .compact-button {

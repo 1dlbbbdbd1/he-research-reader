@@ -757,7 +757,8 @@ function createWindow() {
     desktopSmokeTrace('renderer:did-finish-load')
     if (isDesktopSmoke) {
       mainWindow.setContentSize(1024, 768)
-      const previousClipboardText = clipboard.readText()
+      const skipSmokeClipboard = process.env.RESEARCH_READER_SMOKE_SKIP_CLIPBOARD === '1'
+      const previousClipboardText = skipSmokeClipboard ? '' : clipboard.readText()
       const smokeCitation = `小何的科研助手 GB/T 7714—2015 剪贴板验收 ${Date.now()}`
       const expectedLongBlocks = Array.from({ length: 220 }, (_, index) => `Long-form evidence block ${index + 1} remains in deterministic reading order and keeps the desktop reader scrollable.`)
       const expectedRawMarkdown = ['Abstract', '', 'This is the first evidence sentence.\nSecond glued paragraph begins here.', '', 'Methods', '', 'Raw evidence remains traceable.', '', ...expectedLongBlocks.flatMap(block => [block, ''])].join('\n').trim()
@@ -801,7 +802,9 @@ function createWindow() {
         const finishOnboarding = [...onboarding.querySelectorAll('button')].find(button => button.textContent.includes('保存并进入'))
         finishOnboarding.click()
         await waitFor(() => !document.querySelector('.settings-modal'), 12000, 'onboarding-close')
-        const clipboardResult = await window.readerDesktop.writeClipboardText({ text: ${JSON.stringify(smokeCitation)} })
+        const clipboardResult = ${JSON.stringify(process.env.RESEARCH_READER_SMOKE_SKIP_CLIPBOARD === '1')}
+          ? { written: true, skipped: true }
+          : await window.readerDesktop.writeClipboardText({ text: ${JSON.stringify(smokeCitation)} })
         const greeting = await waitFor(() => document.querySelector('.research-return-dialog'))
         const greetingVisible = greeting.textContent.includes('终于回来了')
         const dismissGreeting = [...greeting.querySelectorAll('button')].find(button => button.textContent.includes('先看今日科研'))
@@ -1108,6 +1111,8 @@ function createWindow() {
           const commandScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'research-command-empty-layout-1600x900.png') : undefined
           const workbenchScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'agent-workbench-home-1600x900.png') : undefined
           const workflowLibraryScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'research-workflow-library-1600x900.png') : undefined
+          const libraryScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'research-library-actions-1600x900.png') : undefined
+          const knowledgeGraphScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'research-knowledge-graph-1600x900.png') : undefined
           let emptyStateLayoutMetrics = { reviewConverged: false, commandConverged: false }
           if (reviewScreenshotPath && parallelScreenshotPath && commandScreenshotPath) {
             await mainWindow.webContents.executeJavaScript(`(async () => {
@@ -1222,6 +1227,10 @@ function createWindow() {
               if (root && composer) {
                 const textarea = composer.querySelector('textarea')
                 const plus = composer.querySelector('.composer-icon')
+                textarea?.focus()
+                await new Promise(resolve => setTimeout(resolve, 40))
+                const textareaStyle = textarea ? getComputedStyle(textarea) : null
+                const modelSelector = composer.querySelector('select[aria-label="选择模型"]')
                 plus.click()
                 await new Promise(resolve => setTimeout(resolve, 120))
                 const menu = document.querySelector('.composer-plus-menu')
@@ -1235,7 +1244,9 @@ function createWindow() {
                   plusMenuVisible: Boolean(menu),
                   projectEntryVisible: [...(menu?.querySelectorAll('button') || [])].some(button => button.textContent.includes('项目内容')),
                   workflowLibraryEntryVisible: [...(menu?.querySelectorAll('button') || [])].some(button => button.textContent.includes('科研工作流库')),
-                  modelSelectorVisible: Boolean(composer.querySelector('select[aria-label="选择模型"]')),
+                  modelSelectorVisible: Boolean(modelSelector),
+                  modelSelectorConfigured: Boolean(modelSelector && [...modelSelector.options].some(option => option.textContent.includes('desktop-smoke-model'))),
+                  composerFocusOutlineRemoved: textareaStyle?.outlineStyle === 'none' || textareaStyle?.outlineWidth === '0px',
                   visibleWorkflowCount,
                   primaryNavCount: document.querySelectorAll('aside nav .nav-item').length,
                   conversationListVisible: Boolean(document.querySelector('.sidebar-conversations')),
@@ -1288,18 +1299,77 @@ function createWindow() {
             return Boolean(root && composer && composer.getBoundingClientRect().bottom <= innerHeight)
           })()`)
           workbenchLayoutMetrics.reachedEnd = workbenchReachedEnd
-          const workbenchLayoutPassed = workbenchLayoutMetrics.chatComposerVisible && workbenchLayoutMetrics.inputVisible && workbenchLayoutMetrics.plusMenuVisible && workbenchLayoutMetrics.projectEntryVisible && workbenchLayoutMetrics.workflowLibraryEntryVisible && workbenchLayoutMetrics.modelSelectorVisible && workbenchLayoutMetrics.visibleWorkflowCount === 4 && workbenchLayoutMetrics.autoDiscoveredProjectPdfVisible && workbenchLayoutMetrics.autoDiscoveredProjectPdfReadable && workbenchLayoutMetrics.workflowLibraryVisible && workbenchLayoutMetrics.workflowLibraryCount === 22 && workbenchLayoutMetrics.capabilityFieldsVisible && workbenchLayoutMetrics.primaryNavCount === 2 && workbenchLayoutMetrics.conversationListVisible && workbenchLayoutMetrics.noOverflow && workbenchLayoutMetrics.scrollContainer && workbenchReachedEnd
-          const clipboardVerified = clipboard.readText() === smokeCitation && clipboardResult?.written === true
-          clipboard.writeText(previousClipboardText)
+          const libraryLayoutMetrics = await mainWindow.webContents.executeJavaScript(`(async () => {
+            const search = document.querySelector('button[title="搜索项目资料"]')
+            search?.click()
+            const started = Date.now()
+            while (Date.now() - started < 12000 && !document.querySelector('.paper-library-table')) await new Promise(resolve => setTimeout(resolve, 40))
+            const row = document.querySelector('.paper-library-table .paper-library-row')
+            const citation = row?.querySelector('.citation-review-button')
+            const askAi = row?.querySelector('.paper-ai-button')
+            const actions = [...(row?.querySelectorAll('.paper-library-actions > button,.paper-library-actions > .citation-copy') || [])]
+            const rectangles = actions.map(node => node.getBoundingClientRect())
+            const overlapCount = rectangles.reduce((count, rect, index) => count + rectangles.slice(index + 1).filter(other => !(rect.right <= other.left || other.right <= rect.left || rect.bottom <= other.top || other.bottom <= rect.top)).length, 0)
+            const citationStyle = citation ? getComputedStyle(citation) : null
+            askAi?.click()
+            const modalStarted = Date.now()
+            while (Date.now() - modalStarted < 12000 && !document.querySelector('.research-agent-modal')) await new Promise(resolve => setTimeout(resolve, 40))
+            const modal = document.querySelector('.research-agent-modal')
+            const currentPaperScopeVisible = Boolean(modal && modal.textContent.includes('当前论文'))
+            const extractStarterVisible = Boolean(modal && modal.textContent.includes('提取指定信息'))
+            modal?.querySelector('header .icon-button')?.click()
+            return {
+              rowVisible: Boolean(row),
+              askAiVisible: Boolean(askAi),
+              citationNoWrap: citationStyle?.whiteSpace === 'nowrap',
+              actionOverlapCount: overlapCount,
+              currentPaperScopeVisible,
+              extractStarterVisible,
+            }
+          })()`, true)
+          if (libraryScreenshotPath) {
+            await new Promise(resolve => setTimeout(resolve, 120))
+            fs.writeFileSync(libraryScreenshotPath, (await mainWindow.capturePage()).toPNG())
+          }
+          const knowledgeGraphLayoutMetrics = await mainWindow.webContents.executeJavaScript(`(async () => {
+            const hubNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('科研工作区'))
+            hubNav?.click()
+            const hubStarted = Date.now()
+            while (Date.now() - hubStarted < 12000 && !document.querySelector('.research-hub')) await new Promise(resolve => setTimeout(resolve, 40))
+            const graphEntry = [...document.querySelectorAll('.research-hub button')].find(button => button.textContent.includes('知识图谱'))
+            graphEntry?.click()
+            const graphStarted = Date.now()
+            while (Date.now() - graphStarted < 12000 && document.querySelectorAll('.knowledge-node').length < 38) await new Promise(resolve => setTimeout(resolve, 40))
+            const scroll = document.querySelector('.knowledge-network-scroll')
+            const nodes = [...document.querySelectorAll('.knowledge-node')]
+            const rectangles = nodes.map(node => node.getBoundingClientRect())
+            const overlapCount = rectangles.reduce((count, rect, index) => count + rectangles.slice(index + 1).filter(other => !(rect.right <= other.left || other.right <= rect.left || rect.bottom <= other.top || other.bottom <= rect.top)).length, 0)
+            nodes[0]?.click()
+            return {
+              nodeCount: nodes.length,
+              overlapCount,
+              scrollable: Boolean(scroll && scroll.scrollHeight > scroll.clientHeight),
+              inspectorVisible: Boolean(document.querySelector('.knowledge-inspector .knowledge-node-heading')),
+            }
+          })()`, true)
+          if (knowledgeGraphScreenshotPath) {
+            await new Promise(resolve => setTimeout(resolve, 120))
+            fs.writeFileSync(knowledgeGraphScreenshotPath, (await mainWindow.capturePage()).toPNG())
+          }
+          const workbenchLayoutPassed = workbenchLayoutMetrics.chatComposerVisible && workbenchLayoutMetrics.inputVisible && workbenchLayoutMetrics.plusMenuVisible && workbenchLayoutMetrics.projectEntryVisible && workbenchLayoutMetrics.workflowLibraryEntryVisible && workbenchLayoutMetrics.modelSelectorVisible && workbenchLayoutMetrics.modelSelectorConfigured && workbenchLayoutMetrics.composerFocusOutlineRemoved && workbenchLayoutMetrics.visibleWorkflowCount === 4 && workbenchLayoutMetrics.autoDiscoveredProjectPdfVisible && workbenchLayoutMetrics.autoDiscoveredProjectPdfReadable && workbenchLayoutMetrics.workflowLibraryVisible && workbenchLayoutMetrics.workflowLibraryCount === 22 && workbenchLayoutMetrics.capabilityFieldsVisible && workbenchLayoutMetrics.primaryNavCount === 2 && workbenchLayoutMetrics.conversationListVisible && workbenchLayoutMetrics.noOverflow && workbenchLayoutMetrics.scrollContainer && workbenchReachedEnd
+          const libraryLayoutPassed = libraryLayoutMetrics.rowVisible && libraryLayoutMetrics.askAiVisible && libraryLayoutMetrics.citationNoWrap && libraryLayoutMetrics.actionOverlapCount === 0 && libraryLayoutMetrics.currentPaperScopeVisible && libraryLayoutMetrics.extractStarterVisible
+          const knowledgeGraphLayoutPassed = knowledgeGraphLayoutMetrics.nodeCount >= 38 && knowledgeGraphLayoutMetrics.overlapCount === 0 && knowledgeGraphLayoutMetrics.scrollable && knowledgeGraphLayoutMetrics.inspectorVisible
+          const clipboardVerified = skipSmokeClipboard || (clipboard.readText() === smokeCitation && clipboardResult?.written === true)
+          if (!skipSmokeClipboard) clipboard.writeText(previousClipboardText)
           const largeViewportsPassed = largeViewportChecks.every(check => check.actualWidth === check.requestedWidth && check.actualHeight === check.requestedHeight && check.noOverflow && check.shellFillsViewport)
-          if (!clipboardVerified || !desktop1024NoOverflow || !escapeClosedAndRestoredFocus || !greetingVisible || todayAnswerCount !== 5 || !todayContextRestored || !recordSaved || taskBucketCount !== 7 || !aiProposalVisible || !aiTaskConfirmed || !quickInboxSaved || !uiScale10Applied || !workspaceNavVisible || !readerModeRestored || !versionVisible || structuredInitialBlockCount >= structuredBlockCount || structuredBlockCount < 220 || !rawMarkdownPreserved || !structuredScrollable || !structuredReachedEnd || !parallelPanesVisible || !parallelStructuredScrollable || !parallelSeparatorAccessible || !parallelTocInitiallyHidden || !parallelTocCanToggle || !parallelLayoutAdjustable || !reviewMinimumTypeReadable || !reportControlsDoNotOverlap || !bilingualUsesStructuredOrder || !bilingualScrollable || !bilingualReachedEnd || !switchStressPassed || !errorFallbackVisible || !errorBoundaryRecovered || translationEngineCount !== 2 || translationViewCount !== 3 || !failedRetryVisible || !translationLocked || !glossarySaved || !cloudScopeVisible || !reader1024FillsViewport || !desktop1600.noOverflow || !desktop1600.readerFillsViewport || !largeViewportsPassed || !emptyStateLayoutMetrics.reviewConverged || !emptyStateLayoutMetrics.commandConverged || !workbenchLayoutPassed) {
-            finishDesktopSmoke({ reason: 'desktop-acceptance-failed', title, clipboardVerified, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, workbenchLayoutMetrics, userData: app.getPath('userData') }, true)
+          if (!clipboardVerified || !desktop1024NoOverflow || !escapeClosedAndRestoredFocus || !greetingVisible || todayAnswerCount !== 5 || !todayContextRestored || !recordSaved || taskBucketCount !== 7 || !aiProposalVisible || !aiTaskConfirmed || !quickInboxSaved || !uiScale10Applied || !workspaceNavVisible || !readerModeRestored || !versionVisible || structuredInitialBlockCount >= structuredBlockCount || structuredBlockCount < 220 || !rawMarkdownPreserved || !structuredScrollable || !structuredReachedEnd || !parallelPanesVisible || !parallelStructuredScrollable || !parallelSeparatorAccessible || !parallelTocInitiallyHidden || !parallelTocCanToggle || !parallelLayoutAdjustable || !reviewMinimumTypeReadable || !reportControlsDoNotOverlap || !bilingualUsesStructuredOrder || !bilingualScrollable || !bilingualReachedEnd || !switchStressPassed || !errorFallbackVisible || !errorBoundaryRecovered || translationEngineCount !== 2 || translationViewCount !== 3 || !failedRetryVisible || !translationLocked || !glossarySaved || !cloudScopeVisible || !reader1024FillsViewport || !desktop1600.noOverflow || !desktop1600.readerFillsViewport || !largeViewportsPassed || !emptyStateLayoutMetrics.reviewConverged || !emptyStateLayoutMetrics.commandConverged || !workbenchLayoutPassed || !libraryLayoutPassed || !knowledgeGraphLayoutPassed) {
+            finishDesktopSmoke({ reason: 'desktop-acceptance-failed', title, clipboardVerified, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, workbenchLayoutMetrics, libraryLayoutMetrics, knowledgeGraphLayoutMetrics, userData: app.getPath('userData') }, true)
             return
           }
-          finishDesktopSmoke({ title, clipboardVerified, clipboardRestored: clipboard.readText() === previousClipboardText, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, workbenchLayoutMetrics, screenshotPath, reviewScreenshotPath, parallelScreenshotPath, commandScreenshotPath, workbenchScreenshotPath, workflowLibraryScreenshotPath, userData: app.getPath('userData') })
+          finishDesktopSmoke({ title, clipboardVerified, clipboardRestored: clipboard.readText() === previousClipboardText, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, workbenchLayoutMetrics, libraryLayoutMetrics, knowledgeGraphLayoutMetrics, screenshotPath, reviewScreenshotPath, parallelScreenshotPath, commandScreenshotPath, workbenchScreenshotPath, workflowLibraryScreenshotPath, libraryScreenshotPath, knowledgeGraphScreenshotPath, userData: app.getPath('userData') })
         })
         .catch(error => {
-          clipboard.writeText(previousClipboardText)
+          if (!skipSmokeClipboard) clipboard.writeText(previousClipboardText)
           finishDesktopSmoke({ reason: 'title-read-failed', error: error.message }, true)
         })
       return

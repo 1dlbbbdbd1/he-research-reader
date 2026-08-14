@@ -190,6 +190,13 @@ if (smokeMode) {
     service.database.prepare(`INSERT INTO workbench_projects(id, project_id, kind, name, vault_path, external_roots_json, capability_packs_json, created_at, updated_at)
       VALUES (?, ?, 'research', ?, ?, ?, ?, ?, ?)`)
       .run(`desktop-workbench-${runId}`, vault.projectId, vault.name, vault.path, JSON.stringify([vault.path]), JSON.stringify(['research-paper-reading', 'research-reference-check', 'research-reviewer-response', 'research-patent-draft', 'research-roadmap', 'research-academic-translation', 'research-literature-review', 'research-paper-figure', 'research-causal-inference', 'research-document-formatting']), timestamp, timestamp)
+    const insertKnowledgeNode = service.database.prepare(`INSERT INTO knowledge_nodes(
+      id, project_id, node_type, entity_id, label, description, properties_json, origin, review_state, created_by, created_at, updated_at, reviewed_at
+    ) VALUES (?, ?, 'paper', ?, ?, '', '{}', 'system', 'confirmed', 'system', ?, ?, ?)`)
+    for (let index = 1; index <= 38; index += 1) {
+      const suffix = String(index).padStart(2, '0')
+      insertKnowledgeNode.run(`desktop-graph-paper-${suffix}`, vault.projectId, `desktop-graph-entity-${suffix}`, `隔离验收论文 ${suffix}`, timestamp, timestamp, timestamp)
+    }
   } finally {
     service.close()
   }

@@ -31,6 +31,8 @@
   border-color: #ead8b8;
   background: #fff9ed;
   color: #8a5c21;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .citation-import-panel {
