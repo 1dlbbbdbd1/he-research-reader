@@ -3,7 +3,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
-const { PolicyEngine } = require('../electron/workbench/policy-engine.cjs')
+const { PolicyEngine, canonical } = require('../electron/workbench/policy-engine.cjs')
 const { ToolRegistry } = require('../electron/workbench/tool-registry.cjs')
 
 test('路径、域名与命令均被任务授权边界约束', t => {
@@ -11,7 +11,7 @@ test('路径、域名与命令均被任务授权边界约束', t => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const policy = new PolicyEngine()
   const grant = { readRoots: [root], writeRoots: [root], domains: ['example.com'], commands: [process.execPath], commandPrefixes: [process.execPath] }
-  assert.equal(policy.requirePath(grant, path.join(root, 'nested', 'file.txt'), 'write').startsWith(root), true)
+  assert.equal(policy.requirePath(grant, path.join(root, 'nested', 'file.txt'), 'write').startsWith(canonical(root)), true)
   assert.throws(() => policy.requirePath(grant, path.join(root, '..', 'outside.txt'), 'write'), /未授权/)
   assert.equal(policy.requireUrl(grant, 'https://docs.example.com/a').hostname, 'docs.example.com')
   assert.throws(() => policy.requireUrl(grant, 'https://example.org'), /授权范围/)

@@ -484,9 +484,11 @@ test('科研图表保持原始数据只读，编辑规格后真实生成 SVG、P
   }, { imageAdapter: { svgToPng: async () => png, svgToJpeg: async () => jpg } })
 })
 
-test('DID 在确认的 Python 环境真实运行，保存代码版本和对应平行趋势诊断', () => {
+const causalPythonPath = process.env.READER_RESEARCH_PYTHON || path.join(process.env.USERPROFILE || '', '.cache', 'codex-runtimes', 'codex-primary-runtime', 'dependencies', 'python', 'python.exe')
+
+test('DID 在确认的 Python 环境真实运行，保存代码版本和对应平行趋势诊断', { skip: !fs.existsSync(causalPythonPath) && '本机没有 READER_RESEARCH_PYTHON 或默认 Codex 因果分析 Python 运行时' }, () => {
   const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'causal-did.json'), 'utf8'))
-  const pythonPath = process.env.READER_RESEARCH_PYTHON || path.join(process.env.USERPROFILE || '', '.cache', 'codex-runtimes', 'codex-primary-runtime', 'dependencies', 'python', 'python.exe')
+  const pythonPath = causalPythonPath
   const analysisScriptPath = path.join(__dirname, '..', 'scripts', 'causal-analysis.py')
   return withWorkbench(async ({ vault, service }) => {
     assert.equal(fs.existsSync(pythonPath), true)

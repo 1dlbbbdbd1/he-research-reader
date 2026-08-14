@@ -7,6 +7,7 @@ const test = require('node:test')
 const { METHOD_SCHEMAS } = require('../electron/workbench/causal-tools.cjs')
 
 const pythonPath = process.env.READER_RESEARCH_PYTHON || path.join(process.env.USERPROFILE || '', '.cache', 'codex-runtimes', 'codex-primary-runtime', 'dependencies', 'python', 'python.exe')
+const hasResearchPython = fs.existsSync(pythonPath)
 const scriptPath = path.join(__dirname, '..', 'scripts', 'causal-analysis.py')
 
 function csv(rows) {
@@ -26,7 +27,7 @@ function execute(root, name, method, design, rows) {
   return parsed
 }
 
-test('DID、RDD、IV、PSM、SCM 都有独立字段合同和对应诊断，并在真实 Python 环境运行', () => {
+test('DID、RDD、IV、PSM、SCM 都有独立字段合同和对应诊断，并在真实 Python 环境运行', { skip: !hasResearchPython && '本机没有 READER_RESEARCH_PYTHON 或默认 Codex 因果分析 Python 运行时' }, () => {
   assert.equal(fs.existsSync(pythonPath), true)
   assert.deepEqual(Object.keys(METHOD_SCHEMAS), ['DID', 'RDD', 'IV', 'PSM', 'SCM'])
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'causal-methods-'))
