@@ -1,4 +1,4 @@
-# H’s Research Assistant v1.0 核心契约
+# 小何的科研助手 v1.0 核心契约
 
 ## 决策
 

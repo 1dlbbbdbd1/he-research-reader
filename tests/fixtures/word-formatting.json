@@ -1,0 +1,10 @@
+{
+  "description": "A synthetic DOCX is generated at runtime; no private document is used.",
+  "acceptance": [
+    "every Word operation starts from an identical temporary byte copy",
+    "the original SHA-256 is unchanged",
+    "a new DOCX and a versioned QA report exist",
+    "Word repaginates the result and reports no blocking anomaly"
+  ],
+  "runner": "npm run smoke:word-formatting"
+}

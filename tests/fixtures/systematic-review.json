@@ -1,0 +1,29 @@
+{
+  "input": {
+    "question": "Which local-first research workbenches preserve traceable evidence?",
+    "inclusionCriteria": "Empirical or design studies that report evidence provenance.",
+    "exclusionCriteria": "Non-research opinion pieces and records without relevant outcomes.",
+    "searchStrategy": "Synthetic fixture records from two sources; no external service is contacted.",
+    "records": [
+      { "source": "database-a", "title": "Traceable Evidence in Local Research Workbenches", "doi": "10.1000/trace-001", "authors": ["Li He"], "year": "2024", "abstract": "A study of evidence provenance." },
+      { "source": "database-b", "title": "Traceable evidence in local research workbenches", "doi": "10.1000/trace-001", "authors": ["L. He"], "year": "2024", "abstract": "Duplicate database record." },
+      { "source": "database-b", "title": "Human Confirmation for Research Automation", "doi": "10.1000/human-002", "authors": ["Mei Lin"], "year": "2023", "abstract": "A study of confirmation checkpoints." },
+      { "source": "database-c", "title": "Opinion: Fully Automatic Science Needs No Review", "authors": ["Anon"], "year": "2022", "abstract": "An opinion piece." }
+    ],
+    "screeningDecisions": {
+      "titleAbstract": [
+        { "doi": "10.1000/trace-001", "decision": "include" },
+        { "doi": "10.1000/human-002", "decision": "include" },
+        { "title": "Opinion: Fully Automatic Science Needs No Review", "decision": "exclude", "reason": "非研究性观点文章" }
+      ],
+      "fullText": [
+        { "doi": "10.1000/trace-001", "decision": "include" },
+        { "doi": "10.1000/human-002", "decision": "exclude", "reason": "未报告目标结局" }
+      ]
+    },
+    "evidenceData": {
+      "10.1000/trace-001": { "studyDesign": "design study", "population": "researchers", "intervention": "local-first workbench", "comparator": "cloud-only workflow", "outcomes": "traceability", "findings": "stable evidence IDs improved auditability", "quality": "moderate", "biasRisk": "some concerns" }
+    }
+  },
+  "expected": { "imported": 4, "duplicates": 1, "titleExcluded": 1, "fullTextExcluded": 1, "included": 1 }
+}

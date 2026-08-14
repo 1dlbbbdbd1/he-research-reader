@@ -814,8 +814,155 @@ type DesktopAppSettings = {
     allowFullDocument: boolean
     translationProvider: 'local' | 'ai'
   }
+  modelRoles: Record<'planner' | 'executor' | 'vision' | 'verifier' | 'embedding', {
+    providerId: string
+    baseUrl: string
+    model: string
+    hasCredential: boolean
+    capabilities: string[]
+    fallbackRole: '' | 'planner'
+    inputPricePerMillion?: number
+    outputPricePerMillion?: number
+  }>
   ui: DesktopUISettings
   credentialState?: 'empty' | 'encrypted' | 'unavailable'
+}
+
+type DesktopWorkbenchRunStatus = 'draft' | 'awaiting_authorization' | 'running' | 'replanning' | 'waiting_human' | 'paused' | 'verifying' | 'completed' | 'failed' | 'cancelled'
+type DesktopWorkbenchProject = {
+  id: string
+  projectId: string
+  kind: 'general' | 'research' | 'engineering' | 'document' | 'code' | 'data'
+  name: string
+  vaultPath: string
+  externalRoots: string[]
+  capabilityPacks: string[]
+  createdAt: string
+  updatedAt: string
+}
+type DesktopWorkbenchGrantScope = {
+  readRoots: string[]
+  writeRoots: string[]
+  domains: string[]
+  commands: string[]
+  commandPrefixes: string[]
+  applications: string[]
+  allowModelFileContent: boolean
+  allowScreenshots: boolean
+}
+type DesktopWorkbenchStep = {
+  id: string
+  runId: string
+  planVersion: number
+  position: number
+  kind: 'model' | 'tool' | 'verify' | 'human'
+  toolName?: string
+  title: string
+  rationale: string
+  input: Record<string, unknown>
+  status: 'queued' | 'running' | 'waiting_confirmation' | 'completed' | 'failed' | 'skipped'
+  attemptCount: number
+  maxAttempts: number
+  highRisk: boolean
+  output?: Record<string, unknown>
+  error?: string
+  createdAt: string
+  updatedAt: string
+}
+type DesktopWorkbenchRun = {
+  id: string
+  projectId: string
+  sessionId?: string
+  objective: string
+  acceptance: string[]
+  status: DesktopWorkbenchRunStatus
+  planVersion: number
+  permissionRevision: number
+  budget: Record<string, unknown>
+  modelRoles: Record<string, unknown>
+  capabilityPackId?: string
+  capabilityVersion?: string
+  capabilityInput: Record<string, unknown>
+  preflight?: DesktopCapabilityPreflight
+  failureCount: number
+  createdAt: string
+  updatedAt: string
+  startedAt?: string
+  completedAt?: string
+  steps: DesktopWorkbenchStep[]
+  permission?: { id: string; revision: number; scope: DesktopWorkbenchGrantScope; status: string; authorizedAt: string }
+  decisions: Array<{ id: string; runId: string; stepId?: string; type: string; prompt: string; options: string[]; status: string; response?: Record<string, unknown>; createdAt: string; resolvedAt?: string }>
+  artifacts: Array<{ id: string; kind: string; label: string; path?: string; sha256?: string; metadata: Record<string, unknown>; createdAt: string }>
+  results: Array<{ id: string; type: string; label: string; content: string; data: Record<string, unknown>; sourceLinks: unknown[]; reviewState: 'draft' | 'confirmed' | 'rejected' | 'archived'; version: number; artifactId: string; updatedAt: string }>
+  latestEvaluation?: { status: 'passed' | 'failed' | 'partial'; score: number; criteria: Array<{ label: string; passed: boolean; evidence: unknown[] }>; summary: string; createdAt: string }
+}
+type DesktopAgentSessionSummary = {
+  id: string
+  title: string
+  status: string
+  scope: Record<string, unknown>
+  lastMessage: string
+  turnCount: number
+  createdAt: string
+  updatedAt: string
+}
+type DesktopAgentSession = DesktopAgentSessionSummary & {
+  turns: Array<{ id: string; role: 'user' | 'assistant' | 'tool'; content: string; evidenceRefs: unknown[]; createdAt: string }>
+  plans: DesktopAgentPlan[]
+}
+type DesktopProjectFileEntry = {
+  name: string
+  relativePath: string
+  kind: 'directory' | 'file'
+  depth: number
+  extension: string
+  size?: number
+}
+type DesktopProjectFilePreview = {
+  root: string
+  relativePath: string
+  name: string
+  extension: string
+  size: number
+  kind: 'text' | 'pdf' | 'image' | 'binary'
+  previewable: boolean
+  content: string
+}
+type DesktopCapabilityPack = {
+  id: string
+  name: string
+  category: string
+  version?: string
+  maturity: 'not_connected' | 'missing_tools' | 'trial' | 'available' | 'verified'
+  description: string
+  requiredTools: string[]
+  outputs: string[]
+  highRisk: string[]
+  inputSchema?: { type: 'object'; required: string[]; properties: Record<string, { type: string; label: string; optional?: boolean; mode?: 'read' | 'write'; suggested?: string; accepts?: string[]; default?: unknown }>; additionalProperties: false }
+  outputSchema?: { type: 'object'; required: string[]; properties: Record<string, { type: string; label: string }>; additionalProperties: false }
+  optionalTools?: string[]
+  allowedTools?: string[]
+  humanCheckpoints?: string[]
+  qaRules?: string[]
+  exampleTask?: string
+  preflight: DesktopCapabilityPreflight
+  enabled: boolean
+}
+type DesktopCapabilityPreflight = {
+  ready: boolean
+  status: string
+  tools: Array<{ name: string; available: boolean; reason?: string }>
+  connectors: Array<Record<string, unknown> & { id: string; available: boolean; authorizationRequired: boolean }>
+  missing: Array<{ kind: string; id: string; message: string }>
+  permissionRequirements: { domains: string[]; applications: string[]; commands: string[] }
+  message: string
+}
+type DesktopWorkbenchDashboard = {
+  project: DesktopWorkbenchProject
+  runs: Array<Omit<DesktopWorkbenchRun, 'steps' | 'decisions' | 'artifacts' | 'results'>>
+  activeCount: number
+  waitingCount: number
+  completedCount: number
 }
 
 type DesktopLibrarySearchFilters = {
@@ -1155,6 +1302,7 @@ interface Window {
     loadAppSettings(): Promise<DesktopAppSettings>
     saveAppSettings(input: {
       ai: DesktopAppSettings['ai'] & { apiKey?: string; clearApiKey?: boolean }
+      modelRoles?: Partial<Record<keyof DesktopAppSettings['modelRoles'], DesktopAppSettings['modelRoles'][keyof DesktopAppSettings['modelRoles']] & { apiKey?: string; clearApiKey?: boolean }>>
       ui: DesktopUISettings
     }): Promise<DesktopAppSettings>
     listLLMProviders(): Promise<DesktopLLMProvider[]>
@@ -1176,18 +1324,39 @@ interface Window {
       messages: DesktopAIMessage[]
       temperature?: number
       maxTokens?: number
+      role?: 'planner' | 'executor' | 'vision' | 'verifier' | 'embedding'
     }): Promise<DesktopAICompletionResult>
     listAgentTools(): Promise<Array<{ name: DesktopAgentPlanStep['toolName']; label: string; description: string; readOnly: boolean; requiresConfirmation: boolean }>>
     listAgentMemory(): Promise<DesktopAgentMemory[]>
     saveAgentMemory(input: { kind: DesktopAgentMemory['kind']; content: string; sourceType?: DesktopAgentMemory['sourceType']; sourceId?: string; importance?: number; createdBy?: 'user' | 'ai' | 'system' }): Promise<DesktopAgentMemory>
     reviewAgentMemory(input: { id: string; decision: 'confirm' | 'reject' | 'archive' }): Promise<DesktopAgentMemory>
     createAgentSession(input: { title?: string; scope?: Record<string, unknown> }): Promise<{ id: string; title: string; status: string; scope: Record<string, unknown>; createdAt: string; updatedAt: string }>
-    getAgentSession(input: { sessionId: string }): Promise<{ id: string; title: string; status: string; scope: Record<string, unknown>; turns: Array<{ id: string; role: 'user' | 'assistant' | 'tool'; content: string; evidenceRefs: unknown[]; createdAt: string }>; plans: DesktopAgentPlan[]; createdAt: string; updatedAt: string }>
+    listAgentSessions(): Promise<DesktopAgentSessionSummary[]>
+    getAgentSession(input: { sessionId: string }): Promise<DesktopAgentSession>
+    appendAgentTurn(input: { sessionId: string; role: 'user' | 'assistant' | 'tool'; content: string; evidenceRefs?: unknown[] }): Promise<DesktopAgentSession['turns'][number]>
     proposeAgentPlan(input: { sessionId?: string; objective: string; scope?: Record<string, unknown> }): Promise<DesktopAgentPlan>
     getAgentPlan(input: { planId: string }): Promise<DesktopAgentPlan>
     reviewAgentStep(input: { stepId: string; decision: 'confirm' | 'dismiss' }): Promise<DesktopAgentPlan>
     executeAgentPlan(input: { planId: string }): Promise<{ plan: DesktopAgentPlan; results: Array<{ stepId: string; toolName: string; output: unknown }>; waitingForConfirmation: string[] }>
     executeAgentStep(input: { stepId: string }): Promise<{ stepId: string; toolName: string; output: unknown }>
+    getWorkbenchDashboard(): Promise<DesktopWorkbenchDashboard>
+    updateWorkbenchProject(input: Partial<DesktopWorkbenchProject> & { id?: string }): Promise<DesktopWorkbenchProject>
+    listWorkbenchProjectFiles(input?: { root?: string; relativePath?: string; maximum?: number; maximumDepth?: number }): Promise<{ root: string; relativePath: string; entries: DesktopProjectFileEntry[]; truncated: boolean }>
+    previewWorkbenchProjectFile(input: { root?: string; relativePath: string }): Promise<DesktopProjectFilePreview>
+    listWorkbenchCapabilityPacks(): Promise<DesktopCapabilityPack[]>
+    setWorkbenchCapabilityPack(input: { id: string; enabled: boolean }): Promise<{ project: DesktopWorkbenchProject; packs: DesktopCapabilityPack[] }>
+    createWorkbenchRun(input: { objective: string; acceptance?: string[]; taskType?: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; capabilityPack?: string; capabilityInput?: Record<string, unknown>; budget?: Record<string, unknown>; modelRoles?: Record<string, unknown>; sessionId?: string }): Promise<DesktopWorkbenchRun>
+    listWorkbenchRuns(input?: { statuses?: DesktopWorkbenchRunStatus[] }): Promise<Array<Omit<DesktopWorkbenchRun, 'steps' | 'decisions' | 'artifacts' | 'results'>>>
+    getWorkbenchRun(input: { runId: string }): Promise<DesktopWorkbenchRun>
+    authorizeWorkbenchRun(input: { runId: string; scope: DesktopWorkbenchGrantScope }): Promise<DesktopWorkbenchRun>
+    executeWorkbenchRunNext(input: { runId: string }): Promise<DesktopWorkbenchRun>
+    startWorkbenchRun(input: { runId: string }): Promise<DesktopWorkbenchRun>
+    pauseWorkbenchRun(input: { runId: string }): Promise<DesktopWorkbenchRun>
+    resumeWorkbenchRun(input: { runId: string }): Promise<DesktopWorkbenchRun>
+    cancelWorkbenchRun(input: { runId: string }): Promise<DesktopWorkbenchRun>
+    resolveWorkbenchDecision(input: { decisionId: string; approved: boolean; value?: unknown }): Promise<DesktopWorkbenchRun>
+    saveWorkbenchResult(input: { runId: string; resultId: string; content?: string; data?: Record<string, unknown>; sourceLinks?: unknown[]; reviewState?: 'draft' | 'confirmed' | 'rejected' | 'archived' }): Promise<DesktopWorkbenchRun>
+    verifyWorkbenchRun(input: { runId: string }): Promise<DesktopWorkbenchRun>
     bootstrapKnowledgeGraph(): Promise<{ createdNodes: number; createdEdges: number; createdCards: number; graph: { nodes: DesktopKnowledgeNode[]; edges: DesktopKnowledgeEdge[]; summary: Record<string, number> } }>
     getKnowledgeGraph(input?: { includeArchived?: boolean; reviewStates?: DesktopKnowledgeNode['reviewState'][] }): Promise<{ nodes: DesktopKnowledgeNode[]; edges: DesktopKnowledgeEdge[]; summary: { nodes: number; edges: number; draftNodes: number; draftEdges: number } }>
     proposeKnowledgeNode(input: { type: DesktopKnowledgeNode['type']; label: string; description?: string; properties?: Record<string, unknown>; entityId?: string; createdBy?: 'user' | 'ai' }): Promise<DesktopKnowledgeNode>

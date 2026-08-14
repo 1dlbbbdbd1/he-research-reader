@@ -24,7 +24,7 @@ function renderPortableMarkdown({ kind, id, title, status, createdAt, updatedAt,
   if (!PORTABLE_EXPORT_KINDS.has(kind)) throw new Error('不支持的可迁移 Markdown 类型。')
   const values = {
     title, type: kind, id, status, project_id: project?.id, project: project?.name,
-    created: createdAt, updated: updatedAt, source_of_truth: 'H\'s 科研助手 SQLite',
+    created: createdAt, updated: updatedAt, source_of_truth: '小何的科研助手本地记录',
     export_direction: 'one-way-snapshot', portable_schema: 1,
   }
   const frontmatter = Object.entries(values)
@@ -32,7 +32,7 @@ function renderPortableMarkdown({ kind, id, title, status, createdAt, updatedAt,
     .map(([key, value]) => `${key}: ${yamlScalar(value)}`)
   const related = links.length ? ['## 研究库链接', '', ...links.map(link => `- [[${link.fileName.replace(/\.md$/i, '')}|${link.label}]]`), ''] : []
   const refs = references.length ? ['## 可追溯来源', '', ...references.map(referenceLine), ''] : []
-  return `---\n${frontmatter.join('\n')}\n---\n\n# ${title}\n\n> 这是从本地 SQLite 主数据生成的单向 Markdown 快照；请回到 H's 科研助手修改正式记录，再重新导出。\n\n${String(body || '').trim()}\n\n${related.join('\n')}${refs.join('\n')}`.trimEnd() + '\n'
+  return `---\n${frontmatter.join('\n')}\n---\n\n# ${title}\n\n> 这是从本地正式记录生成的单向 Markdown 快照；请回到小何的科研助手修改正式记录，再重新导出。\n\n${String(body || '').trim()}\n\n${related.join('\n')}${refs.join('\n')}`.trimEnd() + '\n'
 }
 
 function yamlScalar(value) {

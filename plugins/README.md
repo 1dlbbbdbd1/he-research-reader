@@ -1,4 +1,4 @@
-# H’s 科研助手插件接口 v1
+# 小何的科研助手插件接口 v1
 
 每个内置插件位于 `plugins/<id>/plugin.json`。当前版本只加载随正式应用发布的 `trust: built-in` manifest，不动态执行用户下载的 JavaScript；这样可以提供安装/卸载生命周期，又不会把研究库、API Key 或本地文件暴露给未经审计的代码。
 

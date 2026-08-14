@@ -1,6 +1,6 @@
 const { DatabaseSync } = require('node:sqlite')
 
-const SCHEMA_VERSION = 18
+const SCHEMA_VERSION = 19
 
 const migrationOne = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -1511,6 +1511,166 @@ WHEN NEW.review_state = 'confirmed' AND json_array_length(NEW.evidence_refs_json
 BEGIN SELECT RAISE(ABORT, 'confirmed knowledge edge requires evidence'); END;
 `
 
+const migrationNineteen = `
+CREATE TABLE IF NOT EXISTS workbench_projects (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL UNIQUE REFERENCES projects(id),
+  kind TEXT NOT NULL DEFAULT 'research'
+    CHECK (kind IN ('general', 'research', 'engineering', 'document', 'code', 'data')),
+  name TEXT NOT NULL,
+  vault_path TEXT NOT NULL,
+  external_roots_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(external_roots_json)),
+  capability_packs_json TEXT NOT NULL DEFAULT '["research"]' CHECK (json_valid(capability_packs_json)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id TEXT PRIMARY KEY,
+  workbench_project_id TEXT NOT NULL REFERENCES workbench_projects(id),
+  legacy_session_id TEXT REFERENCES agent_sessions(id),
+  objective TEXT NOT NULL,
+  acceptance_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(acceptance_json)),
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft', 'awaiting_authorization', 'running', 'replanning', 'waiting_human', 'paused', 'verifying', 'completed', 'failed', 'cancelled')),
+  plan_version INTEGER NOT NULL DEFAULT 1 CHECK (plan_version >= 1),
+  permission_revision INTEGER NOT NULL DEFAULT 0 CHECK (permission_revision >= 0),
+  budget_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(budget_json)),
+  model_roles_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(model_roles_json)),
+  current_step_id TEXT,
+  current_checkpoint_id TEXT,
+  failure_count INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_run_steps (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES agent_runs(id),
+  plan_version INTEGER NOT NULL CHECK (plan_version >= 1),
+  position INTEGER NOT NULL CHECK (position >= 0),
+  kind TEXT NOT NULL CHECK (kind IN ('model', 'tool', 'verify', 'human')),
+  tool_name TEXT,
+  title TEXT NOT NULL,
+  rationale TEXT NOT NULL DEFAULT '',
+  input_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(input_json)),
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'waiting_confirmation', 'completed', 'failed', 'skipped')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  max_attempts INTEGER NOT NULL DEFAULT 2 CHECK (max_attempts BETWEEN 1 AND 5),
+  high_risk INTEGER NOT NULL DEFAULT 0 CHECK (high_risk IN (0, 1)),
+  output_json TEXT CHECK (output_json IS NULL OR json_valid(output_json)),
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT,
+  UNIQUE (run_id, plan_version, position)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_permission_grants (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES agent_runs(id),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  scope_json TEXT NOT NULL CHECK (json_valid(scope_json)),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked', 'expired')),
+  authorized_by TEXT NOT NULL DEFAULT 'user' CHECK (authorized_by IN ('user', 'system')),
+  authorized_at TEXT NOT NULL,
+  expires_at TEXT,
+  invalidated_reason TEXT,
+  UNIQUE (run_id, revision)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_events (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES agent_runs(id),
+  step_id TEXT REFERENCES agent_run_steps(id),
+  event_type TEXT NOT NULL,
+  actor TEXT NOT NULL CHECK (actor IN ('user', 'agent', 'tool', 'system')),
+  payload_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(payload_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_artifacts (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES agent_runs(id),
+  step_id TEXT REFERENCES agent_run_steps(id),
+  kind TEXT NOT NULL CHECK (kind IN ('file', 'report', 'patch', 'dataset', 'screenshot', 'trace', 'other')),
+  label TEXT NOT NULL,
+  path TEXT,
+  sha256 TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_decisions (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES agent_runs(id),
+  step_id TEXT REFERENCES agent_run_steps(id),
+  decision_type TEXT NOT NULL CHECK (decision_type IN ('authorization', 'high_risk', 'choice', 'formal_record', 'recovery')),
+  prompt TEXT NOT NULL,
+  options_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(options_json)),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'answered', 'expired')),
+  response_json TEXT CHECK (response_json IS NULL OR json_valid(response_json)),
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_checkpoints (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES agent_runs(id),
+  step_id TEXT REFERENCES agent_run_steps(id),
+  reason TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_evaluations (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES agent_runs(id),
+  status TEXT NOT NULL CHECK (status IN ('passed', 'failed', 'partial')),
+  score REAL NOT NULL DEFAULT 0 CHECK (score BETWEEN 0 AND 1),
+  criteria_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(criteria_json)),
+  summary TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS model_call_metrics (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES agent_runs(id),
+  step_id TEXT REFERENCES agent_run_steps(id),
+  role TEXT NOT NULL CHECK (role IN ('planner', 'executor', 'vision', 'verifier', 'embedding')),
+  provider_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  prompt_tokens INTEGER CHECK (prompt_tokens IS NULL OR prompt_tokens >= 0),
+  completion_tokens INTEGER CHECK (completion_tokens IS NULL OR completion_tokens >= 0),
+  total_tokens INTEGER CHECK (total_tokens IS NULL OR total_tokens >= 0),
+  latency_ms INTEGER CHECK (latency_ms IS NULL OR latency_ms >= 0),
+  estimated_cost REAL CHECK (estimated_cost IS NULL OR estimated_cost >= 0),
+  outcome TEXT NOT NULL CHECK (outcome IN ('completed', 'failed', 'cancelled')),
+  error TEXT,
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_project ON agent_runs(workbench_project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_run_steps_run ON agent_run_steps(run_id, plan_version, position);
+CREATE INDEX IF NOT EXISTS idx_agent_events_run ON agent_events(run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_decisions_run ON agent_decisions(run_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_checkpoints_run ON agent_checkpoints(run_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_model_metrics_run ON model_call_metrics(run_id, created_at);
+
+CREATE TRIGGER IF NOT EXISTS agent_events_cannot_be_updated
+BEFORE UPDATE ON agent_events BEGIN SELECT RAISE(ABORT, 'agent events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS agent_events_cannot_be_deleted
+BEFORE DELETE ON agent_events BEGIN SELECT RAISE(ABORT, 'agent events cannot be deleted'); END;
+CREATE TRIGGER IF NOT EXISTS model_call_metrics_cannot_be_updated
+BEFORE UPDATE ON model_call_metrics BEGIN SELECT RAISE(ABORT, 'model metrics are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS model_call_metrics_cannot_be_deleted
+BEFORE DELETE ON model_call_metrics BEGIN SELECT RAISE(ABORT, 'model metrics cannot be deleted'); END;
+`
+
 function openWorkspaceDatabase(filePath) {
   const database = new DatabaseSync(filePath)
   database.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;')
@@ -1824,6 +1984,23 @@ function migrate(database) {
       database.exec('PRAGMA user_version = 18')
       database.exec('COMMIT')
       current = 18
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+  if (current < 19) {
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      database.exec(migrationNineteen)
+      database.prepare('INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)').run(
+        19,
+        'personal-agent-workbench-projects-runs-permissions-and-evaluation',
+        new Date().toISOString(),
+      )
+      database.exec('PRAGMA user_version = 19')
+      database.exec('COMMIT')
+      current = 19
     } catch (error) {
       database.exec('ROLLBACK')
       throw error

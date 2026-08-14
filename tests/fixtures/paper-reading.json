@@ -1,0 +1,5 @@
+{
+  "sourceId": "structured-paper-fixture",
+  "markdown": "# Safety Study\n\nThe controller preserves DOI 10.1000/safe-001 and citation [1].\n\n$$v_{safe}=0$$\n\n## Results\n\nThe stop gate reduced unsafe commands.",
+  "expected": { "sourcePreserved": true, "minimumTranslatedSegments": 2, "protectedDoi": "10.1000/safe-001", "protectedCitation": "[1]" }
+}

@@ -35,9 +35,9 @@ test('可迁移 Markdown 使用稳定文件名、可读 YAML、wikilink 和普�
     links: [{ fileName: 'run--基线--abc123.md', label: '实验复盘 · 基线' }],
     references: [{ label: '原始日志', runTitle: '基线', originalFile: 'E:\\evidence\\run.log', id: 'artifact-1' }],
   })
-  assert.match(markdown, /source_of_truth: "H's 科研助手 SQLite"/)
+  assert.match(markdown, /source_of_truth: "小何的科研助手本地记录"/)
   assert.match(markdown, /export_direction: "one-way-snapshot"/)
   assert.match(markdown, /\[\[run--基线--abc123\|实验复盘 · 基线\]\]/)
   assert.match(markdown, /原始文件：`E:\\evidence\\run\.log`/)
-  assert.match(markdown, /这是从本地 SQLite 主数据生成的单向 Markdown 快照/)
+  assert.match(markdown, /这是从本地正式记录生成的单向 Markdown 快照/)
 })

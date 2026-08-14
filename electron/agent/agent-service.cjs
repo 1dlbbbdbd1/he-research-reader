@@ -144,6 +144,28 @@ class ResearchAgentService {
     return { id, title, status: 'active', scope, createdAt: now, updatedAt: now }
   }
 
+  listSessions() {
+    const { current, database } = this.#context()
+    return database.prepare(`
+      SELECT s.*,
+        (SELECT content FROM agent_turns WHERE session_id = s.id AND project_id = s.project_id ORDER BY created_at DESC, rowid DESC LIMIT 1) AS last_message,
+        (SELECT COUNT(*) FROM agent_turns WHERE session_id = s.id AND project_id = s.project_id) AS turn_count
+      FROM agent_sessions s
+      WHERE s.project_id = ? AND s.status != 'archived'
+      ORDER BY s.updated_at DESC
+      LIMIT 100
+    `).all(current.projectId).map(row => ({
+      id: row.id,
+      title: row.title,
+      status: row.status,
+      scope: parseJson(row.scope_json, {}),
+      lastMessage: row.last_message || '',
+      turnCount: Number(row.turn_count || 0),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }))
+  }
+
   appendTurn(input = {}) {
     const { current, database } = this.#context()
     const sessionId = text(input.sessionId, 'Agent 会话 ID', 160)

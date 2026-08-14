@@ -1,0 +1,90 @@
+{
+  "comments": [
+    {
+      "id": "rc-1",
+      "reviewer": "Reviewer 1",
+      "number": "1",
+      "original": "Please clarify the preprocessing procedure and report where it was added.",
+      "type": "方法与统计",
+      "severity": "major",
+      "requiredEvidence": ["修改稿位置", "预处理说明"]
+    },
+    {
+      "id": "rc-2",
+      "reviewer": "Reviewer 1",
+      "number": "2",
+      "original": "Please improve the caption of Figure 2.",
+      "type": "图表与呈现",
+      "severity": "minor"
+    },
+    {
+      "id": "rc-3",
+      "reviewer": "Reviewer 2",
+      "number": "1",
+      "original": "The proposed baseline appears to use the same preprocessing pipeline.",
+      "type": "方法与统计",
+      "severity": "major"
+    }
+  ],
+  "handlingPlans": [
+    {
+      "commentId": "rc-1",
+      "status": "already_modified",
+      "strategy": "补充预处理步骤和参数说明。",
+      "targetLocations": ["Methods, paragraph 2"]
+    },
+    {
+      "commentId": "rc-2",
+      "status": "planned",
+      "strategy": "补充变量含义与样本量。",
+      "targetLocations": ["Figure 2 caption"]
+    },
+    {
+      "commentId": "rc-3",
+      "status": "disagree",
+      "strategy": "基线使用公开默认流程，而本文增加了归一化步骤。",
+      "targetLocations": []
+    }
+  ],
+  "evidenceLinks": [
+    {
+      "commentId": "rc-1",
+      "links": [
+        {
+          "sourceId": "review-revised",
+          "role": "revised_manuscript",
+          "location": "Methods, paragraph 2",
+          "quote": "We normalize every feature using training-set statistics."
+        }
+      ]
+    },
+    {
+      "commentId": "rc-3",
+      "links": [
+        {
+          "sourceId": "review-original",
+          "role": "supporting_evidence",
+          "location": "Methods, paragraph 1",
+          "quote": "The public baseline keeps its default preprocessing."
+        }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "review-original",
+      "name": "original-manuscript.md",
+      "text": "The public baseline keeps its default preprocessing."
+    },
+    {
+      "id": "review-revised",
+      "name": "revised-manuscript.md",
+      "text": "We normalize every feature using training-set statistics."
+    }
+  ],
+  "expected": {
+    "commentCount": 3,
+    "evidenceLinkCount": 2,
+    "completedModificationCount": 1
+  }
+}

@@ -74,7 +74,7 @@ function renderLatexDocument({ title, markdown, bibliographyFile = 'references' 
     '\\usepackage{longtable}',
     '\\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}',
     `\\title{${latexEscape(title)}}`,
-    '\\author{H’s 科研助手导出}',
+    '\\author{小何的科研助手导出}',
     '\\date{\\today}',
     '\\begin{document}',
     '\\maketitle',

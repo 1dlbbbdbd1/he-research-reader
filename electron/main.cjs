@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, dialog, ipcMain, shell, Menu, safeStorage } = require('electron')
+const { app, BrowserWindow, clipboard, dialog, ipcMain, shell, Menu, safeStorage, desktopCapturer, nativeImage } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 const earlyPackagedSmokeRoot = process.argv.find(value => value.startsWith('--research-reader-test-root='))?.slice('--research-reader-test-root='.length) || ''
@@ -13,7 +13,7 @@ earlyPackagedSmokeTrace('main-module:start', { argv: process.argv })
 const { mineruStatus, parseWithMineru } = require('./mineru.cjs')
 const { MineruLocalService } = require('./mineru-service.cjs')
 const { installMineruRuntime } = require('./mineru-install.cjs')
-const { localTranslationStatus, translateLocally } = require('./local-translation.cjs')
+const { findPythonExecutable, localTranslationStatus, translateLocally } = require('./local-translation.cjs')
 const { installTranslationRuntime } = require('./translation-install.cjs')
 const { embedLocally, localEmbeddingStatus } = require('./local-embedding.cjs')
 const { installEmbeddingRuntime } = require('./embedding-install.cjs')
@@ -24,6 +24,11 @@ earlyPackagedSmokeTrace('main-module:workspace-loaded')
 const { AppSettingsStore } = require('./settings-service.cjs')
 const { LLMService } = require('./llm/llm-service.cjs')
 const { ResearchAgentService } = require('./agent/agent-service.cjs')
+const { PolicyEngine } = require('./workbench/policy-engine.cjs')
+const { ToolRegistry } = require('./workbench/tool-registry.cjs')
+const { BrowserAdapter } = require('./workbench/browser-adapter.cjs')
+const { applyRedactions } = require('./workbench/desktop-capture.cjs')
+const { WorkbenchService } = require('./workbench/workbench-service.cjs')
 const { KnowledgeGraphService } = require('./knowledge/knowledge-graph-service.cjs')
 const { PluginService } = require('./plugins/plugin-service.cjs')
 const { findResearchReaderLink, parseResearchReaderLink } = require('./deep-link.cjs')
@@ -73,6 +78,8 @@ let workspaceService
 let appSettingsStore
 let llmService
 let researchAgentService
+let workbenchService
+let workbenchBrowser
 let knowledgeGraphService
 let pluginService
 let pendingWorkspaceCreation
@@ -383,12 +390,32 @@ ipcMain.handle('agent:list-memory', () => researchAgentService.listMemory())
 ipcMain.handle('agent:save-memory', (_event, input) => researchAgentService.saveMemory(input))
 ipcMain.handle('agent:review-memory', (_event, input) => researchAgentService.reviewMemory(input))
 ipcMain.handle('agent:create-session', (_event, input) => researchAgentService.createSession(input))
+ipcMain.handle('agent:list-sessions', () => researchAgentService.listSessions())
 ipcMain.handle('agent:get-session', (_event, input) => researchAgentService.getSession(input?.sessionId))
+ipcMain.handle('agent:append-turn', (_event, input) => researchAgentService.appendTurn(input))
 ipcMain.handle('agent:propose-plan', (_event, input) => researchAgentService.proposePlan(input))
 ipcMain.handle('agent:get-plan', (_event, input) => researchAgentService.getPlan(input?.planId))
 ipcMain.handle('agent:review-step', (_event, input) => researchAgentService.reviewStep(input))
 ipcMain.handle('agent:execute-plan', (_event, input) => researchAgentService.executePlan(input))
 ipcMain.handle('agent:execute-step', (_event, input) => researchAgentService.executeStep(input))
+ipcMain.handle('workbench:dashboard', () => workbenchService.getDashboard())
+ipcMain.handle('workbench:project-update', (_event, input) => workbenchService.updateProject(input))
+ipcMain.handle('workbench:project-files', (_event, input) => workbenchService.listProjectFiles(input))
+ipcMain.handle('workbench:project-preview', (_event, input) => workbenchService.previewProjectFile(input))
+ipcMain.handle('workbench:capability-list', () => workbenchService.listCapabilityPacks())
+ipcMain.handle('workbench:capability-set', (_event, input) => workbenchService.setCapabilityPack(input))
+ipcMain.handle('workbench:run-create', (_event, input) => workbenchService.createRun(input))
+ipcMain.handle('workbench:run-list', (_event, input) => workbenchService.listRuns(input))
+ipcMain.handle('workbench:run-get', (_event, input) => workbenchService.getRun(input?.runId))
+ipcMain.handle('workbench:run-authorize', (_event, input) => workbenchService.authorizeRun(input))
+ipcMain.handle('workbench:run-execute-next', (_event, input) => workbenchService.executeNext(input?.runId))
+ipcMain.handle('workbench:run-start', (_event, input) => workbenchService.executeUntilBlocked(input?.runId))
+ipcMain.handle('workbench:run-pause', (_event, input) => workbenchService.pauseRun(input?.runId))
+ipcMain.handle('workbench:run-resume', (_event, input) => workbenchService.resumeRun(input?.runId))
+ipcMain.handle('workbench:run-cancel', (_event, input) => workbenchService.cancelRun(input?.runId))
+ipcMain.handle('workbench:decision-resolve', (_event, input) => workbenchService.resolveDecision(input))
+ipcMain.handle('workbench:result-save', (_event, input) => workbenchService.saveResult(input))
+ipcMain.handle('workbench:run-verify', (_event, input) => workbenchService.verifyRun(input?.runId))
 ipcMain.handle('knowledge:bootstrap', () => knowledgeGraphService.bootstrap())
 ipcMain.handle('knowledge:get-graph', (_event, input) => knowledgeGraphService.getGraph(input))
 ipcMain.handle('knowledge:propose-node', (_event, input) => knowledgeGraphService.proposeNode(input))
@@ -695,7 +722,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 720,
     backgroundColor: '#f7f8f4',
-    title: 'H’s 科研助手',
+    title: '小何的科研助手',
     icon: app.isPackaged
       ? path.join(process.resourcesPath, 'brand', 'icon.ico')
       : path.join(__dirname, '..', 'build', 'icon.ico'),
@@ -729,7 +756,7 @@ function createWindow() {
     if (isDesktopSmoke) {
       mainWindow.setContentSize(1024, 768)
       const previousClipboardText = clipboard.readText()
-      const smokeCitation = `H’s 科研助手 GB/T 7714—2015 剪贴板验收 ${Date.now()}`
+      const smokeCitation = `小何的科研助手 GB/T 7714—2015 剪贴板验收 ${Date.now()}`
       const expectedLongBlocks = Array.from({ length: 220 }, (_, index) => `Long-form evidence block ${index + 1} remains in deterministic reading order and keeps the desktop reader scrollable.`)
       const expectedRawMarkdown = ['Abstract', '', 'This is the first evidence sentence.\nSecond glued paragraph begins here.', '', 'Methods', '', 'Raw evidence remains traceable.', '', ...expectedLongBlocks.flatMap(block => [block, ''])].join('\n').trim()
       const script = `(async () => {
@@ -753,6 +780,17 @@ function createWindow() {
           element.dispatchEvent(new Event('input', { bubbles: true }))
           element.dispatchEvent(new Event('change', { bubbles: true }))
         }
+        let researchAssetEntriesVisible = false
+        const openResearchAsset = async title => {
+          const hubNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('科研工作区'))
+          if (!hubNav) throw new Error('research-hub-nav-missing')
+          hubNav.click()
+          const hub = await waitFor(() => document.querySelector('.research-hub'), 12000, 'research-hub')
+          researchAssetEntriesVisible = researchAssetEntriesVisible || [...hub.querySelectorAll('button')].some(button => button.textContent.includes('课题与实验'))
+          const target = [...hub.querySelectorAll('button')].find(button => button.textContent.includes(title))
+          if (!target) throw new Error('research-hub-entry-missing:' + title)
+          target.click()
+        }
         const onboarding = await waitFor(() => document.querySelector('.settings-modal'))
         const onboardingInputs = onboarding.querySelectorAll('input')
         setValue(onboardingInputs[0], 'https://api.example.invalid/v1')
@@ -766,7 +804,8 @@ function createWindow() {
         const greetingVisible = greeting.textContent.includes('终于回来了')
         const dismissGreeting = [...greeting.querySelectorAll('button')].find(button => button.textContent.includes('先看今日科研'))
         dismissGreeting.click()
-        const todayRoot = await waitFor(() => document.querySelector('.today-research'))
+        await openResearchAsset('今日科研')
+        const todayRoot = await waitFor(() => document.querySelector('.today-research'), 12000, 'today-from-research-hub')
         const appShell = document.querySelector('.app-shell')
         const uiScale10Applied = parseFloat(getComputedStyle(appShell).getPropertyValue('--ui-text-xs')) >= 14.2
         const desktop1024NoOverflow = document.documentElement.scrollWidth === document.documentElement.clientWidth
@@ -818,8 +857,7 @@ function createWindow() {
         const quickSave = [...document.querySelectorAll('.research-quick-inbox button')].find(button => button.textContent.includes('收下'))
         quickSave.click()
         const quickInboxSaved = Boolean(await waitFor(() => [...document.querySelectorAll('.research-task-card')].find(card => card.textContent.includes('桌面烟测快速收件箱'))))
-        const reviewNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('复盘与写作'))
-        reviewNav.click()
+        await openResearchAsset('复盘与写作')
         const reviewRoot = await waitFor(() => document.querySelector('.research-review-workspace'), 12000, 'review-after-ui-scale')
         const reviewTypeSamples = [...reviewRoot.querySelectorAll('.section-kicker, .research-report-controls label, .research-report-studio > header > span')]
         const reviewMinimumTypeReadable = reviewTypeSamples.length >= 4 && reviewTypeSamples.every(node => parseFloat(getComputedStyle(node).fontSize) >= 14.2)
@@ -827,10 +865,9 @@ function createWindow() {
         const reportControlRects = [...reportControls.children].map(node => node.getBoundingClientRect()).filter(rect => rect.width > 0)
         const reportControlsDoNotOverlap = reportControlRects.every((rect, index) => reportControlRects.slice(index + 1).every(other => rect.right <= other.left + 1 || other.right <= rect.left + 1 || rect.bottom <= other.top + 1 || other.bottom <= rect.top + 1))
           && reportControls.scrollWidth <= reportControls.clientWidth + 1
-        const todayNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('今日科研'))
-        todayNav.click()
+        await openResearchAsset('今日科研')
         const returnedTodayRoot = await waitFor(() => document.querySelector('.today-research'), 12000, 'today-after-ui-scale')
-        const workspaceNavVisible = Boolean([...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('课题与实验')))
+        const workspaceNavVisible = researchAssetEntriesVisible
         const continueResearch = returnedTodayRoot.querySelector('.today-continue')
         continueResearch.click()
         const structuredView = await waitFor(() => [...document.querySelectorAll('button')].find(button => button.textContent.trim() === '整理稿'), 12000, 'structured-switch-after-ui-scale')
@@ -1067,6 +1104,7 @@ function createWindow() {
           const reviewScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'research-review-ergonomic-1600x900.png') : undefined
           const parallelScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'reader-parallel-1600x900.png') : undefined
           const commandScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'research-command-empty-layout-1600x900.png') : undefined
+          const workbenchScreenshotPath = screenshotRoot ? path.join(screenshotRoot, 'agent-workbench-home-1600x900.png') : undefined
           let emptyStateLayoutMetrics = { reviewConverged: false, commandConverged: false }
           if (reviewScreenshotPath && parallelScreenshotPath && commandScreenshotPath) {
             await mainWindow.webContents.executeJavaScript(`(async () => {
@@ -1106,8 +1144,11 @@ function createWindow() {
             fs.writeFileSync(parallelScreenshotPath, (await mainWindow.capturePage()).toPNG())
             const reviewLayoutMetrics = await mainWindow.webContents.executeJavaScript(`(async () => {
               const started = Date.now()
-              const reviewNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('复盘与写作'))
-              reviewNav.click()
+              const hubNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('科研工作区'))
+              hubNav.click()
+              while (Date.now() - started < 12000 && !document.querySelector('.research-hub')) await new Promise(resolve => setTimeout(resolve, 40))
+              const reviewEntry = [...document.querySelectorAll('.research-hub button')].find(button => button.textContent.includes('复盘与写作'))
+              reviewEntry.click()
               while (Date.now() - started < 12000) {
                 const root = document.querySelector('.research-review-workspace')
                 const grid = root?.querySelector('.research-output-grid.is-empty')
@@ -1132,8 +1173,11 @@ function createWindow() {
             fs.writeFileSync(reviewScreenshotPath, (await mainWindow.capturePage()).toPNG())
             const commandLayoutMetrics = await mainWindow.webContents.executeJavaScript(`(async () => {
               const started = Date.now()
-              const commandNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('课题与实验'))
-              commandNav.click()
+              const hubNav = [...document.querySelectorAll('.nav-item')].find(button => button.textContent.includes('科研工作区'))
+              hubNav.click()
+              while (Date.now() - started < 12000 && !document.querySelector('.research-hub')) await new Promise(resolve => setTimeout(resolve, 40))
+              const commandEntry = [...document.querySelectorAll('.research-hub button')].find(button => button.textContent.includes('课题与实验'))
+              commandEntry.click()
               while (Date.now() - started < 12000) {
                 const root = document.querySelector('.research-command-center')
                 const grid = root?.querySelector('.research-command-grid.is-empty')
@@ -1164,14 +1208,60 @@ function createWindow() {
               command: commandLayoutMetrics,
             }
           }
+          const workbenchLayoutMetrics = await mainWindow.webContents.executeJavaScript(`(async () => {
+            const nav = [...document.querySelectorAll('aside nav .nav-item')].find(button => button.textContent.includes('Agent 对话'))
+            if (!nav) throw new Error('visual-wait:agent-chat-nav')
+            nav.click()
+            const started = Date.now()
+            while (Date.now() - started < 12000) {
+              const root = document.querySelector('.agent-chat-page')
+              const composer = root?.querySelector('.agent-composer')
+              if (root && composer) {
+                const textarea = composer.querySelector('textarea')
+                const plus = composer.querySelector('.composer-icon')
+                plus.click()
+                await new Promise(resolve => setTimeout(resolve, 120))
+                const menu = document.querySelector('.composer-plus-menu')
+                const workflowNames = ['查找相应的文献', '文献分析总结', '实验方法指定总结', '实验技能教学']
+                const visibleWorkflowCount = workflowNames.filter(name => [...document.querySelectorAll('.workflow-starters button,.composer-plus-menu button')].some(button => button.textContent.includes(name))).length
+                const rect = composer.getBoundingClientRect()
+                const rootStyle = getComputedStyle(root)
+                return {
+                  chatComposerVisible: rect.width > 500 && rect.height > 90,
+                  inputVisible: textarea?.getBoundingClientRect().height > 50,
+                  plusMenuVisible: Boolean(menu),
+                  projectEntryVisible: [...(menu?.querySelectorAll('button') || [])].some(button => button.textContent.includes('项目内容')),
+                  modelSelectorVisible: Boolean(composer.querySelector('select[aria-label="选择模型"]')),
+                  visibleWorkflowCount,
+                  primaryNavCount: document.querySelectorAll('aside nav .nav-item').length,
+                  conversationListVisible: Boolean(document.querySelector('.sidebar-conversations')),
+                  noOverflow: document.documentElement.scrollWidth === document.documentElement.clientWidth && rect.right <= innerWidth + 1,
+                  scrollContainer: rootStyle.overflowY === 'auto' && root.clientHeight > 0,
+                }
+              }
+              await new Promise(resolve => setTimeout(resolve, 40))
+            }
+            throw new Error('visual-wait:.agent-chat-page')
+          })()`, true)
+          if (workbenchScreenshotPath) {
+            await new Promise(resolve => setTimeout(resolve, 160))
+            fs.writeFileSync(workbenchScreenshotPath, (await mainWindow.capturePage()).toPNG())
+          }
+          const workbenchReachedEnd = await mainWindow.webContents.executeJavaScript(`(() => {
+            const root = document.querySelector('.agent-chat-page')
+            const composer = root?.querySelector('.agent-composer')
+            return Boolean(root && composer && composer.getBoundingClientRect().bottom <= innerHeight)
+          })()`)
+          workbenchLayoutMetrics.reachedEnd = workbenchReachedEnd
+          const workbenchLayoutPassed = workbenchLayoutMetrics.chatComposerVisible && workbenchLayoutMetrics.inputVisible && workbenchLayoutMetrics.plusMenuVisible && workbenchLayoutMetrics.projectEntryVisible && workbenchLayoutMetrics.modelSelectorVisible && workbenchLayoutMetrics.visibleWorkflowCount === 4 && workbenchLayoutMetrics.primaryNavCount === 2 && workbenchLayoutMetrics.conversationListVisible && workbenchLayoutMetrics.noOverflow && workbenchLayoutMetrics.scrollContainer && workbenchReachedEnd
           const clipboardVerified = clipboard.readText() === smokeCitation && clipboardResult?.written === true
           clipboard.writeText(previousClipboardText)
           const largeViewportsPassed = largeViewportChecks.every(check => check.actualWidth === check.requestedWidth && check.actualHeight === check.requestedHeight && check.noOverflow && check.shellFillsViewport)
-          if (!clipboardVerified || !desktop1024NoOverflow || !escapeClosedAndRestoredFocus || !greetingVisible || todayAnswerCount !== 5 || !todayContextRestored || !recordSaved || taskBucketCount !== 7 || !aiProposalVisible || !aiTaskConfirmed || !quickInboxSaved || !uiScale10Applied || !workspaceNavVisible || !readerModeRestored || !versionVisible || structuredInitialBlockCount >= structuredBlockCount || structuredBlockCount < 220 || !rawMarkdownPreserved || !structuredScrollable || !structuredReachedEnd || !parallelPanesVisible || !parallelStructuredScrollable || !parallelSeparatorAccessible || !parallelTocInitiallyHidden || !parallelTocCanToggle || !parallelLayoutAdjustable || !reviewMinimumTypeReadable || !reportControlsDoNotOverlap || !bilingualUsesStructuredOrder || !bilingualScrollable || !bilingualReachedEnd || !switchStressPassed || !errorFallbackVisible || !errorBoundaryRecovered || translationEngineCount !== 2 || translationViewCount !== 3 || !failedRetryVisible || !translationLocked || !glossarySaved || !cloudScopeVisible || !reader1024FillsViewport || !desktop1600.noOverflow || !desktop1600.readerFillsViewport || !largeViewportsPassed || !emptyStateLayoutMetrics.reviewConverged || !emptyStateLayoutMetrics.commandConverged) {
-            finishDesktopSmoke({ reason: 'desktop-acceptance-failed', title, clipboardVerified, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, userData: app.getPath('userData') }, true)
+          if (!clipboardVerified || !desktop1024NoOverflow || !escapeClosedAndRestoredFocus || !greetingVisible || todayAnswerCount !== 5 || !todayContextRestored || !recordSaved || taskBucketCount !== 7 || !aiProposalVisible || !aiTaskConfirmed || !quickInboxSaved || !uiScale10Applied || !workspaceNavVisible || !readerModeRestored || !versionVisible || structuredInitialBlockCount >= structuredBlockCount || structuredBlockCount < 220 || !rawMarkdownPreserved || !structuredScrollable || !structuredReachedEnd || !parallelPanesVisible || !parallelStructuredScrollable || !parallelSeparatorAccessible || !parallelTocInitiallyHidden || !parallelTocCanToggle || !parallelLayoutAdjustable || !reviewMinimumTypeReadable || !reportControlsDoNotOverlap || !bilingualUsesStructuredOrder || !bilingualScrollable || !bilingualReachedEnd || !switchStressPassed || !errorFallbackVisible || !errorBoundaryRecovered || translationEngineCount !== 2 || translationViewCount !== 3 || !failedRetryVisible || !translationLocked || !glossarySaved || !cloudScopeVisible || !reader1024FillsViewport || !desktop1600.noOverflow || !desktop1600.readerFillsViewport || !largeViewportsPassed || !emptyStateLayoutMetrics.reviewConverged || !emptyStateLayoutMetrics.commandConverged || !workbenchLayoutPassed) {
+            finishDesktopSmoke({ reason: 'desktop-acceptance-failed', title, clipboardVerified, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, workbenchLayoutMetrics, userData: app.getPath('userData') }, true)
             return
           }
-          finishDesktopSmoke({ title, clipboardVerified, clipboardRestored: clipboard.readText() === previousClipboardText, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, screenshotPath, reviewScreenshotPath, parallelScreenshotPath, commandScreenshotPath, userData: app.getPath('userData') })
+          finishDesktopSmoke({ title, clipboardVerified, clipboardRestored: clipboard.readText() === previousClipboardText, desktop1024NoOverflow, escapeClosedAndRestoredFocus, greetingVisible, todayAnswerCount, todayContextRestored, recordSaved, taskBucketCount, aiProposalVisible, aiTaskConfirmed, quickInboxSaved, uiScale10Applied, workspaceNavVisible, readerModeRestored, versionVisible, structuredInitialBlockCount, structuredBlockCount, rawMarkdownPreserved, structuredScrollable, structuredReachedEnd, parallelPanesVisible, parallelStructuredScrollable, parallelSeparatorAccessible, parallelTocInitiallyHidden, parallelTocCanToggle, parallelLayoutAdjustable, parallelPanelMetrics, reviewMinimumTypeReadable, reportControlsDoNotOverlap, bilingualUsesStructuredOrder, bilingualScrollable, bilingualReachedEnd, switchStressPassed, errorFallbackVisible, errorBoundaryRecovered, translationEngineCount, translationViewCount, failedRetryVisible, translationLocked, glossarySaved, cloudScopeVisible, reader1024FillsViewport, desktop1600, largeViewportChecks, emptyStateLayoutMetrics, workbenchLayoutMetrics, screenshotPath, reviewScreenshotPath, parallelScreenshotPath, commandScreenshotPath, workbenchScreenshotPath, userData: app.getPath('userData') })
         })
         .catch(error => {
           clipboard.writeText(previousClipboardText)
@@ -1248,6 +1338,62 @@ if (!gotSingleInstanceLock) {
       statePath: path.join(app.getPath('userData'), 'plugins.json'),
     })
     workspaceService.restoreCurrent()
+    const desktopAdapter = {
+      async listWindows() {
+        const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: true })
+        return sources.map(source => ({ id: source.id, title: source.name, appIcon: source.appIcon?.isEmpty() ? undefined : source.appIcon?.toDataURL() }))
+      },
+      async captureWindow(input = {}) {
+        const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 1600, height: 1000 }, fetchWindowIcons: false })
+        const source = sources.find(candidate => candidate.id === input.sourceId)
+        if (!source) throw new Error('授权窗口已关闭或发生变化，桌面操作已暂停。')
+        let image = source.thumbnail
+        const region = input.region && typeof input.region === 'object' ? input.region : undefined
+        if (region) {
+          const bounds = image.getSize()
+          const x = Math.max(0, Math.min(bounds.width - 1, Math.round(Number(region.x) || 0)))
+          const y = Math.max(0, Math.min(bounds.height - 1, Math.round(Number(region.y) || 0)))
+          const width = Math.max(1, Math.min(bounds.width - x, Math.round(Number(region.width) || bounds.width)))
+          const height = Math.max(1, Math.min(bounds.height - y, Math.round(Number(region.height) || bounds.height)))
+          image = image.crop({ x, y, width, height })
+        }
+        const redacted = applyRedactions(image, input.redactions, nativeImage)
+        return { sourceId: source.id, title: source.name, imageDataUrl: redacted.image.toDataURL(), capturedAt: new Date().toISOString(), persisted: false, redactionCount: redacted.redactionCount }
+      },
+    }
+    const policyEngine = new PolicyEngine()
+    workbenchBrowser = new BrowserAdapter({ profilePath: path.join(app.getPath('userData'), 'workbench-browser-profile') })
+    const officeScriptPath = app.isPackaged ? path.join(process.resourcesPath, 'scripts', 'office-create-copy.ps1') : path.join(projectRoot, 'scripts', 'office-create-copy.ps1')
+    const wordWorkflowScriptPath = app.isPackaged ? path.join(process.resourcesPath, 'scripts', 'office-word-workflow.ps1') : path.join(projectRoot, 'scripts', 'office-word-workflow.ps1')
+    const translationExportScriptPath = app.isPackaged ? path.join(process.resourcesPath, 'scripts', 'office-translation-export.ps1') : path.join(projectRoot, 'scripts', 'office-translation-export.ps1')
+    const desktopInputScriptPath = app.isPackaged ? path.join(process.resourcesPath, 'scripts', 'desktop-input.ps1') : path.join(projectRoot, 'scripts', 'desktop-input.ps1')
+    const analysisScriptPath = app.isPackaged ? path.join(process.resourcesPath, 'scripts', 'causal-analysis.py') : path.join(projectRoot, 'scripts', 'causal-analysis.py')
+    const translationAdapter = {
+      availability: () => {
+        const options = translationOptions({ from: 'en', to: 'zh' })
+        return findPythonExecutable(options) && fs.existsSync(options.bridgeScript)
+          ? { available: true }
+          : { available: false, reason: '本地翻译运行时尚未安装；请先在设置中安装 Argos 英译中组件。' }
+      },
+      model: provider => provider === 'local' ? 'Argos en_zh' : 'configured-ai',
+      translate: async input => {
+        if (input.provider !== 'local') throw new Error('当前固定翻译工作流只接入本地 Argos；云端翻译仍请使用阅读器内的逐段确认界面。')
+        const result = await translateLocally({ ...translationOptions(input), text: input.text })
+        return result.text
+      },
+    }
+    const imageAdapter = {
+      svgToImage: svg => {
+        const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(String(svg), 'utf8').toString('base64')}`)
+        if (image.isEmpty()) throw new Error('Electron 无法渲染这张 SVG。')
+        return image
+      },
+      svgToPng: async svg => imageAdapter.svgToImage(svg).toPNG(),
+      svgToJpeg: async svg => imageAdapter.svgToImage(svg).toJPEG(92),
+    }
+    const toolRegistry = new ToolRegistry({ policyEngine, desktopAdapter, browserAdapter: workbenchBrowser, officeScriptPath, wordWorkflowScriptPath, translationExportScriptPath, desktopInputScriptPath, workspaceService, translationAdapter, imageAdapter, analysisScriptPath })
+    workbenchService = new WorkbenchService({ workspaceService, toolRegistry, policyEngine, llmService, settingsStore: appSettingsStore })
+    if (workspaceService.getCurrent()) workbenchService.recoverInterruptedRuns()
     desktopSmokeTrace('services:ready')
     createWindow()
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
@@ -1266,6 +1412,8 @@ app.on('before-quit', event => {
   Promise.resolve()
     .then(() => mineruService?.stop())
     .catch(error => console.error(`本地服务退出失败：${error.message}`))
+    .then(() => workbenchBrowser?.close())
+    .catch(error => console.error(`工作台浏览器退出失败：${error.message}`))
     .then(() => workspaceService?.close())
     .catch(error => console.error(`研究库退出失败：${error.message}`))
     .finally(() => {

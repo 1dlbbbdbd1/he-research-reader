@@ -1,21 +1,24 @@
 {
   "name": "research-agent-workbench",
-  "productName": "H’s 科研助手",
+  "productName": "小何的科研助手",
   "description": "本地优先的课题、文献、实验、数据与科研过程管理桌面助手",
   "author": "Research Reader Project",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
+    "test:workbench": "node --test tests/workbench-policy.test.cjs tests/workbench-service.test.cjs tests/causal-analysis.test.cjs",
     "build": "tsc -b && vite build",
-    "test": "node --test tests/compatibility-exports.test.cjs tests/mineru.test.cjs tests/translation.test.cjs tests/embedding.test.cjs tests/semantic-index.test.cjs tests/search.test.cjs tests/workspace.test.cjs tests/migration-backup.test.cjs tests/bibliography-adapters.test.cjs tests/citation-formatter.test.cjs tests/structured-reading.test.cjs tests/research-resume.test.cjs tests/research-task.test.cjs tests/annotation-anchor.test.cjs tests/review-ai.test.cjs tests/deep-link.test.cjs tests/reader-zoom.test.cjs tests/pdf-navigation.test.cjs tests/markdown-anchor.test.cjs tests/review-selection.test.cjs tests/library-papers.test.cjs tests/academic-markdown.test.cjs tests/bilingual-reading.test.cjs tests/research-agent.test.cjs tests/agent-service.test.cjs tests/knowledge-graph-service.test.cjs tests/research-synthesis.test.cjs tests/paper-reading-card.test.cjs tests/figure-explorer.test.cjs tests/settings-service.test.cjs tests/llm-service.test.cjs tests/plugin-service.test.cjs tests/writing-export.test.cjs tests/desktop-shell.test.cjs tests/desktop-runtime.test.cjs",
+    "test": "node --test tests/compatibility-exports.test.cjs tests/mineru.test.cjs tests/translation.test.cjs tests/embedding.test.cjs tests/semantic-index.test.cjs tests/search.test.cjs tests/workspace.test.cjs tests/migration-backup.test.cjs tests/bibliography-adapters.test.cjs tests/citation-formatter.test.cjs tests/structured-reading.test.cjs tests/research-resume.test.cjs tests/research-task.test.cjs tests/annotation-anchor.test.cjs tests/review-ai.test.cjs tests/deep-link.test.cjs tests/reader-zoom.test.cjs tests/pdf-navigation.test.cjs tests/markdown-anchor.test.cjs tests/review-selection.test.cjs tests/library-papers.test.cjs tests/academic-markdown.test.cjs tests/bilingual-reading.test.cjs tests/research-agent.test.cjs tests/agent-service.test.cjs tests/workbench-policy.test.cjs tests/workbench-service.test.cjs tests/causal-analysis.test.cjs tests/knowledge-graph-service.test.cjs tests/research-synthesis.test.cjs tests/paper-reading-card.test.cjs tests/figure-explorer.test.cjs tests/settings-service.test.cjs tests/llm-service.test.cjs tests/plugin-service.test.cjs tests/writing-export.test.cjs tests/desktop-shell.test.cjs tests/desktop-runtime.test.cjs",
     "smoke:mineru": "node scripts/smoke-mineru.cjs",
     "smoke:translation": "node scripts/smoke-translation.cjs",
     "smoke:embedding": "node scripts/smoke-embedding.cjs",
     "smoke:desktop:seed": "node scripts/seed-desktop-smoke.cjs",
     "smoke:desktop": "node scripts/run-desktop-test.cjs --smoke",
+    "smoke:desktop-input": "node scripts/run-desktop-input-smoke.cjs",
+    "smoke:word-formatting": "node scripts/smoke-word-formatting.cjs",
     "smoke:desktop:packaged": "node scripts/run-desktop-test.cjs --smoke --packaged",
     "preview": "vite preview",
     "desktop": "npm run build && electron electron/main.cjs",
@@ -32,6 +35,7 @@
     "docx": "^9.7.1",
     "fast-xml-parser": "^5.10.1",
     "katex": "^0.16.47",
+    "playwright-core": "^1.62.1",
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.9.0",
     "rehype-katex": "^7.0.1",
@@ -55,12 +59,12 @@
   },
   "build": {
     "appId": "io.researchreader.desktop",
-    "productName": "H’s 科研助手",
+    "productName": "小何的科研助手",
     "electronDist": "node_modules/electron/dist",
     "asar": true,
     "protocols": [
       {
-        "name": "H’s 科研助手引用",
+        "name": "小何的科研助手引用",
         "schemes": [
           "research-reader"
         ]
@@ -98,6 +102,26 @@
         "to": "scripts/restore-migration-backup.ps1"
       },
       {
+        "from": "scripts/office-create-copy.ps1",
+        "to": "scripts/office-create-copy.ps1"
+      },
+      {
+        "from": "scripts/office-word-workflow.ps1",
+        "to": "scripts/office-word-workflow.ps1"
+      },
+      {
+        "from": "scripts/office-translation-export.ps1",
+        "to": "scripts/office-translation-export.ps1"
+      },
+      {
+        "from": "scripts/desktop-input.ps1",
+        "to": "scripts/desktop-input.ps1"
+      },
+      {
+        "from": "scripts/causal-analysis.py",
+        "to": "scripts/causal-analysis.py"
+      },
+      {
         "from": "docs/migration/v1-rollback.md",
         "to": "docs/v1-rollback.md"
       },
@@ -109,7 +133,7 @@
     "directories": {
       "output": "release"
     },
-    "artifactName": "HsResearchAssistant-${version}-${arch}.${ext}",
+    "artifactName": "XiaoHeResearchAssistant-${version}-${arch}.${ext}",
     "win": {
       "icon": "build/icon.ico",
       "target": [
@@ -128,16 +152,16 @@
       ]
     },
     "nsis": {
-      "artifactName": "HsResearchAssistant-Setup-${version}-${arch}.${ext}",
+      "artifactName": "XiaoHeResearchAssistant-Setup-${version}-${arch}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "include": "build/installer.nsh",
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "H’s 科研助手"
+      "shortcutName": "小何的科研助手"
     },
     "portable": {
-      "artifactName": "HsResearchAssistant-Portable-${version}-${arch}.${ext}"
+      "artifactName": "XiaoHeResearchAssistant-Portable-${version}-${arch}.${ext}"
     }
   }
 }

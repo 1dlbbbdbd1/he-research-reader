@@ -24,6 +24,16 @@ test('Agent 暴露目标要求的七个受控工具及确认边界', () => withA
   assert.ok(tools.filter(tool => !tool.requiresConfirmation).every(tool => tool.readOnly))
 }))
 
+test('项目对话列表按更新时间返回最后一条消息', () => withAgent(({ agent }) => {
+  const session = agent.createSession({ title: '实验技能教学' })
+  agent.appendTurn({ sessionId: session.id, role: 'user', content: '教我做拉伸试验' })
+  agent.appendTurn({ sessionId: session.id, role: 'assistant', content: '先确认设备和试样标准。' })
+  const listed = agent.listSessions()
+  assert.equal(listed[0].id, session.id)
+  assert.equal(listed[0].turnCount, 2)
+  assert.equal(listed[0].lastMessage, '先确认设备和试样标准。')
+}))
+
 test('Agent Memory 区分 AI 建议与人工确认并在重开后保留', () => withAgent(({ vault, workspace, agent }) => {
   const suggested = agent.saveMemory({ kind: 'preferred_term', content: '柔顺装配', createdBy: 'ai', sourceType: 'agent', importance: 4 })
   assert.equal(suggested.reviewState, 'draft')

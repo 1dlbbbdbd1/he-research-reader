@@ -1,0 +1,21 @@
+{
+  "csv": "time,value,group\n1,2,A\n2,4,A\n3,6,A\n1,1,B\n2,3,B\n3,5,B\n",
+  "dataContract": {
+    "requiredColumns": ["time", "value", "group"],
+    "types": { "time": "number", "value": "number", "group": "text" },
+    "dropInvalidRows": false
+  },
+  "figureSpec": {
+    "title": "Calibration response",
+    "width": 1200,
+    "height": 700,
+    "dpi": 300,
+    "fontFamily": "Arial",
+    "lineWidth": 2,
+    "panels": [
+      { "id": "panel-a", "label": "A", "title": "Response over time", "type": "line", "x": "time", "y": "value", "group": "group", "xLabel": "Time", "yLabel": "Response" },
+      { "id": "panel-b", "label": "B", "title": "Observed samples", "type": "scatter", "x": "time", "y": "value", "group": "group", "xLabel": "Time", "yLabel": "Response" }
+    ]
+  },
+  "expected": { "rowCount": 6, "panelCount": 2, "editedTitle": "Calibrated response over time" }
+}

@@ -1,0 +1,18 @@
+{
+  "csv": "unit,time,treated,post,outcome\nC,0,0,0,10\nC,1,0,0,11\nC,2,0,1,12\nC,3,0,1,13\nT,0,1,0,20\nT,1,1,0,21\nT,2,1,1,25\nT,3,1,1,26\n",
+  "method": "DID",
+  "design": {
+    "outcome": "outcome",
+    "unit": "unit",
+    "time": "time",
+    "treated": "treated",
+    "post": "post",
+    "covariates": [],
+    "parallelTrendThreshold": 0.1
+  },
+  "assumptions": [
+    "处理前两组采用相同测量口径。",
+    "处理时点没有其他只影响处理组的同期事件。"
+  ],
+  "expected": { "estimate": 3, "diagnostic": "parallelTrends", "reliable": true }
+}

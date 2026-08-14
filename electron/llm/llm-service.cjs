@@ -184,10 +184,14 @@ class LLMService {
   async complete(input = {}) {
     const purpose = PURPOSES.has(input.purpose) ? input.purpose : ''
     if (!purpose || purpose === 'connection-test') throw new Error('AI 请求用途无效。')
-    const active = this.settingsStore.loadActiveAIConfig()
+    const role = ['planner', 'executor', 'vision', 'verifier', 'embedding'].includes(input.role) ? input.role : undefined
+    const profileRole = ['planner', 'executor', 'vision', 'verifier'].includes(input.profileRole) ? input.profileRole : role
+    const active = profileRole ? this.settingsStore.loadModelRoleConfig(profileRole) : this.settingsStore.loadActiveAIConfig()
     if (!active.apiKey) throw new Error('当前供应商尚未保存 API Key。')
+    if (!active.model) throw new Error(`${role || '当前'}模型尚未配置。`)
     return this.#request({
       purpose,
+      role,
       providerId: active.providerId,
       baseUrl: active.baseUrl,
       model: active.model,
@@ -274,6 +278,7 @@ class LLMService {
         providerLabel: provider.label,
         model,
         purpose: input.purpose,
+        role: input.role,
         latencyMs: Date.now() - startedAt,
         usage: usageFromResponse(payload, provider.protocol),
       }

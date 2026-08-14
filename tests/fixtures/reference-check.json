@@ -1,0 +1,25 @@
+{
+  "name": "Crossref public metadata citation verification fixture",
+  "input": {
+    "pastedText": "References\n[1] Smith, Ada. A verified robot study. Robotics Journal, 2020, 5(2): 10-20. doi:10.1000/test"
+  },
+  "crossrefResponse": {
+    "message": {
+      "DOI": "10.1000/test",
+      "title": ["A verified robot study"],
+      "author": [{ "given": "Ada", "family": "Smith" }],
+      "published": { "date-parts": [[2020]] },
+      "container-title": ["Robotics Journal"],
+      "volume": "5",
+      "issue": "2",
+      "page": "10-20",
+      "URL": "https://doi.org/10.1000/test"
+    }
+  },
+  "expected": {
+    "referenceCount": 1,
+    "status": "confirmed",
+    "originalIsNeverOverwritten": true,
+    "reportContainsSource": "Crossref REST API"
+  }
+}

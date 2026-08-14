@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $Force) {
-  throw '恢复会替换当前 library.sqlite。确认已退出 H’s 科研助手后，用 -Force 再执行一次。'
+  throw '恢复会替换当前 library.sqlite。确认已退出小何的科研助手后，用 -Force 再执行一次。'
 }
 if ($BackupId -notmatch '^v\d+-to-v\d+-[a-f0-9]{12}$') {
   throw 'BackupId 格式无效。'
@@ -40,7 +40,7 @@ try {
   $lock = [IO.File]::Open($currentDatabase, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
   $lock.Dispose()
 } catch {
-  throw '当前数据库仍被占用。请完全退出 H’s 科研助手后重试。'
+  throw '当前数据库仍被占用。请完全退出小何的科研助手后重试。'
 }
 
 $rescueRoot = Join-Path $resolvedVault '.reader-cache\rollback-rescue'

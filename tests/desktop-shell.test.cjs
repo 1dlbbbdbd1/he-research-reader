@@ -4,7 +4,7 @@ const path = require('node:path')
 const test = require('node:test')
 
 const root = path.join(__dirname, '..')
-const productName = 'H’s 科研助手'
+const productName = '小何的科研助手'
 
 test('desktop shell uses the approved product name everywhere users see it', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -20,11 +20,11 @@ test('desktop shell uses the approved product name everywhere users see it', () 
   assert.match(ui, new RegExp(`<span>${productName}</span>`))
 })
 
-test('Windows package metadata uses the HsResearchAssistant artifact family', () => {
+test('Windows package metadata uses the XiaoHeResearchAssistant artifact family', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
-  assert.match(packageJson.build.artifactName, /^HsResearchAssistant-/)
-  assert.match(packageJson.build.nsis.artifactName, /^HsResearchAssistant-Setup-/)
-  assert.match(packageJson.build.portable.artifactName, /^HsResearchAssistant-Portable-/)
+  assert.match(packageJson.build.artifactName, /^XiaoHeResearchAssistant-/)
+  assert.match(packageJson.build.nsis.artifactName, /^XiaoHeResearchAssistant-Setup-/)
+  assert.match(packageJson.build.portable.artifactName, /^XiaoHeResearchAssistant-Portable-/)
 })
 
 test('research cockpit is backed by optional workspace APIs and has no demo thesis', () => {
@@ -76,8 +76,8 @@ test('持久化 Agent Planner、Memory 和逐步确认通过受限 IPC 接入真
   const ui = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8')
   const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8')
-  assert.match(ui, /生成执行计划/)
-  assert.match(ui, /运行只读与已确认步骤/)
+  assert.match(ui, /这次任务的步骤/)
+  assert.match(ui, /继续已确认的步骤/)
   assert.match(ui, /长期记忆/)
   assert.match(ui, /写入研究库，必须确认/)
   assert.match(preload, /proposeAgentPlan: input => ipcRenderer\.invoke\('agent:propose-plan', input\)/)
@@ -151,8 +151,9 @@ test('今日科研通过受限现场 IPC 恢复五项真实上下文，并保留
     assert.match(main, new RegExp(`ipcMain\\.handle\\('${channel}'`))
     assert.match(preload, new RegExp(`ipcRenderer\\.invoke\\('${channel}'`))
   }
-  assert.match(app, /label="今日科研"/)
-  assert.match(app, /label="课题与实验"/)
+  assert.match(app, /title: '今日科研'/)
+  assert.match(app, /title: '课题与实验'/)
+  assert.match(app, /label="科研工作区"/)
   assert.match(app, /active === 'research-workspace'/)
   assert.equal((today.match(/data-today-answer=/g) || []).length, 5)
   assert.match(today, /继续上次工作/)
@@ -172,7 +173,7 @@ test('统一科研任务复用旧来源，并通过人工确认、回写和历�
     assert.match(main, new RegExp(`ipcMain\\.handle\\('${channel}'`))
     assert.match(preload, new RegExp(`ipcRenderer\\.invoke\\('${channel}'`))
   }
-  assert.match(app, /label="研究任务"/)
+  assert.match(app, /title: '研究任务'/)
   assert.match(app, /onCreateTaskFromAnnotation/)
   assert.match(tasks, /完成并回写来源/)
   assert.equal((tasks.match(/value: '(today|inbox|waiting|deferred|later|completed|abandoned)'/g) || []).length, 7)
@@ -348,6 +349,15 @@ test('desktop shell uses the approved H orbit brand assets', () => {
   assert.ok(icon.readUInt16LE(4) >= 7)
 })
 
+test('Windows package includes Word, translation PDF and causal Python executors', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+  for (const file of ['office-word-workflow.ps1', 'office-translation-export.ps1', 'causal-analysis.py']) {
+    const resource = packageJson.build.extraResources.find(item => item.from === `scripts/${file}`)
+    assert.deepEqual(resource, { from: `scripts/${file}`, to: `scripts/${file}` })
+    assert.ok(fs.existsSync(path.join(root, resource.from)))
+  }
+})
+
 test('PDF selection can be pinned into the research Agent conversation', () => {
   const ui = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
 
@@ -369,7 +379,7 @@ test('知识图谱与 Evidence Card 通过受限 IPC 接入可复核工作区', 
     assert.match(main, new RegExp(`ipcMain\\.handle\\('${channel}'`))
     assert.match(preload, new RegExp(`ipcRenderer\\.invoke\\('${channel}'`))
   }
-  assert.match(app, /label="知识图谱"/)
+  assert.match(app, /title: '知识图谱'/)
   assert.match(app, /<KnowledgeGraphWorkspace/)
   assert.match(workspace, /Evidence Card/)
   assert.match(workspace, /AI 建议/)
@@ -413,4 +423,19 @@ test('迁移快照校验与显式回滚入口作为正式产品资料交付', ()
   assert.match(script, /rollback-rescue/)
   assert.match(guide, /restore-migration-backup\.ps1/)
   assert.match(guide, /-Force/)
+})
+
+test('Agent 对话拥有固定工作流、模型选择和按需项目预览', () => {
+  const app = fs.readFileSync(path.join(root, 'src', 'main.tsx'), 'utf8')
+  const css = fs.readFileSync(path.join(root, 'src', 'workbench.css'), 'utf8')
+
+  assert.match(css, /\.workbench-page\{[^}]*height:100%;[^}]*min-height:0;[^}]*overflow-x:hidden;[^}]*overflow-y:auto;/)
+  assert.match(css, /\.workbench-page::\-webkit-scrollbar/)
+  assert.match(css, /\.agent-chat-page\{/)
+  assert.match(css, /\.agent-composer\{/)
+  assert.match(css, /\.project-drawer-backdrop\{/)
+  for (const workflow of ['查找相应的文献', '文献分析总结', '实验方法指定总结', '实验技能教学']) assert.match(app, new RegExp(workflow))
+  assert.match(app, /aria-label="选择模型"/)
+  assert.match(app, /listAgentSessions/)
+  assert.match(app, /listWorkbenchProjectFiles/)
 })

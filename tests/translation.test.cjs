@@ -74,7 +74,7 @@ test('translation environment keeps packages and profile under the chosen runtim
 
 test('bundled translation keeps model read-only and writes caches into user data', () => {
   const runtimeRoot = 'C:\\Program Files\\ResearchReader\\resources\\translation-runtime'
-  const stateRoot = 'C:\\Users\\researcher\\AppData\\Roaming\\H’s 科研助手\\translation-state'
+  const stateRoot = 'C:\\Users\\researcher\\AppData\\Roaming\\小何的科研助手\\translation-state'
   const environment = translationEnvironment(runtimeRoot, stateRoot)
   assert.equal(environment.ARGOS_PACKAGES_DIR, path.join(runtimeRoot, 'packages'))
   assert.equal(environment.XDG_DATA_HOME, path.join(stateRoot, 'data'))

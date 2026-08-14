@@ -92,10 +92,29 @@ test('旧版单一 encryptedApiKey 会无损迁移到 v2 凭据槽', () => withT
   assert.equal(store.loadActiveAIConfig().apiKey, 'legacy-secret')
   store.save({ ai: loaded.ai, ui: loaded.ui })
   const migrated = JSON.parse(fs.readFileSync(filePath, 'utf8'))
-  assert.equal(migrated.version, 2)
+  assert.equal(migrated.version, 3)
   assert.equal(Object.hasOwn(migrated, 'encryptedApiKey'), false)
   assert.equal(migrated.credentials.length, 1)
   assert.equal(store.loadActiveAIConfig().apiKey, 'legacy-secret')
+}))
+
+test('v3 为五个模型角色保留独立配置与加密凭据', () => withTemporaryStore(({ filePath, store }) => {
+  const saved = store.save({
+    ai: { providerId: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'legacy', apiKey: 'legacy-key' },
+    modelRoles: {
+      planner: { providerId: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'planner-model', apiKey: 'planner-secret', inputPricePerMillion: 2, outputPricePerMillion: 8 },
+      vision: { providerId: 'custom', baseUrl: 'http://127.0.0.1:11434/v1', model: 'vision-model', apiKey: 'vision-secret', capabilities: ['vision'] },
+    },
+  })
+  assert.equal(saved.modelRoles.planner.model, 'planner-model')
+  assert.equal(saved.modelRoles.planner.hasCredential, true)
+  assert.equal(saved.modelRoles.vision.hasCredential, true)
+  assert.equal(saved.modelRoles.executor.model, 'legacy')
+  assert.equal(store.loadModelRoleConfig('planner').apiKey, 'planner-secret')
+  assert.equal(store.loadModelRoleConfig('vision').apiKey, 'vision-secret')
+  const raw = fs.readFileSync(filePath, 'utf8')
+  assert.doesNotMatch(raw, /planner-secret|vision-secret/)
+  assert.equal(JSON.parse(raw).version, 3)
 }))
 
 test('清除密钥只删除当前连接的凭据槽', () => withTemporaryStore(({ store }) => {

@@ -22,7 +22,7 @@ const runRoot = path.join(projectRoot, '.reader-cache', `desktop-${mode}-${runId
 const userDataPath = path.join(runRoot, 'user-data')
 const requestedExecutable = process.argv.find(value => value.startsWith('--executable='))?.slice('--executable='.length)
 const electronExecutable = packagedMode
-  ? path.resolve(requestedExecutable || path.join(projectRoot, 'release', 'win-unpacked', 'H’s 科研助手.exe'))
+  ? path.resolve(requestedExecutable || path.join(projectRoot, 'release', 'win-unpacked', '小何的科研助手.exe'))
   : path.join(projectRoot, 'node_modules', 'electron', 'dist', 'electron.exe')
 const mainScript = path.join(projectRoot, 'electron', 'main.cjs')
 const launchArguments = packagedMode ? [
@@ -182,6 +182,10 @@ if (smokeMode) {
       readerMode: 'markdown',
       activeRunId: research.runs.find(run => run.id === 'desktop-active-run').id,
     })
+    const timestamp = new Date().toISOString()
+    service.database.prepare(`INSERT INTO workbench_projects(id, project_id, kind, name, vault_path, external_roots_json, capability_packs_json, created_at, updated_at)
+      VALUES (?, ?, 'research', ?, ?, ?, ?, ?, ?)`)
+      .run(`desktop-workbench-${runId}`, vault.projectId, vault.name, vault.path, JSON.stringify([vault.path]), JSON.stringify(['research-paper-reading', 'research-reference-check', 'research-reviewer-response', 'research-patent-draft', 'research-roadmap', 'research-academic-translation', 'research-literature-review', 'research-paper-figure', 'research-causal-inference', 'research-document-formatting']), timestamp, timestamp)
   } finally {
     service.close()
   }

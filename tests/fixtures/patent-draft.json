@@ -1,0 +1,11 @@
+{
+  "sourceId": "patent-report",
+  "title": "一种可追溯的传感器校准方法",
+  "report": "# 技术问题\n现有传感器校准过程无法追溯参数来源。\n\n# 技术方案\n记录每次校准使用的原始数据哈希。根据训练集统计量计算归一化参数。\n\n# 有益效果\n校准记录能够回到对应原始数据。\n\n# 具体实施方式\n采集传感器样本后计算哈希并保存参数版本。\n\n# 附图说明\n附图1示出数据采集、哈希计算与参数保存的流程。",
+  "terms": ["原始数据哈希", "归一化参数"],
+  "expected": {
+    "minimumClaims": 2,
+    "noveltyStatus": "not_performed",
+    "unsupportedClaims": 0
+  }
+}

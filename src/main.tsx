@@ -27,6 +27,7 @@ import './structured-reading.css'
 import './today-research.css'
 import './research-tasks.css'
 import './theme.css'
+import './workbench.css'
 import 'katex/dist/katex.min.css'
 import {
   fileHash,
@@ -109,11 +110,11 @@ import { completeAI, hasConfiguredAI } from './ai-client'
 import { extractFigureExplorerItems } from './figure-explorer.mjs'
 
 const feedbackIssueUrl = 'https://github.com/1dlbbbdbd1/he-research-reader/issues/new/choose'
-const feedbackEmailUrl = 'mailto:hzh1144@163.com?subject=H%E2%80%99s%20%E7%A7%91%E7%A0%94%E5%8A%A9%E6%89%8B%E9%97%AE%E9%A2%98%E5%8F%8D%E9%A6%88'
+const feedbackEmailUrl = 'mailto:hzh1144@163.com?subject=%E5%B0%8F%E4%BD%95%E7%9A%84%E7%A7%91%E7%A0%94%E5%8A%A9%E6%89%8B%E9%97%AE%E9%A2%98%E5%8F%8D%E9%A6%88'
 
 type SourceKind = ImportedKind
 type EvidenceStatus = '事实' | '推断' | '假设'
-type AppView = DesktopResearchResumeView | 'knowledge'
+type AppView = DesktopResearchResumeView | 'knowledge' | 'workbench' | 'runs' | 'projects' | 'research-hub'
 type Source = {
   id: string
   bibliographicItemId?: string
@@ -372,11 +373,12 @@ function App() {
   const [annotations, setAnnotations] = useStored<Annotation[]>('ra.annotations', [], browserStorage)
   const [bibliographicItems, setBibliographicItems] = useState<BibliographicSummary[]>([])
   const [aiSettings, setAISettings] = useStored<AISettings>('ra.ai-settings', defaultAISettings, browserStorage)
+  const [modelRoles, setModelRoles] = useState<DesktopAppSettings['modelRoles']>()
   const [uiSettings, setUISettings] = useStored<UISettings>('ra.ui-settings', defaultUISettings, browserStorage)
   const [credentialState, setCredentialState] = useState<'empty' | 'encrypted' | 'unavailable'>('empty')
   const [settingsLoaded, setSettingsLoaded] = useState(!window.readerDesktop)
   const [aiOnboardingRequired, setAIOnboardingRequired] = useState(false)
-  const [active, setActive] = useState<AppView>('today')
+  const [active, setActive] = useState<AppView>('workbench')
   const [selectedSource, setSelectedSource] = useState(sources[0]?.id ?? '')
   const [agentOpen, setAgentOpen] = useState(false)
   const [annotationDraft, setAnnotationDraft] = useState<AnnotationDraft | null>(null)
@@ -422,6 +424,17 @@ function App() {
   const [activeActionPack, setActiveActionPack] = useState<ActionPackView>()
   const [citationDialog, setCitationDialog] = useState<{ item: CitationItemView; reason?: string }>()
   const [bibliographyImportResult, setBibliographyImportResult] = useState<{ itemIds: string[]; alreadyImported: boolean }>()
+  const [workbenchDashboard, setWorkbenchDashboard] = useState<DesktopWorkbenchDashboard>()
+  const [activeWorkbenchRun, setActiveWorkbenchRun] = useState<DesktopWorkbenchRun>()
+  const [capabilityPacks, setCapabilityPacks] = useState<DesktopCapabilityPack[]>([])
+  const [agentSessions, setAgentSessions] = useState<DesktopAgentSessionSummary[]>([])
+  const [activeAgentSession, setActiveAgentSession] = useState<DesktopAgentSession>()
+  const [projectDrawerOpen, setProjectDrawerOpen] = useState(false)
+  const [projectFiles, setProjectFiles] = useState<DesktopProjectFileEntry[]>([])
+  const [projectFileRoot, setProjectFileRoot] = useState('')
+  const [projectFilePreview, setProjectFilePreview] = useState<DesktopProjectFilePreview>()
+  const [workbenchBusy, setWorkbenchBusy] = useState(false)
+  const [workbenchError, setWorkbenchError] = useState('')
   const [toast, setToast] = useState('')
   const toastTimer = useRef<number | undefined>(undefined)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -438,6 +451,7 @@ function App() {
       .then(settings => {
         if (disposed) return
         setAISettings({ ...defaultAISettings, ...settings.ai })
+        setModelRoles(settings.modelRoles)
         setUISettings({ ...defaultUISettings, ...settings.ui })
         setCredentialState(settings.credentialState ?? 'empty')
         const missingAI = !hasConfiguredAI(settings.ai)
@@ -456,6 +470,11 @@ function App() {
     if (active !== 'evidence') return
     void loadEvidenceGraph(evidenceScope)
   }, [active, workspace?.id, evidenceScope.kind, evidenceScope.kind === 'all' ? '' : evidenceScope.id])
+
+  useEffect(() => {
+    if (!workspace?.id || !window.readerDesktop) return
+    void refreshWorkbench()
+  }, [workspace?.id])
 
   useEffect(() => {
     const desktop = window.readerDesktop
@@ -499,7 +518,7 @@ function App() {
         setReturnGreetingOpen(true)
         const restoredSource = (library.sources as Source[]).find(source => source.id === resume.sourceId)
         setSelectedSource(restoredSource?.id ?? (library.sources[0] as Source | undefined)?.id ?? '')
-        setActive('today')
+        setActive('workbench')
       })
       .catch(error => notify(error instanceof Error ? error.message : '研究库初始化失败。'))
     return () => { disposed = true }
@@ -673,14 +692,14 @@ function App() {
 
   useEffect(() => {
     const desktop = window.readerDesktop
-    if (!desktop || !workspace || !researchResumeReady || active === 'today' || active === 'knowledge') return
+    if (!desktop || !workspace || !researchResumeReady || !['research-workspace', 'research-review', 'sources', 'reader', 'dashboard', 'evidence', 'actions'].includes(active)) return
     const timer = window.setTimeout(() => {
       const activeRunId = researchResume?.activeRunId
         ?? researchWorkspace?.runs.find(run => run.outcome === 'running')?.id
         ?? researchWorkspace?.runs.find(run => run.outcome === 'planned')?.id
       void desktop.saveResearchResume({
         projectId: workspace.projectId,
-        activeView: active,
+        activeView: active as DesktopResearchResumeView,
         sourceId: selected?.id || null,
         pageNumber: selectedPaper?.readingState.lastPage ?? null,
         readerMode: selected?.readerState?.viewMode ?? null,
@@ -1475,16 +1494,17 @@ function App() {
     setActive(researchResume.activeView)
   }
 
-  async function saveAppSettings(ai: AISettingsSaveInput, ui: UISettings): Promise<AISettings> {
+  async function saveAppSettings(ai: AISettingsSaveInput, ui: UISettings, roles?: Parameters<NonNullable<typeof window.readerDesktop>['saveAppSettings']>[0]['modelRoles']): Promise<AISettings> {
     const desktop = window.readerDesktop
     try {
       let effectiveAI: AISettings
       if (desktop) {
-        const saved = await desktop.saveAppSettings({ ai, ui })
+        const saved = await desktop.saveAppSettings({ ai, ui, modelRoles: roles })
         effectiveAI = { ...defaultAISettings, ...saved.ai }
         setAISettings(effectiveAI)
         setUISettings({ ...defaultUISettings, ...saved.ui })
         setCredentialState(saved.credentialState ?? 'empty')
+        setModelRoles(saved.modelRoles)
       } else {
         effectiveAI = { ...ai, hasCredential: Boolean(ai.apiKey) }
         setAISettings(effectiveAI)
@@ -1496,6 +1516,124 @@ function App() {
     } catch (error) {
       throw new Error(error instanceof Error ? error.message : '本机设置保存失败。')
     }
+  }
+
+  async function refreshWorkbench(runId?: string) {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    try {
+      const [dashboard, packs, sessions] = await Promise.all([desktop.getWorkbenchDashboard(), desktop.listWorkbenchCapabilityPacks(), desktop.listAgentSessions()])
+      setWorkbenchDashboard(dashboard)
+      setCapabilityPacks(packs)
+      setAgentSessions(sessions)
+      if (activeAgentSession) setActiveAgentSession(await desktop.getAgentSession({ sessionId: activeAgentSession.id }))
+      if (runId) setActiveWorkbenchRun(await desktop.getWorkbenchRun({ runId }))
+      else if (activeWorkbenchRun) setActiveWorkbenchRun(await desktop.getWorkbenchRun({ runId: activeWorkbenchRun.id }))
+      setWorkbenchError('')
+    } catch (error) { setWorkbenchError(error instanceof Error ? error.message : '工作台读取失败。') }
+  }
+
+  async function createWorkbenchRun(input: { objective: string; acceptance: string[]; taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; capabilityPack?: string; capabilityInput?: Record<string, unknown> }) {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    setWorkbenchBusy(true)
+    try {
+      const run = await desktop.createWorkbenchRun(input)
+      setActiveWorkbenchRun(run)
+      setActive('runs')
+      await refreshWorkbench(run.id)
+    } catch (error) { setWorkbenchError(error instanceof Error ? error.message : '任务创建失败。') }
+    finally { setWorkbenchBusy(false) }
+  }
+
+  async function openAgentSession(sessionId: string) {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    setWorkbenchBusy(true)
+    try {
+      setActiveAgentSession(await desktop.getAgentSession({ sessionId }))
+      setActive('workbench')
+      setWorkbenchError('')
+    } catch (error) { setWorkbenchError(error instanceof Error ? error.message : '对话读取失败。') }
+    finally { setWorkbenchBusy(false) }
+  }
+
+  async function newAgentSession() {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    setWorkbenchBusy(true)
+    try {
+      const session = await desktop.createAgentSession({ title: '新对话', scope: { projectId: workbenchDashboard?.project.projectId } })
+      setActiveAgentSession({ ...session, lastMessage: '', turnCount: 0, turns: [], plans: [] })
+      setActive('workbench')
+      await refreshWorkbench()
+    } catch (error) { setWorkbenchError(error instanceof Error ? error.message : '新建对话失败。') }
+    finally { setWorkbenchBusy(false) }
+  }
+
+  async function sendAgentMessage(input: { objective: string; acceptance: string[]; taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; workflowLabel?: string; modelRole?: 'planner' | 'executor' | 'vision' | 'verifier' }) {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    setWorkbenchBusy(true)
+    try {
+      let sessionId = activeAgentSession?.id
+      if (!sessionId) sessionId = (await desktop.createAgentSession({ title: input.objective.slice(0, 60), scope: { workflow: input.workflowLabel || '自由对话' } })).id
+      await desktop.appendAgentTurn({ sessionId, role: 'user', content: input.objective })
+      const run = await desktop.createWorkbenchRun({
+        objective: input.workflowLabel ? `${input.workflowLabel}：${input.objective}` : input.objective,
+        acceptance: input.acceptance,
+        taskType: input.taskType,
+        sessionId,
+        modelRoles: input.modelRole ? { selectedRole: input.modelRole } : undefined,
+      })
+      await desktop.appendAgentTurn({ sessionId, role: 'assistant', content: `我已经按“${input.workflowLabel || '自由对话'}”整理了执行步骤。开始读取文件或调用工具前，请先检查本次任务的范围。`, evidenceRefs: [{ type: 'run', id: run.id }] })
+      setActiveWorkbenchRun(run)
+      setActiveAgentSession(await desktop.getAgentSession({ sessionId }))
+      await refreshWorkbench(run.id)
+      setWorkbenchError('')
+    } catch (error) { setWorkbenchError(error instanceof Error ? error.message : '消息发送失败。') }
+    finally { setWorkbenchBusy(false) }
+  }
+
+  async function openProjectDrawer() {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    setProjectDrawerOpen(true)
+    setProjectFilePreview(undefined)
+    try {
+      const listing = await desktop.listWorkbenchProjectFiles({ maximum: 300, maximumDepth: 4 })
+      setProjectFileRoot(listing.root)
+      setProjectFiles(listing.entries)
+    } catch (error) { setWorkbenchError(error instanceof Error ? error.message : '项目内容读取失败。') }
+  }
+
+  async function previewProjectFile(relativePath: string) {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    try { setProjectFilePreview(await desktop.previewWorkbenchProjectFile({ root: projectFileRoot, relativePath })) }
+    catch (error) { setWorkbenchError(error instanceof Error ? error.message : '文件预览失败。') }
+  }
+
+  async function applyWorkbenchAction(action: () => Promise<DesktopWorkbenchRun>) {
+    setWorkbenchBusy(true)
+    try {
+      const run = await action()
+      setActiveWorkbenchRun(run)
+      await refreshWorkbench(run.id)
+    } catch (error) { setWorkbenchError(error instanceof Error ? error.message : '任务操作失败。') }
+    finally { setWorkbenchBusy(false) }
+  }
+
+  async function toggleCapabilityPack(id: string, enabled: boolean) {
+    const desktop = window.readerDesktop
+    if (!desktop) return
+    setWorkbenchBusy(true)
+    try {
+      const result = await desktop.setWorkbenchCapabilityPack({ id, enabled })
+      setCapabilityPacks(result.packs)
+      setWorkbenchDashboard(current => current ? { ...current, project: result.project } : current)
+    } catch (error) { setWorkbenchError(error instanceof Error ? error.message : '固定工作流设置失败。') }
+    finally { setWorkbenchBusy(false) }
   }
 
   const normalizedAccent = uiSettings.accentColor === 'green' ? 'plum' : uiSettings.accentColor
@@ -1537,15 +1675,15 @@ function App() {
     style={appShellStyle}
   >
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><img src={xiaoheLogoMark} alt="" aria-hidden="true"/></div><span>H’s 科研助手</span></div>
+      <div className="brand"><div className="brand-mark"><img src={xiaoheLogoMark} alt="" aria-hidden="true"/></div><span>小何的科研助手</span></div>
       <div className="workspace-control">
         <button className="project-switch" type="button" onClick={() => setWorkspaceMenuOpen(open => !open)}>
-          <div><small>当前研究库</small><strong>{workspace?.name ?? (window.readerDesktop ? '尚未选择' : '浏览器临时库')}</strong></div>
+          <div><small>当前项目</small><strong>{workspace?.name ?? (window.readerDesktop ? '尚未选择' : '浏览器临时项目')}</strong></div>
           <ChevronRight size={16}/>
         </button>
         {workspaceMenuOpen && <div className="workspace-menu">
           <div className="workspace-menu-title">
-            <strong>研究库</strong>
+            <strong>项目</strong>
             <button type="button" onClick={() => setWorkspaceMenuOpen(false)} aria-label="关闭"><X size={14}/></button>
           </div>
           {window.readerDesktop ? <>
@@ -1563,34 +1701,29 @@ function App() {
               </button>)}
             </div>}
             <div className="workspace-create">
-              <small>新建研究库</small>
+              <small>新建项目</small>
               <input value={workspaceName} maxLength={80} onChange={event => setWorkspaceName(event.target.value)} aria-label="研究库名称"/>
               <button type="button" className="workspace-primary" onClick={() => void createWorkspace()} disabled={workspaceBusy || !workspaceName.trim()}>
                 <Plus size={14}/>选择位置并创建
               </button>
             </div>
             <button type="button" className="workspace-secondary" onClick={() => void openWorkspace()} disabled={workspaceBusy}>
-              <Files size={14}/>打开已有研究库
+              <Files size={14}/>打开仓库或项目文件夹
             </button>
+            {workspace && <><button type="button" className="workspace-secondary" onClick={() => { setWorkspaceMenuOpen(false); void openProjectDrawer() }}><Files size={14}/>查看项目内容</button><button type="button" className="workspace-secondary" onClick={() => { setWorkspaceMenuOpen(false); setActive('projects'); void refreshWorkbench() }}><Blocks size={14}/>管理固定工作流</button></>}
             {workspace && legacySourceCount > 0 && <button type="button" className="workspace-migrate" onClick={() => void migrateLegacyWorkspace()} disabled={workspaceBusy}>
               复制 {legacySourceCount} 份旧资料到当前库
               <small>先做快照，重复执行不会重复写入</small>
             </button>}
-            <p>{workspaceBusy ? '正在安全切换…' : '每个研究库都有独立数据库、论文目录和导出目录。'}</p>
+            <p>{workspaceBusy ? '正在安全切换…' : '每个项目都有独立的对话、记忆、文件范围和科研资料。'}</p>
           </> : <p>浏览器预览使用临时本地库。安装桌面客户端后可创建、打开和切换独立研究库。</p>}
         </div>}
       </div>
       <nav>
-        <Nav active={active === 'today'} icon={<LayoutDashboard/>} label="今日科研" count={(researchTasks?.summary.today ?? 0) + (researchTasks?.summary.waiting ?? 0)} onClick={() => setActive('today')}/>
-        <Nav active={active === 'research-workspace'} icon={<CircleDot/>} label="课题与实验" count={researchWorkspace?.runs.filter(run => run.outcome === 'running' || run.outcome === 'planned').length} onClick={() => setActive('research-workspace')}/>
-        <Nav active={active === 'research-review'} icon={<ShieldCheck/>} label="复盘与写作" count={(researchWorkspace?.reports.length ?? 0) + (researchWorkspace?.claims.length ?? 0)} onClick={() => setActive('research-review')}/>
-        <Nav active={active === 'sources'} icon={<Files/>} label="资料库" count={sources.length} onClick={() => setActive('sources')}/>
-        <Nav active={active === 'reader'} icon={<BookOpen/>} label="阅读" onClick={() => selected && setActive('reader')}/>
-        <Nav active={active === 'dashboard'} icon={<ClipboardCheck/>} label="文献综述" count={reviewDocuments.length} onClick={() => setActive('dashboard')}/>
-        <Nav active={active === 'evidence'} icon={<GitBranch/>} label="证据关系" count={evidenceGraph?.summary.relations} onClick={() => openEvidence()}/>
-        <Nav active={active === 'knowledge'} icon={<Network/>} label="知识图谱" onClick={() => setActive('knowledge')}/>
-        <Nav active={active === 'actions'} icon={<FlaskConical/>} label="研究任务" count={(researchTasks?.summary.today ?? 0) + (researchTasks?.summary.inbox ?? 0)} onClick={() => { setTaskSourcePackOpen(false); setActive('actions') }}/>
+        <Nav active={['workbench', 'runs'].includes(active)} icon={<MessageSquareText/>} label="Agent 对话" count={workbenchDashboard?.waitingCount} onClick={() => { setActive('workbench'); void refreshWorkbench() }}/>
+        <Nav active={['research-hub', 'today', 'research-workspace', 'research-review', 'sources', 'reader', 'dashboard', 'evidence', 'knowledge', 'actions'].includes(active)} icon={<FlaskConical/>} label="科研工作区" count={sources.length} onClick={() => setActive('research-hub')}/>
       </nav>
+      <section className="sidebar-conversations"><header><span>项目对话</span><button type="button" title="新建对话" onClick={() => void newAgentSession()}><Plus size={14}/></button></header><div>{agentSessions.map(session => <button type="button" className={session.id === activeAgentSession?.id ? 'active' : ''} key={session.id} onClick={() => void openAgentSession(session.id)}><MessageSquareText size={14}/><span>{session.title}</span></button>)}{agentSessions.length === 0 && <p>还没有对话</p>}</div></section>
       <div className="sidebar-bottom">
         <button className="nav-item" onClick={() => setFeedbackOpen(true)}><Bug/><span>问题反馈</span></button>
         <button className="nav-item" onClick={() => setSettingsOpen(true)}><Settings2/><span>设置</span></button>
@@ -1598,7 +1731,31 @@ function App() {
       </div>
     </aside>
     <main>
-      <header className="topbar"><button className="mobile-menu"><Menu/></button><div className="crumb">当前研究库 <ChevronRight size={14}/> <strong>{active === 'today' ? '今日科研' : active === 'research-workspace' ? '课题与实验' : active === 'research-review' ? '复盘与写作' : active === 'dashboard' ? '文献综述' : active === 'reader' ? '阅读' : active === 'evidence' ? '证据关系' : active === 'knowledge' ? '知识图谱' : active === 'actions' ? '研究任务' : '资料库'}</strong></div><div className="top-actions"><button className="icon-button" title="本地搜索" onClick={() => { setActive('sources'); setLibrarySearchRequest(value => value + 1) }}><Search size={19}/></button><button className="agent-button" onClick={() => setAgentOpen(true)}><MessageSquareText size={16}/> 询问科研助手</button></div></header>
+      <header className="topbar"><button className="mobile-menu"><Menu/></button><div className="crumb">{workspace?.name ?? '个人项目'} <ChevronRight size={14}/> <strong>{active === 'workbench' ? (activeAgentSession?.title || 'Agent 对话') : active === 'runs' ? '任务过程' : active === 'projects' ? '固定工作流' : active === 'research-hub' ? '科研工作区' : active === 'today' ? '今日科研' : active === 'research-workspace' ? '课题与实验' : active === 'research-review' ? '复盘与写作' : active === 'dashboard' ? '文献综述' : active === 'reader' ? '阅读' : active === 'evidence' ? '证据关系' : active === 'knowledge' ? '知识图谱' : active === 'actions' ? '研究任务' : '文献与资料'}</strong></div><div className="top-actions"><button className="icon-button" title="搜索项目资料" onClick={() => { setActive('sources'); setLibrarySearchRequest(value => value + 1) }}><Search size={19}/></button><button className="agent-button" onClick={() => void newAgentSession()}><Plus size={16}/> 新对话</button></div></header>
+      {active === 'workbench' && <WorkbenchHome
+        dashboard={workbenchDashboard} session={activeAgentSession} modelRoles={modelRoles} busy={workbenchBusy} error={workbenchError}
+        onSend={sendAgentMessage} onOpenProject={() => void openProjectDrawer()}
+        onOpenRun={(id) => { void applyWorkbenchAction(() => window.readerDesktop!.getWorkbenchRun({ runId: id })); setActive('runs') }}
+      />}
+      {active === 'runs' && <WorkbenchRuns
+        dashboard={workbenchDashboard} run={activeWorkbenchRun} busy={workbenchBusy} error={workbenchError}
+        onOpen={(id) => void applyWorkbenchAction(() => window.readerDesktop!.getWorkbenchRun({ runId: id }))}
+        onAuthorize={(runId, scope) => void applyWorkbenchAction(() => window.readerDesktop!.authorizeWorkbenchRun({ runId, scope }))}
+        onNext={(id) => void applyWorkbenchAction(() => window.readerDesktop!.startWorkbenchRun({ runId: id }))}
+        onPause={(id) => void applyWorkbenchAction(() => window.readerDesktop!.pauseWorkbenchRun({ runId: id }))}
+        onResume={(id) => void applyWorkbenchAction(() => window.readerDesktop!.resumeWorkbenchRun({ runId: id }))}
+        onCancel={(id) => void applyWorkbenchAction(() => window.readerDesktop!.cancelWorkbenchRun({ runId: id }))}
+        onDecision={(decisionId, approved) => void applyWorkbenchAction(() => window.readerDesktop!.resolveWorkbenchDecision({ decisionId, approved }))}
+        onSaveResult={(runId, resultId, content, reviewState) => void applyWorkbenchAction(() => window.readerDesktop!.saveWorkbenchResult({ runId, resultId, content, reviewState }))}
+      />}
+      {active === 'projects' && <WorkbenchProject
+        dashboard={workbenchDashboard} packs={capabilityPacks} busy={workbenchBusy} error={workbenchError}
+        onTogglePack={(id, enabled) => void toggleCapabilityPack(id, enabled)} onSettings={() => setSettingsOpen(true)}
+      />}
+      {active === 'research-hub' && <ResearchAssetHub
+        counts={{ sources: sources.length, reviews: reviewDocuments.length, tasks: (researchTasks?.summary.today ?? 0) + (researchTasks?.summary.inbox ?? 0), reports: researchWorkspace?.reports.length ?? 0 }}
+        onOpen={setActive}
+      />}
       {active === 'today' && <TodayResearch
         workspace={researchWorkspace as DesktopResearchWorkspace | undefined}
         papers={bibliographicItems}
@@ -1757,6 +1914,7 @@ function App() {
         onSettings={() => setSettingsOpen(true)}
       />}
     </main>
+    {projectDrawerOpen && <div className="project-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setProjectDrawerOpen(false) }}><aside className="project-drawer"><header><div><small>当前项目</small><strong>项目内容</strong></div><button type="button" aria-label="关闭项目内容" onClick={() => setProjectDrawerOpen(false)}><X size={18}/></button></header><p className="project-root" title={projectFileRoot}>{projectFileRoot}</p><div className="project-drawer-body"><nav>{projectFiles.map(entry => <button type="button" className={projectFilePreview?.relativePath === entry.relativePath ? 'active' : ''} style={{ paddingLeft: `${12 + Math.min(entry.depth, 5) * 14}px` }} disabled={entry.kind === 'directory'} onClick={() => entry.kind === 'file' && void previewProjectFile(entry.relativePath)} key={entry.relativePath}>{entry.kind === 'directory' ? <Files size={14}/> : <FileText size={14}/>}<span>{entry.name}</span></button>)}</nav><section>{projectFilePreview ? <><header><strong>{projectFilePreview.name}</strong><small>{projectFilePreview.size.toLocaleString()} 字节</small></header>{projectFilePreview.previewable ? <pre>{projectFilePreview.content}</pre> : <div className="preview-unavailable"><FileText size={32}/><strong>请在对应工作区打开</strong><p>这里先显示文件位置和类型；PDF、图片和办公文档仍由专用阅读或编辑界面处理。</p></div>}</> : <div className="preview-unavailable"><Files size={32}/><strong>选择一个文件预览</strong><p>项目内容只读展示，不会移动或修改原文件。</p></div>}</section></div></aside></div>}
     {returnGreetingOpen && researchResume && <ResearchReturnGreeting resume={researchResume} onDismiss={() => setReturnGreetingOpen(false)} onContinue={continueLastResearch}/>}
     {citationDialog && <CitationDialog item={citationDialog.item} reason={citationDialog.reason} onClose={() => setCitationDialog(undefined)}/>}
     <input ref={fileInput} className="hidden" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xlsx,.xls,.md,.txt" onChange={e => addFiles(e.target.files)} />
@@ -1777,6 +1935,7 @@ function App() {
     {editingAnnotation && <AnnotationEditModal annotation={editingAnnotation} onClose={() => setEditingAnnotation(undefined)} onSave={(category, note) => void reviseAnnotation(editingAnnotation, category, note)}/>}
     {(settingsOpen || (settingsLoaded && aiOnboardingRequired)) && <SettingsModal
       settings={aiSettings}
+      modelRoles={modelRoles}
       uiSettings={uiSettings}
       credentialState={credentialState}
       onboarding={aiOnboardingRequired}
@@ -1804,6 +1963,135 @@ function App() {
     />} 
     {toast && <div className="toast"><Check size={16}/><span>{toast}</span>{archivedAnnotation && <button type="button" onClick={() => void restoreArchivedAnnotation()}><RotateCcw size={14}/>撤销</button>}</div>}
   </div>
+}
+
+const workbenchStatusLabels: Record<DesktopWorkbenchRunStatus, string> = {
+  draft: '草稿', awaiting_authorization: '等待授权', running: '运行中', replanning: '重新规划',
+  waiting_human: '等待你决定', paused: '已暂停', verifying: '正在验收', completed: '已完成',
+  failed: '失败', cancelled: '已取消',
+}
+
+function WorkbenchHome({ dashboard, session, modelRoles, busy, error, onSend, onOpenProject, onOpenRun }: {
+  dashboard?: DesktopWorkbenchDashboard
+  session?: DesktopAgentSession
+  modelRoles?: DesktopAppSettings['modelRoles']
+  busy: boolean
+  error: string
+  onSend: (input: { objective: string; acceptance: string[]; taskType: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; workflowLabel?: string; modelRole?: 'planner' | 'executor' | 'vision' | 'verifier' }) => void
+  onOpenProject: () => void
+  onOpenRun: (id: string) => void
+}) {
+  const workflows = [
+    { id: 'literature-search', label: '查找相应的文献', prompt: '请说明研究主题、关键词或需要解决的问题。', type: 'research' as const },
+    { id: 'literature-summary', label: '文献分析总结', prompt: '请说明要分析的文献，以及希望重点比较的内容。', type: 'research' as const },
+    { id: 'method-summary', label: '实验方法指定总结', prompt: '请说明实验目标、已有条件和想了解的方法。', type: 'research' as const },
+    { id: 'skill-teaching', label: '实验技能教学', prompt: '请说明要学习的技能、当前基础和可用设备。', type: 'engineering' as const },
+  ]
+  const [objective, setObjective] = useState('')
+  const [selectedWorkflow, setSelectedWorkflow] = useState<(typeof workflows)[number]>()
+  const [plusOpen, setPlusOpen] = useState(false)
+  const modelOptions = (Object.entries(modelRoles ?? {}) as Array<[keyof DesktopAppSettings['modelRoles'], DesktopAppSettings['modelRoles'][keyof DesktopAppSettings['modelRoles']]]>).filter(([role, profile]) => role !== 'embedding' && profile.model)
+  const [modelRole, setModelRole] = useState<'planner' | 'executor' | 'vision' | 'verifier' | ''>('')
+  const sessionRuns = (dashboard?.runs ?? []).filter(run => !session?.id || run.sessionId === session.id)
+  const submit = () => {
+    if (!objective.trim() || busy) return
+    onSend({ objective: objective.trim(), acceptance: [], taskType: selectedWorkflow?.type ?? 'research', workflowLabel: selectedWorkflow?.label, modelRole: modelRole || undefined })
+    setObjective('')
+  }
+  return <section className="workbench-page agent-chat-page">
+    <div className="agent-chat-scroll">
+      {!session?.turns.length && <section className="agent-chat-welcome"><div className="agent-welcome-mark"><Sparkles/></div><h1>今天想研究什么？</h1><p>直接描述任务，或选择一个常用工作流。小何会先整理步骤和需要的权限，再开始操作当前项目。</p><div className="workflow-starters">{workflows.map(workflow => <button type="button" key={workflow.id} onClick={() => { setSelectedWorkflow(workflow); setObjective('') }}><strong>{workflow.label}</strong><small>{workflow.prompt}</small><ChevronRight size={16}/></button>)}</div></section>}
+      {session?.turns.map(turn => <article className={`agent-message ${turn.role}`} key={turn.id}><div className="agent-avatar">{turn.role === 'user' ? '你' : turn.role === 'tool' ? <Settings2 size={15}/> : <Sparkles size={15}/>}</div><div><header>{turn.role === 'user' ? '你' : turn.role === 'tool' ? '任务过程' : '小何'}<time>{new Date(turn.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header><p>{turn.content}</p></div></article>)}
+      {sessionRuns.map(run => <button type="button" className="agent-run-card" key={run.id} onClick={() => onOpenRun(run.id)}><i className={`run-state ${run.status}`}/><span><strong>{run.objective}</strong><small>{workbenchStatusLabels[run.status]} · 点击查看步骤、授权与成果</small></span><ChevronRight size={17}/></button>)}
+      {error && <p className="workbench-error"><AlertTriangle size={16}/>{error}</p>}
+    </div>
+    <div className="agent-composer-wrap"><div className="agent-composer">
+      {selectedWorkflow && <div className="selected-workflow"><Sparkles size={14}/><span>{selectedWorkflow.label}</span><button type="button" aria-label="取消固定工作流" onClick={() => setSelectedWorkflow(undefined)}><X size={13}/></button></div>}
+      <textarea autoFocus value={objective} onChange={event => setObjective(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit() } }} placeholder={selectedWorkflow?.prompt ?? '向小何说明你的研究任务…'}/>
+      <footer><div className="composer-left"><div className="composer-plus"><button type="button" className="composer-icon" aria-label="添加内容或选择工作流" onClick={() => setPlusOpen(open => !open)}><Plus size={18}/></button>{plusOpen && <div className="composer-plus-menu"><button type="button" onClick={() => { setPlusOpen(false); onOpenProject() }}><Files size={16}/><span><strong>项目内容</strong><small>浏览并预览当前仓库文件</small></span></button><div>固定工作流</div>{workflows.map(workflow => <button type="button" key={workflow.id} onClick={() => { setSelectedWorkflow(workflow); setPlusOpen(false) }}><Sparkles size={15}/><span>{workflow.label}</span></button>)}</div>}</div><select aria-label="选择模型" value={modelRole} onChange={event => setModelRole(event.target.value as typeof modelRole)}><option value="">默认模型</option>{modelOptions.map(([role, profile]) => <option value={role} key={role}>{profile.model}</option>)}</select></div><button type="button" className="composer-send" disabled={busy || !objective.trim()} onClick={submit}>{busy ? <RotateCcw className="spin" size={17}/> : <ArrowRight size={18}/>}</button></footer>
+    </div><p className="composer-note"><ShieldCheck size={13}/>只在你确认的项目范围内工作；重要结论和高风险操作会请你确认。</p></div>
+  </section>
+}
+
+
+function splitScopeLines(value: string) { return value.split(/\r?\n|,/).map(item => item.trim()).filter(Boolean) }
+
+function WorkbenchRuns({
+  dashboard, run, busy, error, onOpen, onAuthorize, onNext, onPause, onResume, onCancel, onDecision, onSaveResult,
+}: {
+  dashboard?: DesktopWorkbenchDashboard
+  run?: DesktopWorkbenchRun
+  busy: boolean
+  error: string
+  onOpen: (id: string) => void
+  onAuthorize: (runId: string, scope: DesktopWorkbenchGrantScope) => void
+  onNext: (id: string) => void
+  onPause: (id: string) => void
+  onResume: (id: string) => void
+  onCancel: (id: string) => void
+  onDecision: (decisionId: string, approved: boolean) => void
+  onSaveResult: (runId: string, resultId: string, content: string, reviewState?: 'draft' | 'confirmed') => void
+}) {
+  const projectRoot = dashboard?.project.vaultPath ?? ''
+  const [readRoots, setReadRoots] = useState(projectRoot)
+  const [writeRoots, setWriteRoots] = useState(projectRoot)
+  const [domains, setDomains] = useState('')
+  const [commands, setCommands] = useState('')
+  const [commandPrefixes, setCommandPrefixes] = useState('')
+  const [applications, setApplications] = useState('')
+  const [allowModelFileContent, setAllowModelFileContent] = useState(false)
+  const [allowScreenshots, setAllowScreenshots] = useState(false)
+  const [resultDrafts, setResultDrafts] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (projectRoot) { setReadRoots(projectRoot); setWriteRoots(projectRoot) }
+    setDomains(run?.preflight?.permissionRequirements.domains.join('\n') ?? '')
+    setApplications(run?.preflight?.permissionRequirements.applications.join('\n') ?? '')
+    setCommands(run?.preflight?.permissionRequirements.commands?.join('\n') ?? '')
+  }, [projectRoot, run?.id])
+  useEffect(() => { setResultDrafts(Object.fromEntries((run?.results ?? []).map(result => [result.id, result.content]))) }, [run?.id, run?.results.map(result => `${result.id}:${result.version}`).join('|')])
+  const pending = run?.decisions.filter(decision => decision.status === 'pending') ?? []
+  return <section className="workbench-page run-console">
+    <aside className="run-list"><header><p className="section-kicker">任务过程</p><h2>对话中的任务</h2></header>{dashboard?.runs.map(item => <button className={run?.id === item.id ? 'active' : ''} key={item.id} onClick={() => onOpen(item.id)}><span><strong>{item.objective}</strong><small>{new Date(item.updatedAt).toLocaleString()}</small></span><em>{workbenchStatusLabels[item.status]}</em></button>)}{!dashboard?.runs.length && <p>还没有需要执行的任务。</p>}</aside>
+    <div className="run-stage">{run ? <>
+      <header className="run-heading"><div><p className="section-kicker">RUN {run.id.slice(0, 8)}</p><h1>{run.objective}</h1><span className={`run-status ${run.status}`}>{workbenchStatusLabels[run.status]}</span></div><div className="run-actions">{run.status === 'running' && <><button onClick={() => onNext(run.id)} disabled={busy}>{busy ? '运行中…' : '开始 / 继续运行'}</button><button onClick={() => onPause(run.id)} disabled={busy}>暂停</button></>}{run.status === 'paused' && <button onClick={() => onResume(run.id)} disabled={busy}>恢复</button>}{!['completed', 'failed', 'cancelled'].includes(run.status) && <button className="danger" onClick={() => onCancel(run.id)} disabled={busy}>取消</button>}</div></header>
+      {error && <p className="workbench-error"><AlertTriangle size={16}/>{error}</p>}
+      {run.status === 'awaiting_authorization' && <section className="permission-review"><header><div><ShieldCheck size={21}/><span><strong>任务级授权</strong><small>删掉不需要的范围。授权只属于这一个 Run。</small></span></div><em>执行前必审</em></header>
+        <div className="permission-grid"><label>可读取目录<textarea value={readRoots} onChange={event => setReadRoots(event.target.value)}/></label><label>可写入目录<textarea value={writeRoots} onChange={event => setWriteRoots(event.target.value)}/></label><label>允许访问的域名<textarea value={domains} onChange={event => setDomains(event.target.value)} placeholder="doi.org&#10;arxiv.org"/></label><label>允许执行的程序<textarea value={commands} onChange={event => setCommands(event.target.value)} placeholder="git&#10;node&#10;pwsh"/></label><label>允许的命令前缀<textarea value={commandPrefixes} onChange={event => setCommandPrefixes(event.target.value)} placeholder="git status&#10;npm test"/></label><label>允许控制的应用<textarea value={applications} onChange={event => setApplications(event.target.value)} placeholder="vscode&#10;word&#10;browser"/></label></div>
+        <div className="permission-toggles"><label><input type="checkbox" checked={allowModelFileContent} onChange={event => setAllowModelFileContent(event.target.checked)}/>允许把授权文件内容发送给模型</label><label><input type="checkbox" checked={allowScreenshots} onChange={event => setAllowScreenshots(event.target.checked)}/>允许截取已授权窗口的必要区域</label></div>
+        <footer><p>删除/覆盖原件、发布、上传、安装依赖、正式科研结论等仍会再次确认。</p><button className="workbench-primary" disabled={busy || (!splitScopeLines(readRoots).length && !splitScopeLines(writeRoots).length)} onClick={() => onAuthorize(run.id, { readRoots: splitScopeLines(readRoots), writeRoots: splitScopeLines(writeRoots), domains: splitScopeLines(domains), commands: splitScopeLines(commands), commandPrefixes: splitScopeLines(commandPrefixes), applications: splitScopeLines(applications), allowModelFileContent, allowScreenshots })}>确认范围并开始</button></footer>
+      </section>}
+      {pending.map(decision => <section className="decision-card" key={decision.id}><header><AlertTriangle size={20}/><div><strong>需要你决定</strong><p>{decision.prompt}</p></div></header><footer><button onClick={() => onDecision(decision.id, false)} disabled={busy}>拒绝 / 跳过</button><button className="workbench-primary" onClick={() => onDecision(decision.id, true)} disabled={busy}>批准并继续</button></footer></section>)}
+      <section className="run-track"><header><div><p className="section-kicker">第 {run.planVersion} 版步骤</p><h2>执行过程</h2></div><span>{run.steps.filter(step => step.status === 'completed').length} / {run.steps.length}</span></header>{run.steps.map((step, index) => <article className={`run-step ${step.status}`} key={step.id}><div className="step-index"><span>{step.status === 'completed' ? <Check size={14}/> : index + 1}</span></div><div><header><strong>{step.title}</strong><em>{step.kind === 'tool' ? '使用项目工具' : step.kind === 'model' ? '整理与分析' : step.kind === 'verify' ? '核对结果' : '需要你决定'}</em></header><p>{step.rationale || '按计划执行并保留结果证据。'}</p>{step.error && <small className="step-error">{step.error}</small>}<small>{step.status === 'completed' ? '已完成' : step.status === 'running' ? '正在进行' : step.status === 'waiting_confirmation' ? '等待你确认' : step.status === 'failed' ? '未成功' : '等待开始'}{step.highRisk ? ' · 开始前需要确认' : ''}</small></div></article>)}</section>
+      <div className="run-bottom-grid"><section><h3>完成要求</h3>{run.acceptance.length ? <ol>{run.acceptance.map(item => <li key={item}>{item}</li>)}</ol> : <p>完成全部步骤，并留下可回查的结果。</p>}{run.latestEvaluation && <div className={`evaluation ${run.latestEvaluation.status}`}><strong>{Math.round(run.latestEvaluation.score * 100)}%</strong><span>{run.latestEvaluation.summary}</span></div>}</section><section><h3>成果文件</h3>{run.artifacts.filter(item => item.kind !== 'report').length ? run.artifacts.filter(item => item.kind !== 'report').map(item => <article key={item.id}><FileText size={16}/><span><strong>{item.label}</strong><small>{item.path ?? item.kind}</small></span></article>) : <p>生成的新文件会在这里显示，原文件不会被覆盖。</p>}</section>{run.results.length > 0 && <section className="result-workspace"><header><div><p className="section-kicker">可以继续修改</p><h3>任务结果</h3></div><span>旧版本不会被覆盖</span></header>{run.results.map(result => <article className="editable-result" key={result.id}><div><strong>{result.label}</strong><small>版本 {result.version} · {result.reviewState === 'confirmed' ? '已人工确认' : '草稿待确认'}</small></div><textarea value={resultDrafts[result.id] ?? result.content} onChange={event => setResultDrafts(current => ({ ...current, [result.id]: event.target.value }))}/><footer><button disabled={busy || (resultDrafts[result.id] ?? result.content) === result.content} onClick={() => onSaveResult(run.id, result.id, resultDrafts[result.id] ?? result.content, 'draft')}>保存新版本</button><button className="workbench-primary" disabled={busy || result.reviewState === 'confirmed'} onClick={() => onSaveResult(run.id, result.id, resultDrafts[result.id] ?? result.content, 'confirmed')}>确认这个结果</button></footer></article>)}</section>}</div>
+    </> : <div className="run-placeholder"><CircleDot size={34}/><h2>选择一项任务</h2><p>这里会显示它需要的权限、执行步骤、待确认事项和成果。</p></div>}</div>
+  </section>
+}
+
+const capabilityMaturityLabels: Record<DesktopCapabilityPack['maturity'], string> = { not_connected: '未接入', missing_tools: '缺少工具', trial: '可试用', available: '可用', verified: '已验证' }
+
+function WorkbenchProject({ dashboard, packs, busy, error, onTogglePack, onSettings }: { dashboard?: DesktopWorkbenchDashboard; packs: DesktopCapabilityPack[]; busy: boolean; error: string; onTogglePack: (id: string, enabled: boolean) => void; onSettings: () => void }) {
+  const project = dashboard?.project
+  return <section className="workbench-page project-page"><header className="project-heading"><div><p className="section-kicker">项目设置</p><h1>{project?.name ?? '当前项目'}</h1><p>这里选择项目常用工作流；对话、记忆、文件范围和任务记录不会与其他项目混在一起。</p></div><button className="outline-button" onClick={onSettings}><Settings2 size={16}/>模型与本机设置</button></header>
+    {error && <p className="workbench-error"><AlertTriangle size={16}/>{error}</p>}
+    <div className="project-facts"><article><span>项目类型</span><strong>{project?.kind ?? 'research'}</strong></article><article><span>项目文件夹</span><strong title={project?.vaultPath}>{project?.vaultPath ?? '尚未打开'}</strong></article><article><span>关联文件夹</span><strong>{project?.externalRoots.length ?? 0}</strong></article></div>
+    <header className="capability-heading"><div><p className="section-kicker">专项工作流</p><h2>这个项目可以使用的科研能力</h2><p>把经常使用的能力加入当前项目；缺少本机工具时会明确提示，也不会自动开始任务。</p></div><div className="maturity-legend"><span><i className="trial"/>可试用</span><span><i className="missing_tools"/>缺少工具</span><span><i className="not_connected"/>暂不可用</span></div></header>
+    <div className="capability-grid">{packs.map((pack, index) => <article className={`${pack.enabled ? 'enabled' : ''} ${pack.maturity}`} key={pack.id}><header><span className="capability-number">{String(index + 1).padStart(2, '0')}</span><div><small>{pack.category}</small><h3>{pack.name}</h3></div><em className={pack.maturity}>{capabilityMaturityLabels[pack.maturity]}</em></header><p>{pack.description}</p><div className="capability-outputs"><span>可以得到</span>{pack.outputs.map(output => <code key={output}>{output}</code>)}</div><div className={`capability-preflight ${pack.preflight.ready ? 'ready' : 'blocked'}`}>{pack.preflight.ready ? <Check size={14}/> : <AlertTriangle size={14}/>}<span>{pack.preflight.message}</span></div>{pack.highRisk.length > 0 && <small className="capability-risk"><AlertTriangle size={13}/>其中有些操作会在开始前请你确认</small>}<footer><span>{pack.enabled ? (pack.preflight.ready ? '已加入当前项目' : '已选择，但还缺少本机工具') : '尚未加入当前项目'}</span><button disabled={busy} onClick={() => onTogglePack(pack.id, !pack.enabled)}>{pack.enabled ? '移除' : '加入'}</button></footer></article>)}</div>
+  </section>
+}
+
+function ResearchAssetHub({ counts, onOpen }: { counts: { sources: number; reviews: number; tasks: number; reports: number }; onOpen: (view: AppView) => void }) {
+  const entries: Array<{ view: AppView; title: string; description: string; icon: React.ReactNode; count?: number }> = [
+    { view: 'today', title: '今日科研', description: '继续上次的工作，查看今天要处理的任务。', icon: <CircleDot/>, count: counts.tasks },
+    { view: 'research-workspace', title: '课题与实验', description: '记录研究问题、里程碑、实验过程和结果。', icon: <FlaskConical/> },
+    { view: 'research-review', title: '复盘与写作', description: '整理阶段进展、研究结论和报告草稿。', icon: <Pencil/>, count: counts.reports },
+    { view: 'sources', title: '文献与资料', description: '导入、阅读和管理论文及其他研究文件。', icon: <Files/>, count: counts.sources },
+    { view: 'dashboard', title: '文献综述', description: '筛选多篇文献，整理证据并撰写综述。', icon: <BookOpen/>, count: counts.reviews },
+    { view: 'evidence', title: '证据关系', description: '查看结论由哪些原文、数据和实验结果支持。', icon: <Link2/> },
+    { view: 'knowledge', title: '知识图谱', description: '整理研究对象、概念和它们之间的关系。', icon: <Network/> },
+    { view: 'actions', title: '研究任务', description: '管理待办、等待事项和需要继续的工作。', icon: <ClipboardCheck/>, count: counts.tasks },
+    { view: 'reader', title: '精读工作区', description: '对照原文与整理稿，查看批注和证据位置。', icon: <BookOpen/> },
+  ]
+  return <section className="workbench-page research-hub"><header><div><p className="section-kicker">科研工作区</p><h1>继续你的科研工作</h1><p>阅读论文、记录实验、整理证据，或继续上次的研究工作。</p></div><FlaskConical size={42}/></header><div className="research-hub-grid">{entries.map(entry => <button key={entry.view} onClick={() => onOpen(entry.view)}><i>{entry.icon}</i><span><strong>{entry.title}</strong><small>{entry.description}</small></span>{entry.count !== undefined && <em>{entry.count}</em>}<ChevronRight size={17}/></button>)}</div></section>
 }
 
 function Nav({ icon, label, active, count, onClick }: { icon: React.ReactNode; label: string; active?: boolean; count?: number; onClick?: () => void }) { return <button aria-label={count === undefined ? label : `${label} ${count}`} title={label} onClick={onClick} className={`nav-item ${active ? 'active' : ''}`}>{icon}<span>{label}</span>{count !== undefined && <em>{count}</em>}</button> }
@@ -5093,7 +5381,7 @@ function AgentModalV2({
     const desktop = window.readerDesktop
     const objective = question.trim() || turns[turns.length - 1]?.question || ''
     if (!desktop || !objective) {
-      setNotice(desktop ? '请先输入一个明确的研究目标。' : '持久化 Planner 需要在桌面客户端中运行。')
+      setNotice(desktop ? '请先输入一个明确的研究目标。' : '保存对话计划需要在桌面客户端中运行。')
       return
     }
     setBusy(true)
@@ -5222,7 +5510,7 @@ function AgentModalV2({
       </div>
       {notice && <p className="agent-notice">{notice}</p>}
       {agentPlan && <section className="agent-plan-board">
-        <header><div><span>持久化 Planner</span><h3>{agentPlan.objective}</h3></div><b>{agentPlan.status}</b></header>
+        <header><div><span>这次任务的步骤</span><h3>{agentPlan.objective}</h3></div><b>{agentPlan.status}</b></header>
         <div>{agentPlan.steps.map(step => <article key={step.id} className={step.status}>
           <span>{String(step.position + 1).padStart(2, '0')}</span>
           <div><strong>{step.title}</strong><p>{step.rationale}</p><small>{step.toolName} · {step.requiresConfirmation ? '写入研究库，必须确认' : '只读工具'}</small>{step.error && <em>{step.error}</em>}</div>
@@ -5231,7 +5519,7 @@ function AgentModalV2({
             {step.status === 'proposed' && step.requiresConfirmation && <><button onClick={() => void reviewPlanStep(step.id, 'confirm')}>确认</button><button onClick={() => void reviewPlanStep(step.id, 'dismiss')}>跳过</button></>}
           </aside>
         </article>)}</div>
-        <footer><span>所有执行事件都写入只追加审计日志。</span><button className="primary-button" disabled={busy || agentPlan.status === 'completed'} onClick={() => void runExecutionPlan()}>运行只读与已确认步骤</button></footer>
+        <footer><span>每一步的结果都会保存在当前项目中，方便之后回查。</span><button className="primary-button" disabled={busy || agentPlan.status === 'completed'} onClick={() => void runExecutionPlan()}>继续已确认的步骤</button></footer>
       </section>}
       <details className="agent-memory-panel">
         <summary>长期记忆 <span>{agentMemory.filter(item => item.reviewState === 'confirmed').length} 条已确认</span></summary>
@@ -5271,8 +5559,12 @@ function AgentModalV2({
   </section>
   return embedded ? panel : <div className="modal-backdrop">{panel}</div>
 }
+type ModelRoleKey = keyof DesktopAppSettings['modelRoles']
+type ModelRoleSaveDraft = DesktopAppSettings['modelRoles'][ModelRoleKey] & { apiKey?: string; clearApiKey?: boolean }
+
 function SettingsModal({
   settings,
+  modelRoles,
   uiSettings,
   credentialState,
   onboarding = false,
@@ -5281,15 +5573,26 @@ function SettingsModal({
   onSave,
 }: {
   settings: AISettings
+  modelRoles?: DesktopAppSettings['modelRoles']
   uiSettings: UISettings
   credentialState: 'empty' | 'encrypted' | 'unavailable'
   onboarding?: boolean
   workspaceOpen: boolean
   onClose: () => void
-  onSave: (settings: AISettingsSaveInput, uiSettings: UISettings) => Promise<AISettings>
+  onSave: (settings: AISettingsSaveInput, uiSettings: UISettings, roles?: Partial<Record<ModelRoleKey, ModelRoleSaveDraft>>) => Promise<AISettings>
 }) {
-  const [tab, setTab] = useState<'ai' | 'appearance' | 'vault' | 'plugins'>('ai')
+  const [tab, setTab] = useState<'ai' | 'models' | 'appearance' | 'vault' | 'plugins'>('ai')
   const [draft, setDraft] = useState<AISettingsSaveInput>({ ...defaultAISettings, ...settings, apiKey: '', clearApiKey: false })
+  const [roleDrafts, setRoleDrafts] = useState<Record<ModelRoleKey, ModelRoleSaveDraft>>(() => {
+    const base = { providerId: settings.providerId, baseUrl: settings.baseUrl, model: settings.model, hasCredential: settings.hasCredential, capabilities: ['text'], fallbackRole: '' as const }
+    return {
+      planner: { ...base, ...(modelRoles?.planner ?? {}), apiKey: '', clearApiKey: false },
+      executor: { ...base, ...(modelRoles?.executor ?? {}), apiKey: '', clearApiKey: false },
+      vision: { ...base, ...(modelRoles?.vision ?? {}), model: modelRoles?.vision.model ?? '', capabilities: ['vision'], apiKey: '', clearApiKey: false },
+      verifier: { ...base, ...(modelRoles?.verifier ?? {}), fallbackRole: modelRoles?.verifier.fallbackRole ?? 'planner', apiKey: '', clearApiKey: false },
+      embedding: { ...base, ...(modelRoles?.embedding ?? {}), model: modelRoles?.embedding.model ?? '', capabilities: ['embedding'], apiKey: '', clearApiKey: false },
+    }
+  })
   const [providers, setProviders] = useState<DesktopLLMProvider[]>(fallbackLLMProviders)
   const [connectionState, setConnectionState] = useState<{ kind: 'idle' | 'testing' | 'success' | 'error'; message: string; latencyMs?: number }>({ kind: 'idle', message: '保存前先测试一次，确认地址、模型和密钥确实可用。' })
   const [uiDraft, setUIDraft] = useState({ ...defaultUISettings, ...uiSettings })
@@ -5527,7 +5830,10 @@ function SettingsModal({
       if (!draft.baseUrl.trim() || !draft.model.trim()) {
         throw new Error('请完整填写服务地址和模型名称。')
       }
-      const saved = await onSave({ ...draft, baseUrl: draft.baseUrl.trim(), model: draft.model.trim(), apiKey: draft.apiKey?.trim() || undefined }, uiDraft)
+      const normalizedRoles = Object.fromEntries((Object.keys(roleDrafts) as ModelRoleKey[]).map(role => [role, {
+        ...roleDrafts[role], baseUrl: roleDrafts[role].baseUrl.trim(), model: roleDrafts[role].model.trim(), apiKey: roleDrafts[role].apiKey?.trim() || undefined,
+      }])) as Partial<Record<ModelRoleKey, ModelRoleSaveDraft>>
+      const saved = await onSave({ ...draft, baseUrl: draft.baseUrl.trim(), model: draft.model.trim(), apiKey: draft.apiKey?.trim() || undefined }, uiDraft, normalizedRoles)
       if (onboarding && !hasConfiguredAI(saved)) {
         throw new Error('首次使用必须保存可用的 API Key；你的研究库内容不会在这一步发送。')
       }
@@ -5546,6 +5852,7 @@ function SettingsModal({
     </header>
     <nav className="settings-tabs">
       <button className={tab === 'ai' ? 'active' : ''} onClick={() => setTab('ai')}><Sparkles size={14}/> AI 与翻译</button>
+      <button className={tab === 'models' ? 'active' : ''} onClick={() => setTab('models')}><CircleDot size={14}/> 模型角色</button>
       <button className={tab === 'vault' ? 'active' : ''} onClick={() => setTab('vault')}><HardDrive size={14}/> Research Vault</button>
       <button className={tab === 'plugins' ? 'active' : ''} onClick={() => setTab('plugins')}><Blocks size={14}/> 插件</button>
       <button className={tab === 'appearance' ? 'active' : ''} onClick={() => setTab('appearance')}><Settings2 size={14}/> 界面与阅读</button>
@@ -5641,6 +5948,22 @@ function SettingsModal({
         </select></label>
         <div className={`credential-state ${credentialState}`}><ShieldCheck size={16}/><div><strong>{credentialState === 'encrypted' ? '密钥只在主进程解密' : credentialState === 'unavailable' ? '系统凭据暂不可用' : '密钥等待加密保存'}</strong><small>渲染界面、研究库、导出文件、README 和源码都不会得到明文密钥。</small></div></div>
         <label className="toggle-label"><input type="checkbox" checked={draft.allowFullDocument} onChange={event => setDraft({ ...draft, allowFullDocument: event.target.checked })}/>允许在每次再次确认后，发送整篇派生 Markdown 做章节识别</label>
+      </section> : tab === 'models' ? <section className="settings-panel model-role-settings">
+        <div className="settings-intro"><strong>高级模型分工</strong><p>通常只需要配置上面的默认模型。需要时，也可以为任务规划、内容处理、图片理解、结果检查和资料检索分别选择模型。</p></div>
+        <div className="model-role-grid">{(([
+          ['planner', '任务规划', '整理目标和安排步骤'], ['executor', '内容处理', '提取、分类和执行明确步骤'], ['vision', '图片理解', '读取你授权的图片或应用画面'], ['verifier', '结果检查', '独立核对任务是否完成'], ['embedding', '资料检索', '在项目资料中进行语义检索'],
+        ] as Array<[ModelRoleKey, string, string]>)).map(([role, label, description]) => {
+          const profile = roleDrafts[role]
+          return <article key={role}><header><div><span>可选设置</span><h3>{label}</h3><p>{description}</p></div><em>{profile.hasCredential || profile.apiKey ? '已配置' : role === 'verifier' && profile.fallbackRole === 'planner' ? '使用任务规划模型' : '使用默认模型'}</em></header>
+            <label>服务商<select value={profile.providerId} onChange={event => { const provider = providers.find(item => item.id === event.target.value); setRoleDrafts(current => ({ ...current, [role]: { ...current[role], providerId: event.target.value, baseUrl: provider?.baseUrl ?? current[role].baseUrl, hasCredential: false, apiKey: '', clearApiKey: false } })) }}>{providers.map(provider => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
+            <label>Base URL<input value={profile.baseUrl} onChange={event => setRoleDrafts(current => ({ ...current, [role]: { ...current[role], baseUrl: event.target.value, hasCredential: false, apiKey: '', clearApiKey: false } }))}/></label>
+            <label>模型名称<input value={profile.model} placeholder={role === 'embedding' ? '本地索引可留空' : '填写服务商当前可用模型'} onChange={event => setRoleDrafts(current => ({ ...current, [role]: { ...current[role], model: event.target.value } }))}/></label>
+            <label>API Key<div className="api-key-row"><input type="password" autoComplete="off" value={profile.apiKey ?? ''} placeholder={profile.hasCredential ? '已加密保存；留空继续使用' : '需要时填写'} onChange={event => setRoleDrafts(current => ({ ...current, [role]: { ...current[role], apiKey: event.target.value, clearApiKey: false } }))}/>{(profile.hasCredential || profile.apiKey) && <button type="button" onClick={() => setRoleDrafts(current => ({ ...current, [role]: { ...current[role], apiKey: '', hasCredential: false, clearApiKey: true } }))}>清除</button>}</div></label>
+            <div className="role-pricing"><label>输入价 / 百万 Token<input type="number" min="0" step="0.01" value={profile.inputPricePerMillion ?? ''} onChange={event => setRoleDrafts(current => ({ ...current, [role]: { ...current[role], inputPricePerMillion: event.target.value ? Number(event.target.value) : undefined } }))}/></label><label>输出价 / 百万 Token<input type="number" min="0" step="0.01" value={profile.outputPricePerMillion ?? ''} onChange={event => setRoleDrafts(current => ({ ...current, [role]: { ...current[role], outputPricePerMillion: event.target.value ? Number(event.target.value) : undefined } }))}/></label></div>
+            {role === 'verifier' && <label className="toggle-label"><input type="checkbox" checked={profile.fallbackRole === 'planner'} onChange={event => setRoleDrafts(current => ({ ...current, verifier: { ...current.verifier, fallbackRole: event.target.checked ? 'planner' : '' } }))}/>没有单独配置时，使用任务规划模型</label>}
+          </article>
+        })}</div>
+        <p className="model-role-note"><ShieldCheck size={15}/>凭据按服务商与地址分别加密；Renderer 只能看到“是否已配置”，看不到明文。</p>
       </section> : tab === 'vault' ? <section className="settings-panel vault-settings">
         <div className="settings-intro">
           <strong>数据库负责完整性，开放文件负责长期可读</strong>
@@ -5669,7 +5992,7 @@ function SettingsModal({
         </details>
         <section className="migration-backup-list">
           <header><div><ShieldCheck size={17}/><strong>升级前恢复快照</strong></div><span>{migrationBackups.length} 份</span></header>
-          {migrationBackups.map(backup => <article key={backup.id}><div><strong>schema v{backup.sourceVersion} → v{backup.targetVersion}</strong><small>{new Date(backup.createdAt).toLocaleString()} · SHA-256 {backup.databaseSha256.slice(0, 12)}…</small></div><em className={backup.valid ? 'valid' : 'invalid'}>{backup.valid ? '校验通过' : '校验失败'}</em></article>)}
+          {migrationBackups.map(backup => <article key={backup.id}><div><strong>升级前备份 {backup.sourceVersion} → {backup.targetVersion}</strong><small>{new Date(backup.createdAt).toLocaleString()}</small></div><em className={backup.valid ? 'valid' : 'invalid'}>{backup.valid ? '可以恢复' : '备份校验失败'}</em></article>)}
           {!migrationBackups.length && <p>当前研究库没有发生过需要升级的 schema；首次升级前会自动创建只读快照。</p>}
           <small>回滚不会在应用运行时自动覆盖数据库。需要恢复时先退出应用，再按 `docs/migration/v1-rollback.md` 执行带校验的 PowerShell 脚本。</small>
         </section>
@@ -5753,7 +6076,7 @@ function SettingsModal({
       </section>}
     </div>
     {error && <p className="settings-save-error">{error}</p>}
-    <footer>{!onboarding && <button className="outline-button" disabled={busy} onClick={onClose}>取消</button>}<button className="primary-button" disabled={busy} onClick={() => void save()}>{busy ? '正在保存…' : onboarding ? '保存并进入 H’s 科研助手' : '保存本机设置'}</button></footer>
+    <footer>{!onboarding && <button className="outline-button" disabled={busy} onClick={onClose}>取消</button>}<button className="primary-button" disabled={busy} onClick={() => void save()}>{busy ? '正在保存…' : onboarding ? '保存并进入小何的科研助手' : '保存本机设置'}</button></footer>
   </section></div>
 }
 

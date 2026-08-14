@@ -6646,7 +6646,7 @@ function renderReviewMarkdown(document) {
   const lines = [
     '---',
     `review_document_id: "${document.id}"`,
-    `exported_from: "H’s 科研助手"`,
+    `exported_from: "小何的科研助手"`,
     '---',
     '',
     `# ${document.title}`,

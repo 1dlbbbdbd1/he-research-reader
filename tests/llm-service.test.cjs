@@ -82,6 +82,23 @@ test('正式补全只读取主进程活动凭据并返回结构化用量', async
   await assert.rejects(() => service.complete({ purpose: 'connection-test', messages: [{ role: 'user', content: 'x' }] }), /用途无效/)
 })
 
+test('对话中选择的模型配置会真正用于后续调用', async () => {
+  let request
+  const service = new LLMService({
+    settingsStore: settingsStoreDouble({
+      loadModelRoleConfig: role => ({ providerId: 'openai', baseUrl: 'https://api.openai.com/v1', model: `${role}-selected-model`, apiKey: `${role}-secret` }),
+    }),
+    fetchImpl: async (url, options) => {
+      request = { url, options }
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'selected' } }] }) }
+    },
+  })
+  const result = await service.complete({ purpose: 'research-agent', role: 'planner', profileRole: 'executor', messages: [{ role: 'user', content: 'question' }] })
+  assert.equal(JSON.parse(request.options.body).model, 'executor-selected-model')
+  assert.equal(request.options.headers.Authorization, 'Bearer executor-secret')
+  assert.equal(result.model, 'executor-selected-model')
+})
+
 test('Claude 使用原生 Messages 协议并把 system 指令放到顶层', async () => {
   let request
   const service = new LLMService({

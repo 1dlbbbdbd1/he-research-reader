@@ -1,0 +1,4 @@
+{
+  "description": "Uses the current structured-reading version and a deterministic local translator stub.",
+  "expected": ["title and heading order preserved", "math skipped", "DOI and citation markers preserved", "segment cache persisted", "versioned Markdown exported"]
+}

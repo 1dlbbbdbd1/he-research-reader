@@ -73,7 +73,7 @@ function yamlValue(value) {
 }
 
 function generatedHeader(title, generatedAt) {
-  return `# ${title}\n\n> 自动生成的只读投影 · ${generatedAt}\n> 可在 H’s 科研助手中修改正式记录；重建投影会覆盖本文件。\n\n`
+  return `# ${title}\n\n> 自动生成的只读预览 · ${generatedAt}\n> 可在小何的科研助手中修改正式记录；重新生成预览会覆盖本文件。\n\n`
 }
 
 function renderNotes(database, projectId, generatedAt) {
@@ -271,7 +271,7 @@ function rebuildVaultProjections({ root, database, projectId, vaultName, schemaV
   const index = [
     `# ${vaultName}`,
     '',
-    '> H’s Research Assistant Research Vault v2 用户可读索引。数据库是正式记录；下列 `.generated` 文件可随时重建。',
+    '> 小何的科研助手 Research Vault v2 项目索引。应用中的记录是正式版本；下列 `.generated` 文件可随时重新生成。',
     '',
     `- 最近重建：${generatedAt}`,
     `- 数据库：\`library.sqlite\`（Schema v${schemaVersion}）`,
