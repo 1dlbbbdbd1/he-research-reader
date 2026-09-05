@@ -349,8 +349,10 @@ test('desktop shell uses the approved H orbit brand assets', () => {
   assert.ok(icon.readUInt16LE(4) >= 7)
 })
 
-test('Windows package includes Word, translation PDF and causal Python executors', () => {
+test('Windows package includes research Skills, Word, translation PDF and causal Python executors', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+  assert.ok(packageJson.build.files.includes('skills/**/*'))
+  assert.ok(fs.existsSync(path.join(root, 'skills', 'xiaohe-literature-evidence', 'SKILL.md')))
   for (const file of ['office-word-workflow.ps1', 'office-translation-export.ps1', 'causal-analysis.py']) {
     const resource = packageJson.build.extraResources.find(item => item.from === `scripts/${file}`)
     assert.deepEqual(resource, { from: `scripts/${file}`, to: `scripts/${file}` })

@@ -1299,6 +1299,7 @@ function createWindow() {
             return Boolean(root && composer && composer.getBoundingClientRect().bottom <= innerHeight)
           })()`)
           workbenchLayoutMetrics.reachedEnd = workbenchReachedEnd
+          workbenchLayoutMetrics.researchCycle = await require('./research-cycle-ui-smoke.cjs').checkResearchCycleUi(mainWindow, screenshotRoot)
           const libraryLayoutMetrics = await mainWindow.webContents.executeJavaScript(`(async () => {
             const search = document.querySelector('button[title="搜索项目资料"]')
             search?.click()
@@ -1356,7 +1357,7 @@ function createWindow() {
             await new Promise(resolve => setTimeout(resolve, 120))
             fs.writeFileSync(knowledgeGraphScreenshotPath, (await mainWindow.capturePage()).toPNG())
           }
-          const workbenchLayoutPassed = workbenchLayoutMetrics.chatComposerVisible && workbenchLayoutMetrics.inputVisible && workbenchLayoutMetrics.plusMenuVisible && workbenchLayoutMetrics.projectEntryVisible && workbenchLayoutMetrics.workflowLibraryEntryVisible && workbenchLayoutMetrics.modelSelectorVisible && workbenchLayoutMetrics.modelSelectorConfigured && workbenchLayoutMetrics.composerFocusOutlineRemoved && workbenchLayoutMetrics.visibleWorkflowCount === 4 && workbenchLayoutMetrics.autoDiscoveredProjectPdfVisible && workbenchLayoutMetrics.autoDiscoveredProjectPdfReadable && workbenchLayoutMetrics.workflowLibraryVisible && workbenchLayoutMetrics.workflowLibraryCount === 22 && workbenchLayoutMetrics.capabilityFieldsVisible && workbenchLayoutMetrics.primaryNavCount === 2 && workbenchLayoutMetrics.conversationListVisible && workbenchLayoutMetrics.noOverflow && workbenchLayoutMetrics.scrollContainer && workbenchReachedEnd
+          const workbenchLayoutPassed = workbenchLayoutMetrics.chatComposerVisible && workbenchLayoutMetrics.inputVisible && workbenchLayoutMetrics.plusMenuVisible && workbenchLayoutMetrics.projectEntryVisible && workbenchLayoutMetrics.workflowLibraryEntryVisible && workbenchLayoutMetrics.modelSelectorVisible && workbenchLayoutMetrics.modelSelectorConfigured && workbenchLayoutMetrics.composerFocusOutlineRemoved && workbenchLayoutMetrics.visibleWorkflowCount === 4 && workbenchLayoutMetrics.autoDiscoveredProjectPdfVisible && workbenchLayoutMetrics.autoDiscoveredProjectPdfReadable && workbenchLayoutMetrics.workflowLibraryVisible && workbenchLayoutMetrics.workflowLibraryCount === 26 && workbenchLayoutMetrics.capabilityFieldsVisible && workbenchLayoutMetrics.primaryNavCount === 2 && workbenchLayoutMetrics.conversationListVisible && workbenchLayoutMetrics.noOverflow && workbenchLayoutMetrics.scrollContainer && workbenchReachedEnd
           const libraryLayoutPassed = libraryLayoutMetrics.rowVisible && libraryLayoutMetrics.askAiVisible && libraryLayoutMetrics.citationNoWrap && libraryLayoutMetrics.actionOverlapCount === 0 && libraryLayoutMetrics.currentPaperScopeVisible && libraryLayoutMetrics.extractStarterVisible
           const knowledgeGraphLayoutPassed = knowledgeGraphLayoutMetrics.nodeCount >= 38 && knowledgeGraphLayoutMetrics.overlapCount === 0 && knowledgeGraphLayoutMetrics.scrollable && knowledgeGraphLayoutMetrics.inspectorVisible
           const clipboardVerified = skipSmokeClipboard || (clipboard.readText() === smokeCitation && clipboardResult?.written === true)

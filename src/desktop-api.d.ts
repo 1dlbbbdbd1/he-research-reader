@@ -884,7 +884,9 @@ type DesktopWorkbenchRun = {
   capabilityVersion?: string
   capabilityInput: Record<string, unknown>
   conversationWorkflowId?: DesktopConversationWorkflow['id']
-  conversationWorkflowInput?: { sourceIds?: string[] }
+  conversationWorkflowInput?: { sourceIds?: string[]; pastedText?: string }
+  researchSkillId?: string
+  researchSkill?: DesktopResearchSkill
   preflight?: DesktopCapabilityPreflight
   failureCount: number
   createdAt: string
@@ -946,10 +948,19 @@ type DesktopConversationWorkflow = {
   maximumSources: number
   requiredTools: string[]
   optionalTools?: string[]
+  skillId: string
+  researchSkill: DesktopResearchSkill
   permissionRequirements: { domains: string[]; applications: string[]; commands: string[] }
   available: boolean
   tools: Array<{ name: string; available: boolean; reason?: string }>
   message: string
+}
+type DesktopResearchSkill = {
+  id: string
+  name: string
+  title: string
+  description: string
+  version: string
 }
 type DesktopCapabilityPack = {
   id: string
@@ -1370,7 +1381,7 @@ interface Window {
     listWorkbenchConversationWorkflows(): Promise<DesktopConversationWorkflow[]>
     listWorkbenchCapabilityPacks(): Promise<DesktopCapabilityPack[]>
     setWorkbenchCapabilityPack(input: { id: string; enabled: boolean }): Promise<{ project: DesktopWorkbenchProject; packs: DesktopCapabilityPack[] }>
-    createWorkbenchRun(input: { objective: string; acceptance?: string[]; taskType?: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; capabilityPack?: string; capabilityInput?: Record<string, unknown>; conversationWorkflowId?: DesktopConversationWorkflow['id']; conversationWorkflowInput?: { sourceIds?: string[] }; budget?: Record<string, unknown>; modelRoles?: Record<string, unknown>; sessionId?: string }): Promise<DesktopWorkbenchRun>
+    createWorkbenchRun(input: { objective: string; acceptance?: string[]; taskType?: 'research' | 'engineering' | 'document' | 'code' | 'data' | 'desktop'; capabilityPack?: string; capabilityInput?: Record<string, unknown>; conversationWorkflowId?: DesktopConversationWorkflow['id']; conversationWorkflowInput?: { sourceIds?: string[]; pastedText?: string }; budget?: Record<string, unknown>; modelRoles?: Record<string, unknown>; sessionId?: string }): Promise<DesktopWorkbenchRun>
     listWorkbenchRuns(input?: { statuses?: DesktopWorkbenchRunStatus[] }): Promise<Array<Omit<DesktopWorkbenchRun, 'steps' | 'decisions' | 'artifacts' | 'results'>>>
     getWorkbenchRun(input: { runId: string }): Promise<DesktopWorkbenchRun>
     authorizeWorkbenchRun(input: { runId: string; scope: DesktopWorkbenchGrantScope }): Promise<DesktopWorkbenchRun>

@@ -32,6 +32,7 @@ const { WorkspaceService } = require('../electron/workspace-service.cjs')
 const { PolicyEngine } = require('../electron/workbench/policy-engine.cjs')
 const { ToolRegistry } = require('../electron/workbench/tool-registry.cjs')
 const { WorkbenchService } = require('../electron/workbench/workbench-service.cjs')
+const { loadBundledSkill, selectBundledSkill } = require('../electron/workbench/skill-library.cjs')
 
 function withWorkbench(run, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-workbench-'))
@@ -63,6 +64,46 @@ test('schema v19 注册 Research Vault，并把能力状态与真实合同和工
   assert.equal(directRun.capabilityPackId, 'research-reference-check')
 }))
 
+test('确认实验整理结果会原样保留输入并幂等写入科研记录', () => withWorkbench(({ workspace, service }) => {
+  const originalInput = '  9:10 更换夹具；9:20 两次抓取失败。  '
+  const originalLinks = [{ kind: 'pasted_text', characterCount: originalInput.length }]
+  const run = service.createRun({ objective: '整理一次装配实验', conversationWorkflowId: 'experiment-intake', conversationWorkflowInput: { pastedText: originalInput } })
+  const resultId = 'experiment-intake-result'
+  workspace.database.prepare("INSERT INTO agent_artifacts(id, run_id, kind, label, metadata_json, created_at) VALUES (?, ?, 'report', ?, ?, ?)")
+    .run('experiment-intake-artifact', run.id, '装配实验整理', JSON.stringify({ resultId, resultType: 'experiment_intake', label: '装配实验整理', content: '# 抓取实验\n\n观察到抓取失败两次。', data: { rawInput: '客户端篡改原文', sourceIds: ['wrong-source'] }, sourceLinks: originalLinks, reviewState: 'draft', version: 1 }), new Date().toISOString())
+
+  let saved = service.saveResult({ runId: run.id, resultId, data: { rawInput: '再次篡改', sourceIds: ['wrong-source'] }, sourceLinks: [{ kind: 'forged' }], reviewState: 'confirmed' })
+  const first = saved.results.find(result => result.id === resultId)
+  assert.equal(first.reviewState, 'confirmed')
+  assert.ok(first.data.researchRecordId)
+  let records = workspace.getResearchWorkspace().records.filter(record => record.id === first.data.researchRecordId)
+  assert.equal(records.length, 1)
+  assert.match(records[0].content, /  9:10 更换夹具；9:20 两次抓取失败。  /)
+  assert.doesNotMatch(records[0].content, /篡改原文|wrong-source|forged/)
+  assert.match(records[0].content, /观察到抓取失败两次/)
+  assert.match(records[0].content, new RegExp(run.id))
+  assert.equal(records[0].title, '抓取实验')
+
+  saved = service.saveResult({ runId: run.id, resultId, reviewState: 'confirmed' })
+  assert.equal(saved.results.find(result => result.id === resultId).version, 2)
+  assert.equal(workspace.getResearchWorkspace().records.filter(record => record.recordType === 'experiment').length, 1)
+
+  saved = service.saveResult({ runId: run.id, resultId, content: '人工补充：夹具定位偏差。', reviewState: 'confirmed' })
+  const edited = saved.results.find(result => result.id === resultId)
+  assert.equal(edited.version, 3)
+  assert.notEqual(edited.data.researchRecordId, first.data.researchRecordId)
+  records = workspace.getResearchWorkspace().records.filter(record => record.recordType === 'experiment')
+  assert.equal(records.length, 2)
+  assert.match(records.find(record => record.id === edited.data.researchRecordId).content, /人工补充：夹具定位偏差/)
+}))
+
+test('旧项目的 Run 不能读取或确认结果', () => withWorkbench(({ root, workspace, service }) => {
+  const run = service.createRun({ objective: '项目 A 的实验整理' })
+  workspace.create(path.join(root, 'other-project'), '项目 B')
+  assert.throws(() => service.getRun(run.id), /Run 不存在/)
+  assert.throws(() => service.saveResult({ runId: run.id, resultId: 'anything', reviewState: 'confirmed' }), /Run 不存在/)
+}))
+
 test('项目内容浏览只读当前项目，并可预览常见文本文件', () => withWorkbench(({ vault, service }) => {
   const notePath = path.join(vault.path, 'notes', 'preview.md')
   fs.mkdirSync(path.dirname(notePath), { recursive: true })
@@ -90,16 +131,20 @@ test('项目内容可在抽屉中安全预览图片与 PDF 数据', () => withWo
 
 test('对话中的常见科研辅助生成真实固定步骤，而不是提示词标签', () => withWorkbench(({ workspace, service }) => {
   const workflows = service.listConversationWorkflows()
-  assert.equal(workflows.length, 12)
+  assert.equal(workflows.length, 16)
   for (const id of ['literature-search', 'literature-summary', 'method-summary', 'skill-teaching', 'research-question', 'experiment-design', 'multi-paper-comparison', 'reproducibility-check', 'data-analysis-plan', 'paper-outline', 'research-progress-report', 'result-interpretation']) assert.ok(workflows.some(item => item.id === id))
   assert.equal(workflows.filter(item => item.featured).length, 4)
   assert.ok(workflows.every(item => item.available))
+  assert.ok(workflows.every(item => item.researchSkill?.version === '1.0.0'))
+  assert.equal(workflows.find(item => item.id === 'literature-search').researchSkill.title, '文献检索与证据综合')
 
   const search = service.createRun({ objective: '柔顺装配中的阻抗控制', conversationWorkflowId: 'literature-search' })
   assert.equal(search.conversationWorkflowId, 'literature-search')
-  assert.deepEqual(search.steps.map(step => step.toolName || step.kind), ['project.inspect', 'web.fetch', 'model', 'verify'])
-  assert.deepEqual(search.preflight.permissionRequirements.domains, ['api.crossref.org'])
+  assert.equal(search.researchSkillId, 'xiaohe-literature-evidence')
+  assert.deepEqual(search.steps.map(step => step.toolName || step.kind), ['project.inspect', 'web.fetch', 'web.fetch', 'model', 'verify'])
+  assert.deepEqual(search.preflight.permissionRequirements.domains, ['api.crossref.org', 'export.arxiv.org'])
   assert.match(search.steps[1].input.url, /^https:\/\/api\.crossref\.org\/works\?/)
+  assert.match(search.steps[2].input.url, /^https:\/\/export\.arxiv\.org\/api\/query\?/)
 
   assert.throws(() => service.createRun({ objective: '总结方法差异', conversationWorkflowId: 'literature-summary' }), /至少 1 份项目资料/)
   const timestamp = new Date().toISOString()
@@ -114,20 +159,97 @@ test('对话中的常见科研辅助生成真实固定步骤，而不是提示�
 }))
 
 test('文献检索固定工作流按授权范围真实调用检索工具并完成模型整理', () => {
-  let requestedUrl = ''
+  const requestedUrls = []
   const fetchImpl = async url => {
-    requestedUrl = String(url)
-    return { ok: true, headers: { get: () => 'application/json' }, text: async () => JSON.stringify({ message: { items: [{ DOI: '10.1000/test', title: ['Compliant assembly'] }] } }), url: requestedUrl }
+    const requestedUrl = String(url)
+    requestedUrls.push(requestedUrl)
+    const crossref = requestedUrl.includes('api.crossref.org')
+    return {
+      ok: true,
+      headers: { get: () => crossref ? 'application/json' : 'application/atom+xml' },
+      text: async () => crossref ? JSON.stringify({ message: { items: [{ DOI: '10.1000/test', title: ['Compliant assembly'] }] } }) : '<feed><entry><id>arXiv:2601.00001</id><title>Compliant assembly</title></entry></feed>',
+      url: requestedUrl,
+    }
   }
   return withWorkbench(async ({ vault, service }) => {
     const run = service.createRun({ objective: '柔顺装配阻抗控制', conversationWorkflowId: 'literature-search' })
-    service.authorizeRun({ runId: run.id, scope: { readRoots: [vault.path], writeRoots: [vault.path], domains: ['api.crossref.org'] } })
+    service.authorizeRun({ runId: run.id, scope: { readRoots: [vault.path], writeRoots: [vault.path], domains: ['api.crossref.org', 'export.arxiv.org'] } })
     const completed = await service.executeUntilBlocked(run.id)
     assert.equal(completed.status, 'completed')
-    assert.match(requestedUrl, /api\.crossref\.org\/works/)
-    assert.equal(completed.steps.find(step => step.toolName === 'web.fetch').status, 'completed')
+    assert.ok(requestedUrls.some(url => /api\.crossref\.org\/works/.test(url)))
+    assert.ok(requestedUrls.some(url => /export\.arxiv\.org\/api\/query/.test(url)))
+    assert.ok(completed.steps.filter(step => step.toolName === 'web.fetch').every(step => step.status === 'completed'))
     assert.equal(completed.steps.find(step => step.title === '整理候选文献').output.content, 'role:executor')
+    assert.equal(completed.results.length, 1)
+    assert.equal(completed.results[0].data.skillId, 'xiaohe-literature-evidence')
   }, { fetchImpl })
+})
+
+test('对话科研流程没有非空模型草稿时不能按步骤完成标记完成', () => withWorkbench(({ vault, workspace, service }) => {
+  const run = service.createRun({ objective: '检索柔顺装配文献', conversationWorkflowId: 'literature-search' })
+  service.authorizeRun({ runId: run.id, scope: { readRoots: [vault.path], writeRoots: [vault.path], domains: ['api.crossref.org', 'export.arxiv.org'] } })
+  for (const step of service.getRun(run.id).steps.filter(step => step.kind !== 'verify')) {
+    workspace.database.prepare("UPDATE agent_run_steps SET status = 'completed', output_json = ? WHERE id = ?").run(JSON.stringify(step.kind === 'model' ? { content: '' } : { ok: true }), step.id)
+  }
+  const checked = service.verifyRun(run.id)
+  return Promise.resolve(checked).then(current => {
+    assert.equal(current.status, 'waiting_human')
+    assert.equal(current.latestEvaluation.summary, '科研草稿或所选资料读取未完成，不能标记完成。')
+  })
+}))
+
+test('科研内容验收只接收已授权来源摘要和草稿，不接收本地路径', () => {
+  let verifierCall
+  const llm = { complete: async input => {
+    if (input.role !== 'verifier') return { content: '方法使用受控变量。', providerId: 'test', model: 'executor' }
+    verifierCall = input
+    const stepId = input.messages[1].content.match(/"type":"step","id":"([^"]+)"/)?.[1]
+    return { content: JSON.stringify({ summary: '草稿与资料均已提供。', criteria: [{ label: '形成可追溯方法总结', passed: true, evidence: [{ type: 'step', id: stepId }] }] }), providerId: 'test', model: 'verifier' }
+  } }
+  return withWorkbench(async ({ vault, workspace, service }) => {
+    const timestamp = new Date().toISOString()
+    workspace.database.prepare(`INSERT INTO sources(id, project_id, name, kind, status, content_sha256, extracted_text, source_metadata_json, created_at, updated_at)
+      VALUES (?, ?, '受控论文.pdf', 'PDF', '已解析', 'source-hash', ?, '{}', ?, ?)`)
+      .run('content-verification-source', workspace.getCurrent().projectId, '论文方法正文：变量 A 与变量 B。', timestamp, timestamp)
+    const run = service.createRun({ objective: '总结受控变量', acceptance: ['形成可追溯方法总结'], conversationWorkflowId: 'literature-summary', conversationWorkflowInput: { sourceIds: ['content-verification-source'] } })
+    service.authorizeRun({ runId: run.id, scope: { readRoots: [vault.path], writeRoots: [vault.path] } })
+    const completed = await service.executeUntilBlocked(run.id)
+    assert.equal(completed.status, 'completed')
+    const payload = verifierCall.messages[1].content
+    assert.match(payload, /论文方法正文：变量 A 与变量 B。/)
+    assert.match(payload, /workspace_source/)
+    assert.doesNotMatch(payload, new RegExp(vault.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }, { llm })
+})
+
+test('自由科研任务自动选择标准 Skill，并把正文保存成可编辑结果', () => {
+  const modelCalls = []
+  const llm = { complete: async input => {
+    modelCalls.push(input)
+    if (input.role === 'planner') return { content: JSON.stringify({ summary: '无需追加工具', steps: [] }), providerId: 'test', model: 'planner' }
+    return { content: '# 可编辑实验方案\n\n先确认实验单位与对照。', providerId: 'test', model: 'executor' }
+  } }
+  return withWorkbench(async ({ vault, service }) => {
+    const run = service.createRun({ objective: '帮我设计一个有对照组的最小实验', taskType: 'research' })
+    assert.equal(run.researchSkillId, 'xiaohe-research-design')
+    assert.equal(run.steps.at(-2).title, '形成可编辑科研结果')
+    service.authorizeRun({ runId: run.id, scope: { readRoots: [vault.path], writeRoots: [vault.path] } })
+    const completed = await service.executeUntilBlocked(run.id)
+    assert.equal(completed.status, 'completed')
+    assert.equal(completed.results.length, 1)
+    assert.match(completed.results[0].content, /可编辑实验方案/)
+    assert.match(modelCalls.find(call => call.role === 'executor').messages[0].content, /研究问题、实验设计与技能教学/)
+  }, { llm })
+})
+
+test('内置科研 Skills 可读取，并按任务关键词选择方法', () => {
+  assert.match(loadBundledSkill('xiaohe-paper-evidence').instructions, /论文精读与可复核证据/)
+  assert.equal(selectBundledSkill('检索机器人操作相关文献'), 'xiaohe-literature-evidence')
+  assert.equal(selectBundledSkill('检查这个 p 值和样本量是否合理'), 'xiaohe-statistics-review')
+  assert.equal(selectBundledSkill('整理一份组会汇报'), 'xiaohe-scientific-writing')
+  assert.equal(selectBundledSkill('精读并复现这篇文章'), 'xiaohe-paper-evidence')
+  assert.equal(selectBundledSkill('总结这篇论文的方法和局限'), 'xiaohe-paper-evidence')
+  assert.equal(selectBundledSkill('设计最小可执行实验'), 'xiaohe-research-design')
 })
 
 test('任务可归入当前项目对话且不能绑定其他项目的对话 ID', () => withWorkbench(({ workspace, service }) => {

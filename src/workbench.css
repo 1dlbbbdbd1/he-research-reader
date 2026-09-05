@@ -33,3 +33,17 @@
 /* The composer owns the focus ring; the textarea must not draw a second dark rectangle. */
 .app-shell .agent-composer>textarea:focus-visible{outline:none;outline-offset:0}
 .workflow-starters button>em{grid-column:1;font-style:normal;font-size:var(--ui-text-xs,13px);color:#684db0;margin-top:6px}
+.workflow-library-card>.workflow-skill-name{color:#5e489d;background:#f1edf9;border-radius:6px;padding:5px 7px}
+.run-skill{display:inline-flex;margin-left:8px;border-radius:999px;background:#eee9f8;color:#5e489d;padding:5px 8px;font-size:var(--ui-text-xs,13px);font-weight:750}
+.research-cycle-shortcuts { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; }
+.research-cycle-shortcuts button { font-size: 13px; padding: 5px 9px; border: 1px solid var(--border-color, #d8dce4); border-radius: 8px; color: inherit; background: transparent; cursor: pointer; }
+.research-pasted-material { margin: 4px 12px 10px; font-size: 13px; }
+.research-pasted-material summary { cursor: pointer; padding: 6px 0; }
+.research-material-file { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; }
+.research-material-file input { max-width: 100%; font: inherit; }
+.research-pasted-material small { display: block; font-size: var(--ui-text-xs, 13px); line-height: 1.5; }
+.agent-composer .research-pasted-material textarea { min-height: 100px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border-color, #d8dce4); border-radius: 8px; padding: 10px; }
+.sidebar-memory-button { flex-wrap: wrap; }
+.sidebar-memory-button > span, .sidebar-memory-button > small { white-space: nowrap; }
+.research-cycle-shortcuts button:focus-visible { outline: 2px solid #795ec6; outline-offset: 2px; }
+.agent-composer small { font-size: max(13px, var(--ui-text-xs, 13px)); }

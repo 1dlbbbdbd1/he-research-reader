@@ -312,7 +312,7 @@ class ToolRegistry {
     }
     if (name === 'research.source.read') {
       const pastedText = String(input.pastedText || '').trim()
-      if (pastedText) return { document: { text: pastedText, source: { kind: 'pasted_text', characterCount: pastedText.length } } }
+      if (pastedText) { const raw = String(input.pastedText); return { document: { text: raw, source: { kind: 'pasted_text', characterCount: raw.length, sha256: sha256(Buffer.from(raw, 'utf8')) } } } }
       const sourceId = String(input.sourceId || '').trim()
       if (!sourceId) throw new Error('请选择资料库文档或粘贴待核验内容。')
       const current = this.workspace?.getCurrent()

@@ -2,7 +2,11 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { CAPABILITY_PACKS, getCapabilityPack } = require('./capability-packs.cjs')
-const { CONVERSATION_WORKFLOWS, getConversationWorkflow, buildConversationWorkflowSteps, normalizedSourceIds } = require('./conversation-workflows.cjs')
+const { CONVERSATION_WORKFLOWS, getConversationWorkflow, buildConversationWorkflowSteps, normalizedSourceIds, inferConversationWorkflow } = require('./conversation-workflows.cjs')
+const { describeBundledSkill, loadBundledSkill, selectBundledSkill } = require('./skill-library.cjs')
+const { buildModelContext } = require('./model-context.cjs')
+const { parseLiteratureSearch } = require('./literature-search-data.cjs')
+const { experimentIntakeRecordInput } = require('./experiment-intake.cjs')
 
 const RUN_STATUSES = Object.freeze(['draft', 'awaiting_authorization', 'running', 'replanning', 'waiting_human', 'paused', 'verifying', 'completed', 'failed', 'cancelled'])
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
@@ -47,6 +51,31 @@ function structuredJson(value) {
     try { return JSON.parse(candidate) } catch {}
   }
   return undefined
+}
+function clippedContent(value, maximum) { return String(value ?? '').slice(0, maximum) }
+function conversationDraftGate(run, allStepsFinished) {
+  const sources = run.steps.filter(step => step.toolName === 'research.source.read')
+  const models = run.steps.filter(step => step.kind === 'model')
+  const sourceRead = sources.every(step => step.status === 'completed')
+  const draftReady = models.length > 0 && models.every(step => step.status === 'completed' && String(step.output?.content || '').trim())
+  return {
+    passed: allStepsFinished && sourceRead && draftReady,
+    evidence: [...sources.filter(step => step.status === 'completed'), ...models.filter(step => step.status === 'completed' && String(step.output?.content || '').trim())].map(step => ({ type: 'step', id: step.id })),
+  }
+}
+function conversationContentEvidence(run) {
+  return {
+    sources: run.steps.filter(step => step.status === 'completed' && step.toolName === 'research.source.read').slice(0, 6).map(step => ({
+      stepId: step.id,
+      source: ((source) => source?.kind === 'workspace_source'
+        ? { kind: source.kind, sourceId: source.sourceId, name: source.name, sourceKind: source.sourceKind, sha256: source.sha256 }
+        : { kind: source?.kind || 'pasted_text', characterCount: Number(source?.characterCount || 0) })(step.output?.document?.source),
+      text: clippedContent(step.output?.document?.text, 1200),
+    })),
+    drafts: run.artifacts.filter(artifact => artifact.kind === 'report' && String(artifact.metadata?.content || '').trim()).slice(0, 4).map(artifact => ({
+      artifactId: artifact.id, resultId: artifact.metadata.resultId, type: artifact.metadata.resultType, reviewState: artifact.metadata.reviewState, content: clippedContent(artifact.metadata.content, 1800),
+    })),
+  }
 }
 
 const PREVIEW_SKIP_NAMES = new Set(['.git', 'node_modules', 'dist', 'release', '.cache'])
@@ -185,7 +214,7 @@ class WorkbenchService {
     return CONVERSATION_WORKFLOWS.map(workflow => {
       const tools = [...workflow.requiredTools, ...(workflow.optionalTools || [])].map(name => ({ name, ...this.tools.availability(name) }))
       const missing = tools.filter(tool => workflow.requiredTools.includes(tool.name) && !tool.available)
-      return { ...workflow, available: missing.length === 0, tools, message: missing.length ? missing.map(tool => tool.reason).filter(Boolean).join('；') : '已就绪' }
+      return { ...workflow, researchSkill: describeBundledSkill(workflow.skillId), available: missing.length === 0, tools, message: missing.length ? missing.map(tool => tool.reason).filter(Boolean).join('；') : '已就绪' }
     })
   }
 
@@ -201,12 +230,16 @@ class WorkbenchService {
     }
     const capabilityPack = input.capabilityPack ? getCapabilityPack(input.capabilityPack) : undefined
     if (input.capabilityPack && !capabilityPack) throw new Error('选择的固定工作流不存在。')
-    const conversationWorkflow = input.conversationWorkflowId ? getConversationWorkflow(input.conversationWorkflowId) : undefined
+    const conversationWorkflow = input.conversationWorkflowId ? getConversationWorkflow(input.conversationWorkflowId) : (!capabilityPack && input.taskType === 'research' ? inferConversationWorkflow(objective) : undefined)
     if (input.conversationWorkflowId && !conversationWorkflow) throw new Error('选择的对话工作流不存在。')
     if (capabilityPack && conversationWorkflow) throw new Error('一次任务只能选择一个固定工作流。')
+    const researchSkillId = conversationWorkflow?.skillId || (!capabilityPack && input.taskType === 'research' ? selectBundledSkill(objective) : undefined)
+    const researchSkill = researchSkillId ? describeBundledSkill(researchSkillId) : undefined
     let conversationWorkflowInput = object(input.conversationWorkflowInput)
     if (conversationWorkflow) {
-      conversationWorkflowInput = { sourceIds: normalizedSourceIds(conversationWorkflowInput, conversationWorkflow.maximumSources ?? 6) }
+      const pastedText = String(conversationWorkflowInput.pastedText || '')
+      if (pastedText.length > 60000) throw new Error('一次最多整理 60000 字材料，请分批提供。')
+      conversationWorkflowInput = { sourceIds: normalizedSourceIds(conversationWorkflowInput, conversationWorkflow.maximumSources ?? 6), ...(pastedText.trim() ? { pastedText } : {}) }
       const minimumSources = conversationWorkflow.minimumSources ?? (conversationWorkflow.sourceSelection === 'required' ? 1 : 0)
       if (conversationWorkflowInput.sourceIds.length < minimumSources) throw new Error(`“${conversationWorkflow.name}”需要先选择至少 ${minimumSources} 份项目资料。`)
       const missingTool = conversationWorkflow.requiredTools.map(name => ({ name, ...this.tools.availability(name) })).find(tool => !tool.available)
@@ -238,7 +271,7 @@ class WorkbenchService {
       capabilityInput = validation.input
     }
     const workflowPreflight = conversationWorkflow ? { ready: true, status: 'ready', tools: conversationWorkflow.requiredTools.map(name => ({ name, ...this.tools.availability(name) })), connectors: [], missing: [], permissionRequirements: conversationWorkflow.permissionRequirements, message: '固定步骤已就绪；开始前请确认本次任务范围。' } : undefined
-    const steps = this.#initialSteps(objective, input.taskType, project, capabilityPack, capabilityInput, conversationWorkflow, conversationWorkflowInput)
+    const steps = this.#initialSteps(objective, input.taskType, project, capabilityPack, capabilityInput, conversationWorkflow, conversationWorkflowInput, researchSkill)
     database.exec('BEGIN IMMEDIATE')
     try {
       database.prepare(`INSERT INTO agent_runs(id, workbench_project_id, legacy_session_id, objective, acceptance_json, status, budget_json, model_roles_json, created_at, updated_at)
@@ -247,14 +280,14 @@ class WorkbenchService {
       steps.forEach((step, position) => database.prepare(`INSERT INTO agent_run_steps(id, run_id, plan_version, position, kind, tool_name, title, rationale, input_json, status, max_attempts, high_risk, created_at, updated_at)
         VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, 'queued', 2, ?, ?, ?)`)
         .run(crypto.randomUUID(), runId, position, step.kind, step.toolName || null, step.title, step.rationale || '', JSON.stringify(step.input || {}), step.highRisk ? 1 : 0, createdAt, createdAt))
-      this.#event(database, runId, 'run_created', 'user', { objective, acceptance, capabilityPack: capabilityPack?.id, capabilityVersion: capabilityPack?.version, capabilityInput, conversationWorkflowId: conversationWorkflow?.id, conversationWorkflowInput, preflight: workflowPreflight || preflight })
+      this.#event(database, runId, 'run_created', 'user', { objective, acceptance, capabilityPack: capabilityPack?.id, capabilityVersion: capabilityPack?.version, capabilityInput, conversationWorkflowId: conversationWorkflow?.id, conversationWorkflowInput, researchSkillId, researchSkill, preflight: workflowPreflight || preflight })
       database.exec('COMMIT')
     } catch (error) { database.exec('ROLLBACK'); throw error }
     this.#transition(runId, 'awaiting_authorization', { reason: 'plan_ready' })
     return this.getRun(runId)
   }
 
-  #initialSteps(objective, taskType, project, capabilityPack, capabilityInput = {}, conversationWorkflow, conversationWorkflowInput = {}) {
+  #initialSteps(objective, taskType, project, capabilityPack, capabilityInput = {}, conversationWorkflow, conversationWorkflowInput = {}, researchSkill) {
     if (conversationWorkflow) return buildConversationWorkflowSteps(conversationWorkflow, objective, project, conversationWorkflowInput)
     const root = project.externalRoots[0] || project.vaultPath
     const type = ['research', 'engineering', 'document', 'code', 'data', 'desktop'].includes(taskType) ? taskType : 'engineering'
@@ -272,7 +305,10 @@ class WorkbenchService {
       return common
     }
     if (capabilityPack) common.push({ kind: 'model', title: `制定“${capabilityPack.name}”执行方案`, rationale: capabilityPack.description, input: { role: 'planner', objective, capabilityPack: capabilityPack.id, expectedOutputs: capabilityPack.outputs } })
-    if (type === 'research') common.push({ kind: 'model', title: '整理问题与证据缺口', rationale: '根据当前资料确定检索与验证方向。', input: { role: 'planner', objective } })
+    if (type === 'research') {
+      common.push({ kind: 'model', title: researchSkill ? `用“${researchSkill.title}”规划任务` : '整理问题与证据缺口', rationale: '根据当前资料确定检索、分析与验证方向。', input: { role: 'planner', objective } })
+      common.push({ kind: 'model', title: '形成可编辑科研结果', rationale: '汇总已完成的现场观察和工具结果，按当前科研 Skill 生成可直接修改、确认和继续使用的产物。', input: { role: 'executor', objective } })
+    }
     if (type === 'document') common.push({ kind: 'model', title: '形成文档结构', input: { role: 'planner', objective } })
     if (type === 'code' || type === 'data' || type === 'engineering') common.push({ kind: 'model', title: '分析实现路径', input: { role: 'planner', objective } })
     if (type === 'desktop') common.push({ kind: 'human', title: '选择并授权目标应用', rationale: '桌面控制必须绑定明确窗口。', highRisk: true, input: { applications: ['browser', 'word', 'excel', 'powerpoint', 'vscode'] } })
@@ -290,13 +326,15 @@ class WorkbenchService {
   }
 
   getRun(idValue) {
-    const { database } = this.#context(); const id = text(idValue, 'Run ID', 160)
-    const row = database.prepare('SELECT * FROM agent_runs WHERE id = ?').get(id)
+    const { current, database } = this.#context(); const id = text(idValue, 'Run ID', 160)
+    const row = database.prepare(`SELECT r.* FROM agent_runs r
+      JOIN workbench_projects p ON p.id = r.workbench_project_id
+      WHERE r.id = ? AND p.project_id = ?`).get(id, current.projectId)
     if (!row) throw new Error('Run 不存在。')
     const run = runView(row)
     const createdEvent = database.prepare("SELECT payload_json FROM agent_events WHERE run_id = ? AND event_type = 'run_created' ORDER BY created_at LIMIT 1").get(id)
     const creation = json(createdEvent?.payload_json, {})
-    const artifactRows = database.prepare('SELECT * FROM agent_artifacts WHERE run_id = ? ORDER BY created_at DESC').all(id)
+    const artifactRows = database.prepare('SELECT * FROM agent_artifacts WHERE run_id = ? ORDER BY created_at DESC, rowid DESC').all(id)
     const artifacts = artifactRows.map(row => ({ id: row.id, kind: row.kind, label: row.label, path: row.path || undefined, sha256: row.sha256 || undefined, metadata: json(row.metadata_json, {}), createdAt: row.created_at }))
     const resultVersions = artifacts.filter(artifact => artifact.kind === 'report' && artifact.metadata?.resultId)
     const latestResults = [...new Set(resultVersions.map(artifact => artifact.metadata.resultId))].map(resultId => resultVersions.find(artifact => artifact.metadata.resultId === resultId)).filter(Boolean).map(artifact => ({
@@ -309,6 +347,8 @@ class WorkbenchService {
       capabilityInput: creation.capabilityInput || {},
       conversationWorkflowId: creation.conversationWorkflowId || undefined,
       conversationWorkflowInput: creation.conversationWorkflowInput || {},
+      researchSkillId: creation.researchSkillId || undefined,
+      researchSkill: creation.researchSkill || undefined,
       preflight: creation.preflight,
       steps: database.prepare('SELECT * FROM agent_run_steps WHERE run_id = ? AND plan_version = ? ORDER BY position').all(id, run.planVersion).map(stepView),
       permission: this.#activeGrant(database, id),
@@ -483,16 +523,64 @@ class WorkbenchService {
     const profileRole = ['planner', 'executor', 'vision', 'verifier'].includes(run.modelRoles?.selectedRole) ? run.modelRoles.selectedRole : role
     const started = Date.now(); let outcome = 'completed'; let result; let failure
     try {
-      const previous = run.steps.filter(item => item.status === 'completed' && item.output).map(item => ({ title: item.title, toolName: item.toolName, output: item.output })).slice(-5)
+      const { current, database } = this.#context()
+      const grant = this.#activeGrant(database, run.id)
+      this.policy.requirePath(grant?.scope, current.path, 'read')
+      const session = run.sessionId
+        ? (() => {
+            const row = database.prepare('SELECT id, title FROM agent_sessions WHERE id = ? AND project_id = ?').get(run.sessionId, current.projectId)
+            if (!row) return undefined
+            const turns = database.prepare(`SELECT role, content FROM (
+              SELECT role, content, created_at, rowid FROM agent_turns WHERE session_id = ? AND project_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 12
+            ) ORDER BY created_at, rowid`).all(row.id, current.projectId)
+            const count = database.prepare('SELECT COUNT(*) count FROM agent_turns WHERE session_id = ? AND project_id = ?').get(row.id, current.projectId).count
+            return { ...row, turns, omittedTurnCount: Math.max(0, count - turns.length) }
+          })()
+        : undefined
+      const memories = database.prepare(`SELECT id, kind, content, source_type, source_id, importance
+        FROM agent_memory_items WHERE project_id = ? AND review_state = 'confirmed'
+        ORDER BY importance DESC, updated_at DESC LIMIT 12`).all(current.projectId).map(row => ({ ...row, sourceType: row.source_type, sourceId: row.source_id }))
+      const resultRows = database.prepare(`SELECT a.*, a.rowid artifact_rowid FROM agent_artifacts a
+        JOIN agent_runs r ON r.id = a.run_id
+        WHERE r.workbench_project_id = ? AND a.kind = 'report'
+        ORDER BY a.created_at DESC, a.rowid DESC`).all(run.projectId)
+      const latestResults = []
+      const seenResultIds = new Set()
+      for (const row of resultRows) {
+        const metadata = json(row.metadata_json, {})
+        const resultId = String(metadata.resultId || '')
+        if (!resultId || seenResultIds.has(resultId)) continue
+        seenResultIds.add(resultId)
+        if (metadata.reviewState !== 'confirmed') continue
+        latestResults.push({ resultId, type: metadata.resultType, content: metadata.content, sourceLinks: list(metadata.sourceLinks, 40) })
+        if (latestResults.length === 6) break
+      }
+      const modelContext = buildModelContext({ project: { id: current.projectId, name: current.name }, session, memories, recentConfirmedResults: latestResults, observations: run.steps.filter(item => item.status === 'completed' && item.output) })
       const toolNames = this.tools.list().map(tool => tool.name)
       const planningInstruction = role === 'planner' ? `\n如果需要继续执行工具，请只输出 JSON：{"summary":"...","steps":[{"kind":"tool","toolName":"${toolNames[0]}","title":"...","rationale":"...","input":{}}]}。toolName 只能是：${toolNames.join('、')}。最多 12 步，不要生成 shell 字符串，command.run 必须拆成 executable、args 数组和 cwd。若不需要工具，steps 为空。` : ''
+      const skill = run.researchSkillId ? loadBundledSkill(run.researchSkillId) : undefined
+      const skillInstruction = skill ? `\n\n当前采用科研 Skill：${skill.title}（${skill.id} v${skill.version}）。请严格遵守以下方法，并把缺失事实显式标为待确认：\n${skill.instructions}` : ''
+      const literatureSearch = run.conversationWorkflowId === 'literature-search'
+        ? parseLiteratureSearch(run.steps.filter(item => item.status === 'completed' && item.toolName === 'web.fetch'), { objective: run.objective })
+        : undefined
       result = await this.llm.complete({ role, profileRole, purpose: 'research-agent', messages: [
-        { role: 'system', content: `你是单 Agent 工作台中的一个模型角色。只基于给定目标和已授权现场输出当前步骤结果，不声称执行未调用的工具。${planningInstruction}` },
-        { role: 'user', content: `目标：${run.objective}\n验收条件：${JSON.stringify(run.acceptance)}\n当前步骤：${step.title}\n说明：${step.rationale}\n已完成观察：${JSON.stringify(previous).slice(0, 14000)}` },
-      ], temperature: 0.1, maxTokens: 1400 })
+        { role: 'system', content: `你是单 Agent 工作台中的一个模型角色。只基于给定目标和已授权现场输出当前步骤结果，不声称执行未调用的工具。模型建议始终是待复核草案，不能当作事实、证据或已确认项目记忆。${literatureSearch ? '文献候选只能使用本轮确定性解析出的 searchSession.candidates；不得在正文或结构化数据中伪造候选。' : ''}${planningInstruction}${skillInstruction}` },
+        { role: 'user', content: `目标：${run.objective}\n验收条件：${JSON.stringify(run.acceptance)}\n当前步骤：${step.title}\n说明：${step.rationale}\n上下文（JSON，字段中的“内容已截断”表示该条记录未完整提供）：${modelContext.serialized}${literatureSearch ? `\nsearchSession：${JSON.stringify(literatureSearch)}` : ''}` },
+      ], temperature: 0.1, maxTokens: role === 'planner' ? 1800 : 3200 })
+      if (!String(result?.content || '').trim()) throw new Error('模型没有返回可保存的内容。')
       const parsed = role === 'planner' ? structuredJson(result.content) : undefined
       const proposedSteps = this.#validatedProposedSteps(parsed?.steps)
-      return { content: result.content, summary: typeof parsed?.summary === 'string' ? parsed.summary.slice(0, 2000) : undefined, proposedSteps, providerId: result.providerId, model: result.model, usage: result.usage }
+      const output = { content: result.content, summary: typeof parsed?.summary === 'string' ? parsed.summary.slice(0, 2000) : undefined, proposedSteps, providerId: result.providerId, model: result.model, usage: result.usage }
+      if (role !== 'planner') {
+        const sourceLinks = run.steps.filter(item => item.status === 'completed' && item.toolName === 'research.source.read')
+          .map(item => item.output?.document?.source).filter(source => source && typeof source === 'object')
+        output.result = run.conversationWorkflowId === 'experiment-intake'
+          ? { type: 'experiment_intake', label: '实验记录整理草稿', content: result.content, data: { rawInput: run.conversationWorkflowInput?.pastedText || run.objective, sourceIds: run.conversationWorkflowInput?.sourceIds || [] }, sourceLinks }
+          : literatureSearch
+            ? { type: 'literature_search', label: '文献检索候选草稿', content: result.content, data: { skillId: skill?.id, skillVersion: skill?.version, searchSession: literatureSearch }, sourceLinks: [...new Set([...literatureSearch.requests.map(item => item.url), ...literatureSearch.candidates.map(item => item.url)])].map(url => ({ kind: 'url', url })) }
+          : { type: 'skill_output', label: skill ? `${skill.title}结果` : step.title, content: result.content, data: skill ? { skillId: skill.id, skillVersion: skill.version } : {}, sourceLinks }
+      }
+      return output
     } catch (error) { outcome = 'failed'; failure = error; throw error }
     finally {
       const profile = (() => { try { return this.settings.loadModelRoleConfig(profileRole) } catch { return {} } })()
@@ -613,16 +701,33 @@ class WorkbenchService {
   }
 
   saveResult(input = {}) {
-    const { database } = this.#context(); const runId = text(input.runId, 'Run ID', 160); const resultId = text(input.resultId, '结果 ID', 160)
-    const rows = database.prepare("SELECT * FROM agent_artifacts WHERE run_id = ? AND kind = 'report' ORDER BY created_at DESC").all(runId)
+    const { current, database } = this.#context(); const runId = text(input.runId, 'Run ID', 160); const resultId = text(input.resultId, '结果 ID', 160)
+    const run = this.getRun(runId)
+    const rows = database.prepare("SELECT * FROM agent_artifacts WHERE run_id = ? AND kind = 'report' ORDER BY created_at DESC, rowid DESC").all(runId)
     const latestRow = rows.find(row => json(row.metadata_json, {}).resultId === resultId)
     if (!latestRow) throw new Error('可编辑结果不存在。')
     const previous = json(latestRow.metadata_json, {}); const timestamp = now()
     const reviewState = ['draft', 'confirmed', 'rejected', 'archived'].includes(input.reviewState) ? input.reviewState : previous.reviewState || 'draft'
-    const metadata = { ...previous, content: String(input.content ?? previous.content ?? ''), data: input.data && typeof input.data === 'object' ? input.data : previous.data || {}, sourceLinks: Array.isArray(input.sourceLinks) ? input.sourceLinks.slice(0, 500) : previous.sourceLinks || [], reviewState, version: Number(previous.version || 1) + 1 }
-    database.prepare("INSERT INTO agent_artifacts(id, run_id, step_id, kind, label, metadata_json, created_at) VALUES (?, ?, ?, 'report', ?, ?, ?)")
-      .run(crypto.randomUUID(), runId, latestRow.step_id, latestRow.label, JSON.stringify(metadata), timestamp)
-    this.#event(database, runId, 'result_version_saved', 'user', { resultId, version: metadata.version, reviewState })
+    const content = String(input.content ?? previous.content ?? '')
+    const protectedExperimentInput = previous.resultType === 'experiment_intake'
+    const data = protectedExperimentInput
+      ? { ...object(previous.data), ...object(input.data), rawInput: String(run.conversationWorkflowInput?.pastedText ?? run.objective ?? ''), sourceIds: normalizedSourceIds(run.conversationWorkflowInput) }
+      : input.data && typeof input.data === 'object' ? input.data : previous.data || {}
+    const sourceLinks = protectedExperimentInput ? previous.sourceLinks || [] : Array.isArray(input.sourceLinks) ? input.sourceLinks.slice(0, 500) : previous.sourceLinks || []
+    if (previous.reviewState === 'confirmed' && reviewState === 'confirmed' && content === previous.content && JSON.stringify(data) === JSON.stringify(previous.data || {}) && JSON.stringify(sourceLinks) === JSON.stringify(previous.sourceLinks || [])) return run
+    const metadata = { ...previous, content, data, sourceLinks, reviewState, version: Number(previous.version || 1) + 1 }
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      if (metadata.resultType === 'experiment_intake' && reviewState === 'confirmed') {
+        const recordId = crypto.randomUUID()
+        this.workspace.saveResearchRecord(experimentIntakeRecordInput({ run, result: metadata, timestamp, recordId, researchProjectId: current.projectId }))
+        metadata.data = { ...object(metadata.data), researchRecordId: recordId }
+      }
+      database.prepare("INSERT INTO agent_artifacts(id, run_id, step_id, kind, label, metadata_json, created_at) VALUES (?, ?, ?, 'report', ?, ?, ?)")
+        .run(crypto.randomUUID(), runId, latestRow.step_id, latestRow.label, JSON.stringify(metadata), timestamp)
+      this.#event(database, runId, 'result_version_saved', 'user', { resultId, version: metadata.version, reviewState, researchRecordId: metadata.data?.researchRecordId })
+      database.exec('COMMIT')
+    } catch (error) { database.exec('ROLLBACK'); throw error }
     return this.getRun(runId)
   }
 
@@ -633,8 +738,9 @@ class WorkbenchService {
     let criteria
     let verifierSummary = ''
     if (!run.acceptance.length) {
-      criteria = [{ label: '所有计划步骤完成', passed: allStepsFinished, evidence: run.steps.filter(step => step.status === 'completed').map(step => ({ type: 'step', id: step.id })) }]
-      verifierSummary = allStepsFinished ? '所有计划步骤均已结束。' : '仍有计划步骤未结束。'
+      const gate = run.conversationWorkflowId ? conversationDraftGate(run, allStepsFinished) : undefined
+      criteria = [{ label: gate ? '科研草稿已生成（待人工核对）' : '所有计划步骤完成', passed: gate?.passed ?? allStepsFinished, evidence: gate?.evidence ?? run.steps.filter(step => step.status === 'completed').map(step => ({ type: 'step', id: step.id })) }]
+      verifierSummary = gate ? (gate.passed ? '已生成科研草稿，待人工核对；未验证科研结论。' : '科研草稿或所选资料读取未完成，不能标记完成。') : allStepsFinished ? '所有计划步骤均已结束。' : '仍有计划步骤未结束。'
     } else {
       const verification = await this.#verifyAcceptanceWithModel(run)
       criteria = verification.criteria
@@ -647,7 +753,7 @@ class WorkbenchService {
     if (verificationStep) database.prepare("UPDATE agent_run_steps SET status = 'completed', output_json = ?, error = NULL, updated_at = ?, completed_at = ? WHERE id = ?")
       .run(JSON.stringify({ passed, score, criteria }), evaluatedAt, evaluatedAt, verificationStep.id)
     database.prepare('INSERT INTO agent_evaluations(id, run_id, status, score, criteria_json, summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(crypto.randomUUID(), run.id, passed ? 'passed' : score ? 'partial' : 'failed', score, JSON.stringify(criteria), passed ? '全部验收条件已有运行证据。' : verifierSummary || '仍有验收条件缺少证据，不能标记完成。', evaluatedAt)
+      .run(crypto.randomUUID(), run.id, passed ? 'passed' : score ? 'partial' : 'failed', score, JSON.stringify(criteria), passed ? (run.conversationWorkflowId && !run.acceptance.length ? verifierSummary : '全部验收条件已有运行证据。') : verifierSummary || '仍有验收条件缺少证据，不能标记完成。', evaluatedAt)
     this.checkpoint(run.id, 'after-verification', verificationStep?.id, { passed, score, criteria })
     if (passed) this.#transition(run.id, 'completed', { score })
     else {
@@ -659,7 +765,7 @@ class WorkbenchService {
   }
 
   async #verifyAcceptanceWithModel(run) {
-    // Only non-content metadata is sent: no step output, file body, screenshot, command output, or local path.
+    const contentEvidence = run.conversationWorkflowId ? conversationContentEvidence(run) : undefined
     const evidence = [
       ...run.steps.filter(step => step.status === 'completed').map(step => ({ type: 'step', id: step.id, title: step.title, toolName: step.toolName, status: step.status })),
       ...run.artifacts.map(artifact => ({ type: 'artifact', id: artifact.id, kind: artifact.kind, label: artifact.label, sha256: artifact.sha256 })),
@@ -669,8 +775,8 @@ class WorkbenchService {
     const profileRole = ['planner', 'executor', 'vision', 'verifier'].includes(run.modelRoles?.selectedRole) ? run.modelRoles.selectedRole : 'verifier'
     try {
       result = await this.llm.complete({ role: 'verifier', profileRole, purpose: 'research-agent', temperature: 0, maxTokens: 1200, messages: [
-        { role: 'system', content: '你是独立验收角色。只根据给出的非内容型运行证据判断，不得用常识补足。只输出 JSON：{"summary":"...","criteria":[{"label":"原验收条件","passed":true,"evidence":[{"type":"step或artifact","id":"真实ID"}]}]}。passed=true 必须至少引用一个真实证据 ID；证据不足就判 false。' },
-        { role: 'user', content: `目标：${run.objective}\n验收条件：${JSON.stringify(run.acceptance)}\n运行证据元数据：${JSON.stringify(evidence).slice(0, 30000)}` },
+        { role: 'system', content: contentEvidence ? '你是独立验收角色。只根据给出的已授权资料摘要和草稿判断，不得用常识补足或把草稿当作科研结论。只输出 JSON：{"summary":"...","criteria":[{"label":"原验收条件","passed":true,"evidence":[{"type":"step或artifact","id":"真实ID"}]}]}。passed=true 必须至少引用一个真实证据 ID；证据不足就判 false。' : '你是独立验收角色。只根据给出的非内容型运行证据判断，不得用常识补足。只输出 JSON：{"summary":"...","criteria":[{"label":"原验收条件","passed":true,"evidence":[{"type":"step或artifact","id":"真实ID"}]}]}。passed=true 必须至少引用一个真实证据 ID；证据不足就判 false。' },
+        { role: 'user', content: `目标：${run.objective}\n验收条件：${JSON.stringify(run.acceptance)}\n运行证据元数据：${JSON.stringify(evidence).slice(0, 30000)}${contentEvidence ? `\n已授权科研内容（仅来源摘要与草稿，无路径、截图或二进制）：${JSON.stringify(contentEvidence).slice(0, 10000)}` : ''}` },
       ] })
       const parsed = structuredJson(result.content)
       const responses = Array.isArray(parsed?.criteria) ? parsed.criteria : []
