@@ -16,6 +16,10 @@
 
 查看 [全流程审查、上游 Skills 借鉴与证据边界](docs/research-cycle-audit-2026-09-06.md)。本轮验证覆盖代码与桌面流程；图片、音频需先提供文字描述或转录，真实模型的科研结论仍需结合原始资料核对。
 
+本地交付目录：`release-1.4.0-research-cycle/`。安装版为 `XiaoHeResearchAssistant-Setup-1.4.0-x64.exe`，便携版为 `XiaoHeResearchAssistant-Portable-1.4.0-x64.exe`，同目录提供 `SHA256SUMS.txt`。包内版本及全部 7 个科研 Skills 已核对，目录版与便携版成品桌面验收通过。文件大小和 SHA-256 见 [成品清单](docs/acceptance/research-cycle-1.4.0-artifacts.json)，界面指标见 [验收记录](docs/acceptance/research-cycle-1.4.0.json)。
+
+建议从“立项”写下方向和限制，使用“查文献”和“证据对比”整理依据，再进入“找思路”和“设计实验”。实验后将日志直接交给“整理记录”，核对并确认保存。后续打开“导师审查”，可接续本项目已确认的成果，检查下一步该解决的问题。
+
 
 ## 2026-09-04 · Skill 驱动科研 Agent（本地开发版）
 

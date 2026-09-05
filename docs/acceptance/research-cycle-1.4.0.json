@@ -1,0 +1,68 @@
+{
+  "version": "1.4.0",
+  "sourceCommit": "81512c1",
+  "date": "2026-09-06",
+  "tests": {
+    "passed": 267,
+    "failed": 0
+  },
+  "build": "passed",
+  "desktopSource": "passed",
+  "desktopPackaged": "packaged-smoke",
+  "researchCycleUi": [
+    {
+      "width": 1024,
+      "height": 768,
+      "shortcuts": 7,
+      "noOverflow": true,
+      "composerFits": true,
+      "sendVisible": true,
+      "inputVisible": true,
+      "minFont": 13,
+      "materialPreserved": true,
+      "rootScrollable": true
+    },
+    {
+      "width": 1600,
+      "height": 900,
+      "shortcuts": 7,
+      "noOverflow": true,
+      "composerFits": true,
+      "sendVisible": true,
+      "inputVisible": true,
+      "minFont": 13,
+      "materialPreserved": true,
+      "rootScrollable": true
+    },
+    {
+      "width": 2560,
+      "height": 1440,
+      "shortcuts": 7,
+      "noOverflow": true,
+      "composerFits": true,
+      "sendVisible": true,
+      "inputVisible": true,
+      "minFont": 13,
+      "materialPreserved": true,
+      "rootScrollable": true
+    },
+    {
+      "width": 3840,
+      "height": 2160,
+      "shortcuts": 7,
+      "noOverflow": true,
+      "composerFits": true,
+      "sendVisible": true,
+      "inputVisible": true,
+      "minFont": 13,
+      "materialPreserved": true,
+      "rootScrollable": true
+    }
+  ],
+  "workflowCount": 26,
+  "sourceScreenshots": ".reader-cache/desktop-smoke-1788632181645-25216-484403",
+  "packagedRun": "E:\\codex\\reader\\.reader-cache\\desktop-packaged-smoke-1788632378524-30456-dc9430",
+  "validationScope": "Isolated data and simulated model responses; real Electron UI and packaged application. Scientific claims require source review.",
+  "portableSmoke": "passed",
+  "portableRun": ".reader-cache/desktop-packaged-smoke-1788632516659-10856-89f933"
+}
