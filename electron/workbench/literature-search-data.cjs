@@ -3,15 +3,17 @@ const { XMLParser, XMLValidator } = require('fast-xml-parser')
 function clean(value) { return String(value ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() }
 function year(value) { const number = Number(value); return Number.isInteger(number) && number > 1000 && number < 3000 ? number : undefined }
 function crossrefItem(item) {
+  if (!item || typeof item !== 'object') return undefined
   const doi = clean(item.DOI).toLowerCase(); const title = clean(Array.isArray(item.title) ? item.title[0] : item.title)
   if (!doi || !title) return undefined
   const dateParts = item.published?.['date-parts'] || item.issued?.['date-parts'] || item.created?.['date-parts']
-  return { id: `doi:${doi}`, title, doi, year: year(dateParts?.[0]?.[0]), abstract: clean(item.abstract) || undefined, evidenceLevel: 'metadata', provider: 'crossref', url: clean(item.URL) || `https://doi.org/${doi}` }
+  return { id: `doi:${doi}`, title, doi, year: year(dateParts?.[0]?.[0]), abstract: clean(item.abstract) || undefined, evidenceLevel: clean(item.abstract) ? 'abstract' : 'metadata', provider: 'crossref', url: clean(item.URL) || `https://doi.org/${doi}` }
 }
 function arxivItem(entry) {
+  if (!entry || typeof entry !== 'object') return undefined
   const url = clean(entry.id); const arxivId = (url.match(/(?:abs\/|arxiv:)([^\s?#]+)/i) || [])[1]
   const title = clean(entry.title); if (!arxivId || !title) return undefined
-  return { id: `arxiv:${arxivId.replace(/v\d+$/i, '')}`, title, arxivId, year: year(clean(entry.published).slice(0, 4)), abstract: clean(entry.summary) || undefined, evidenceLevel: 'preprint_metadata', provider: 'arxiv', url }
+  return { id: `arxiv:${arxivId.replace(/v\d+$/i, '')}`, title, arxivId, year: year(clean(entry.published).slice(0, 4)), abstract: clean(entry.summary) || undefined, evidenceLevel: clean(entry.summary) ? 'preprint_abstract' : 'preprint_metadata', provider: 'arxiv', url }
 }
 function providerFor(url) { try { const host = new URL(url).hostname; return host === 'api.crossref.org' ? 'crossref' : host === 'export.arxiv.org' ? 'arxiv' : undefined } catch { return undefined } }
 function scopeFor(url) { try { const parsed = new URL(url); return Object.fromEntries([...parsed.searchParams.entries()].filter(([key]) => ['query.bibliographic', 'search_query', 'rows', 'max_results', 'start'].includes(key))) } catch { return {} } }
@@ -23,6 +25,7 @@ function parseLiteratureSearch(fetchSteps, { objective = '', queriedAt } = {}) {
     if (!provider) continue
     requests.push({ provider, url, queriedAt: step.completedAt || queriedAt || null, scope: scopeFor(url) })
     try {
+      if (output.error) throw new Error(String(output.error))
       if (output.truncated) throw new Error('检索响应被截断，请缩小本轮检索范围。')
       const body = String(output.text || '')
       const records = provider === 'crossref'

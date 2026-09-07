@@ -15,6 +15,31 @@ function settingsStoreDouble(overrides = {}) {
   }
 }
 
+test('深度研究可延长单次请求超时，普通请求仍按默认超时取消', async () => {
+  const service = new LLMService({ settingsStore: settingsStoreDouble(), timeoutMs: 5, fetchImpl: async (_url, { signal }) => {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, 25)
+      signal.addEventListener('abort', () => { clearTimeout(timer); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })) }, { once: true })
+    })
+    return { ok: true, json: async () => ({ choices: [{ message: { content: '完成' } }] }) }
+  } })
+  const input = { purpose: 'research-agent', messages: [{ role: 'user', content: '研究' }] }
+  await assert.rejects(service.complete(input), /没有响应/)
+  assert.equal((await service.complete({ ...input, timeoutMs: 1000 })).content, '完成')
+})
+
+test('DeepSeek V4 的研究推理力度仅发送给匹配的供应商和模型', async () => {
+  for (const [providerId, model, expected] of [['deepseek', 'deepseek-v4-flash', 'low'], ['deepseek', 'deepseek-chat', undefined], ['custom', 'deepseek-v4-flash', undefined]]) {
+    let body
+    const service = new LLMService({ settingsStore: settingsStoreDouble({ loadActiveAIConfig: () => ({ providerId, baseUrl: 'https://api.example.com', model, apiKey: 'stored-secret' }) }), fetchImpl: async (_url, options) => {
+      body = JSON.parse(options.body)
+      return { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) }
+    } })
+    await service.complete({ purpose: 'research-agent', messages: [{ role: 'user', content: '研究' }], reasoningEffort: 'low' })
+    assert.equal(body.reasoning_effort, expected)
+  }
+})
+
 test('Base URL 只允许 HTTPS 或本机与私有网络 HTTP', () => {
   assert.equal(normalizeBaseUrl('https://api.example.com/v1/'), 'https://api.example.com/v1')
   assert.equal(normalizeBaseUrl('http://127.0.0.1:11434/v1/'), 'http://127.0.0.1:11434/v1')

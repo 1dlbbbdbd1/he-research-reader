@@ -92,6 +92,7 @@ function contentFromResponse(payload, protocol) {
     if (content.trim()) return content
   } else {
     const content = payload?.choices?.[0]?.message?.content
+    if (payload?.choices?.[0]?.finish_reason === 'length') throw new Error('模型已用完本次推理与输出额度，尚未返回正文。请缩小任务或调整输出额度。')
     if (typeof content === 'string' && content.trim()) return content
   }
   throw new Error('AI 服务没有返回可用文本。')
@@ -199,6 +200,8 @@ class LLMService {
       messages: input.messages,
       temperature: input.temperature,
       maxTokens: input.maxTokens,
+      timeoutMs: input.timeoutMs,
+      reasoningEffort: input.reasoningEffort,
     })
   }
 
@@ -245,9 +248,10 @@ class LLMService {
     if (!apiKey || apiKey.length > 8192) throw new Error('API Key 无效。')
     const messages = normalizedMessages(input.messages)
     const temperature = boundedNumber(input.temperature, 0, 1, 0.1)
-    const maxTokens = input.maxTokens === undefined ? undefined : Math.round(boundedNumber(input.maxTokens, 1, 8192, 1024))
+    const maxTokens = input.maxTokens === undefined ? undefined : Math.round(boundedNumber(input.maxTokens, 1, 16384, 1024))
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+    const timeoutMs = input.timeoutMs === undefined ? this.timeoutMs : boundedNumber(input.timeoutMs, 1000, 300000, this.timeoutMs)
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
     const startedAt = Date.now()
     try {
       const request = requestForProtocol({
@@ -259,6 +263,11 @@ class LLMService {
         temperature,
         maxTokens,
       })
+      // DeepSeek V4 defaults to high thinking; bounded research JSON uses low.
+      // Official contract: https://api-docs.deepseek.com/guides/thinking_mode/
+      if (providerId === 'deepseek' && /^deepseek-v4-(flash|pro)(?:$|-)/.test(model) && ['low', 'high', 'max'].includes(input.reasoningEffort)) {
+        request.body.reasoning_effort = input.reasoningEffort
+      }
       const response = await this.fetchImpl(request.url, {
         method: 'POST',
         headers: request.headers,
@@ -283,7 +292,7 @@ class LLMService {
         usage: usageFromResponse(payload, provider.protocol),
       }
     } catch (error) {
-      if (error?.name === 'AbortError') throw new Error(`AI 服务在 ${Math.round(this.timeoutMs / 1000)} 秒内没有响应。`)
+      if (error?.name === 'AbortError') throw new Error(`AI 服务在 ${Math.round(timeoutMs / 1000)} 秒内没有响应。`)
       if (error instanceof Error) throw error
       throw new Error('AI 服务调用失败。')
     } finally {

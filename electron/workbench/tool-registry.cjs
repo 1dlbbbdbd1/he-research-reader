@@ -10,6 +10,7 @@ const { normalizeRoadmap, parseEditedRoadmap, qaRoadmap, renderDrawio, renderSvg
 const { buildPatentDraft, extractPatentFacts, validatePatentDraft } = require('./patent-tools.cjs')
 const { buildFigureSpec, cleanFigureData, loadFigureData, parseEditedFigureSpec, qaFigure, renderFigureSvg } = require('./figure-tools.cjs')
 const { inspectCausalDesign, parseCausalProcess, qaCausalAnalysis, wrapCausalResult } = require('./causal-tools.cjs')
+const { searchUrl } = require('./deep-research.cjs')
 
 const TOOLS = Object.freeze([
   { name: 'project.inspect', label: '检查项目', readOnly: true },
@@ -17,6 +18,7 @@ const TOOLS = Object.freeze([
   { name: 'file.writeVersioned', label: '保存新版本', readOnly: false },
   { name: 'file.writeBinaryVersioned', label: '保存二进制新版本', readOnly: false },
   { name: 'web.fetch', label: '读取网页', readOnly: true },
+  { name: 'literature.search', label: '检索公开文献', readOnly: true },
   { name: 'browser.open', label: '打开隔离浏览器', readOnly: false },
   { name: 'browser.read', label: '读取当前网页', readOnly: true },
   { name: 'browser.click', label: '点击网页元素', readOnly: false },
@@ -206,6 +208,16 @@ class ToolRegistry {
       const temporary = `${target}.${process.pid}.tmp`
       fs.writeFileSync(temporary, buffer); fs.renameSync(temporary, target)
       return { path: target, size: buffer.length, sha256: sha256(buffer) }
+    }
+    if (name === 'literature.search') {
+      const url = searchUrl(input.provider, input.query)
+      this.policy.requireUrl(grant, url)
+      try {
+        const response = await this.fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(30000), headers: { 'user-agent': 'XiaoHe-Research-Agent/1.5' } })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const body = await response.text()
+        return { url, text: body.slice(0, 500000), truncated: body.length > 500000 }
+      } catch (error) { return { url, text: '', error: `文献数据库请求失败：${error instanceof Error ? error.message : '未知错误'}` } }
     }
     if (name === 'web.fetch') {
       const url = this.policy.requireUrl(grant, input.url)

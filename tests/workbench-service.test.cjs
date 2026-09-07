@@ -131,7 +131,7 @@ test('项目内容可在抽屉中安全预览图片与 PDF 数据', () => withWo
 
 test('对话中的常见科研辅助生成真实固定步骤，而不是提示词标签', () => withWorkbench(({ workspace, service }) => {
   const workflows = service.listConversationWorkflows()
-  assert.equal(workflows.length, 16)
+  assert.equal(workflows.length, 17)
   for (const id of ['literature-search', 'literature-summary', 'method-summary', 'skill-teaching', 'research-question', 'experiment-design', 'multi-paper-comparison', 'reproducibility-check', 'data-analysis-plan', 'paper-outline', 'research-progress-report', 'result-interpretation']) assert.ok(workflows.some(item => item.id === id))
   assert.equal(workflows.filter(item => item.featured).length, 4)
   assert.ok(workflows.every(item => item.available))

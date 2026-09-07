@@ -11,6 +11,30 @@ function firstLast(value, maximum) {
   return { content, originalChars: original.length, shownChars: content.length, truncated: true }
 }
 function short(value, maximum) { return firstLast(value, maximum).content }
+function relevantExcerpt(value, maximum, query = '') {
+  const original = String(value ?? '')
+  if (!query || original.length <= maximum || maximum < 180) return firstLast(original, maximum)
+  const terms = [...new Set(String(query).toLowerCase().match(/[a-z0-9_-]{3,}|[\u4e00-\u9fff]{2,}/g) || [])].flatMap(term => /^[\u4e00-\u9fff]+$/.test(term) ? Array.from({ length: term.length - 1 }, (_, i) => term.slice(i, i + 2)) : [term]).slice(0, 80)
+  if (!terms.length) return firstLast(original, maximum)
+  const window = Math.max(80, Math.min(1000, Math.floor((maximum - 100) / 3)))
+  const chunks = []
+  for (let start = 0; start < original.length; start += window) {
+    const text = original.slice(start, start + window); const lower = text.toLowerCase()
+    chunks.push({ start, end: start + text.length, text, score: terms.reduce((sum, term) => sum + (lower.includes(term) ? 1 : 0), 0) })
+  }
+  const selected = []; let used = 0
+  const ranked = [...chunks].sort((a, b) => b.score - a.score || a.start - b.start)
+  for (const chunk of [ranked[0], chunks[0], chunks.at(-1), ...ranked]) {
+    if (selected.includes(chunk)) continue
+    const cost = chunk.text.length + `[原文字符 ${chunk.start}-${chunk.end}]\n`.length + 1
+    if (used + cost + 28 > maximum) continue
+    selected.push(chunk); used += cost
+    if (maximum - used < window) break
+  }
+  if (!selected.length) return firstLast(original, maximum)
+  const content = selected.sort((a, b) => a.start - b.start).map(chunk => `[原文字符 ${chunk.start}-${chunk.end}]\n${chunk.text}`).join('\n') + '\n[内容已截断，仅显示相关片段]'
+  return { content, originalChars: original.length, shownChars: content.length, truncated: true }
+}
 function compactObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value ?? null
   return Object.fromEntries(Object.entries(value).slice(0, 20).map(([key, item]) => [key, typeof item === 'string' ? short(item, 240) : typeof item === 'number' || typeof item === 'boolean' || item === null ? item : short(JSON.stringify(item), 240)]))
@@ -21,7 +45,7 @@ function observation(step) {
 }
 function publicObservation(item) { const { _body, ...publicItem } = item; return publicItem }
 
-function buildModelContext({ project, session, memories = [], recentConfirmedResults = [], observations = [], maximumChars = MAX_CONTEXT_CHARS }) {
+function buildModelContext({ project, session, memories = [], recentConfirmedResults = [], observations = [], maximumChars = MAX_CONTEXT_CHARS, query = '' }) {
   if (!Number.isInteger(maximumChars) || maximumChars < MIN_CONTEXT_CHARS) throw new RangeError(`模型上下文预算至少需要 ${MIN_CONTEXT_CHARS} 个字符。`)
   const context = {
     project: { id: String(project.id || ''), name: short(project.name, 120) },
@@ -36,7 +60,7 @@ function buildModelContext({ project, session, memories = [], recentConfirmedRes
   if (baseline.length > maximumChars) throw new RangeError('模型上下文元数据超过预算，无法在不丢失来源记录的情况下构造上下文。')
   const count = context.completedStepObservations.length
   if (count) for (const item of context.completedStepObservations) {
-    const clipped = firstLast(item._body, Math.floor((maximumChars - baseline.length) / count))
+    const clipped = relevantExcerpt(item._body, Math.floor((maximumChars - baseline.length) / count), query)
     item.body = clipped.content; item.originalChars = clipped.originalChars; item.shownChars = clipped.shownChars; item.bodyTruncated = clipped.truncated
   }
   let serialized = serialize()
@@ -44,10 +68,10 @@ function buildModelContext({ project, session, memories = [], recentConfirmedRes
     const candidates = context.completedStepObservations.filter(item => item.body.length > 0)
     if (!candidates.length) throw new RangeError('模型上下文无法在预算内保留每份来源。')
     const largest = candidates.reduce((best, item) => item.body.length > best.body.length ? item : best)
-    const clipped = firstLast(largest._body, Math.max(0, largest.body.length - Math.max(1, Math.ceil((serialized.length - maximumChars) / candidates.length))))
+    const clipped = relevantExcerpt(largest._body, Math.max(0, largest.body.length - Math.max(1, Math.ceil((serialized.length - maximumChars) / candidates.length))), query)
     largest.body = clipped.content; largest.shownChars = clipped.shownChars; largest.bodyTruncated = true; serialized = serialize()
   }
   return { context: JSON.parse(serialized), serialized, truncated: context.completedStepObservations.some(item => item.bodyTruncated) || [...context.session.turns, ...context.confirmedMemories, ...context.recentConfirmedResults].some(item => item.truncated) }
 }
 
-module.exports = { MAX_CONTEXT_CHARS, MIN_CONTEXT_CHARS, buildModelContext }
+module.exports = { MAX_CONTEXT_CHARS, MIN_CONTEXT_CHARS, buildModelContext, relevantExcerpt }

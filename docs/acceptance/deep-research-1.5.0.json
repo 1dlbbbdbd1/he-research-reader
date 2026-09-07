@@ -1,0 +1,187 @@
+{
+  "version": "1.5.0",
+  "date": "2026-09-06",
+  "tests": {
+    "failed": 0,
+    "passed": 277,
+    "log": ".reader-cache/agent-1.5-tests-final.log"
+  },
+  "build": {
+    "passed": true,
+    "log": ".reader-cache/agent-1.5-build.log"
+  },
+  "liveResearch": {
+    "models": [
+      {
+        "role": "planner",
+        "providerId": "deepseek",
+        "model": "deepseek-v4-flash",
+        "usage": {
+          "promptTokens": 1348,
+          "completionTokens": 1306,
+          "totalTokens": 2654
+        },
+        "latencyMs": 12755
+      },
+      {
+        "role": "planner",
+        "providerId": "deepseek",
+        "model": "deepseek-v4-flash",
+        "usage": {
+          "promptTokens": 10048,
+          "completionTokens": 1083,
+          "totalTokens": 11131
+        },
+        "latencyMs": 11081
+      },
+      {
+        "role": "executor",
+        "providerId": "deepseek",
+        "model": "deepseek-v4-flash",
+        "usage": {
+          "promptTokens": 15101,
+          "completionTokens": 5666,
+          "totalTokens": 20767
+        },
+        "latencyMs": 49362
+      },
+      {
+        "role": "verifier",
+        "providerId": "deepseek",
+        "model": "deepseek-v4-flash",
+        "usage": {
+          "promptTokens": 16790,
+          "completionTokens": 6637,
+          "totalTokens": 23427
+        },
+        "latencyMs": 54283
+      }
+    ],
+    "errors": [
+      {
+        "provider": "crossref",
+        "url": "https://api.crossref.org/works?query.bibliographic=semantic+map+navigation+ablation+study+limitations&rows=10&select=DOI%2Ctitle%2Cauthor%2Cpublished%2CURL%2Cabstract%2Ctype",
+        "message": "文献数据库请求失败：HTTP 429"
+      }
+    ],
+    "searchStatus": "partial",
+    "status": "completed",
+    "reportPath": ".reader-cache/agent-1.5-live-final/report.md",
+    "requestCount": 10,
+    "reportVersion": 2,
+    "evidenceAudit": {
+      "passed": true,
+      "matchedCount": 10,
+      "claimCount": 10,
+      "scope": "source-excerpt-match",
+      "contentSha256": "0624362dc48caa1030eb86786669a15ad0b83e466adc22d2ecec97ac07a6d9e9"
+    },
+    "objective": "Investigate semantic exploration for object-goal navigation in embodied AI. Compare baseline methods, evidence from ablations and limitations. Identify one small reproducible follow-up experiment. Use short English search terms and write the report in Chinese.",
+    "candidateCount": 53
+  },
+  "desktop": {
+    "deepResearch": [
+      {
+        "width": 1024,
+        "height": 768,
+        "table": true,
+        "sourceLink": true,
+        "noRemoteImages": true,
+        "editor": true,
+        "confirmReadable": true,
+        "noOverflow": true
+      },
+      {
+        "width": 1600,
+        "height": 900,
+        "table": true,
+        "sourceLink": true,
+        "noRemoteImages": true,
+        "editor": true,
+        "confirmReadable": true,
+        "noOverflow": true
+      },
+      {
+        "width": 2560,
+        "height": 1440,
+        "table": true,
+        "sourceLink": true,
+        "noRemoteImages": true,
+        "editor": true,
+        "confirmReadable": true,
+        "noOverflow": true
+      },
+      {
+        "width": 3840,
+        "height": 2160,
+        "table": true,
+        "sourceLink": true,
+        "noRemoteImages": true,
+        "editor": true,
+        "confirmReadable": true,
+        "noOverflow": true
+      }
+    ],
+    "passed": true,
+    "researchCycle": [
+      {
+        "width": 1024,
+        "height": 768,
+        "shortcuts": 7,
+        "noOverflow": true,
+        "composerFits": true,
+        "sendVisible": true,
+        "inputVisible": true,
+        "minFont": 13,
+        "materialPreserved": true,
+        "rootScrollable": true
+      },
+      {
+        "width": 1600,
+        "height": 900,
+        "shortcuts": 7,
+        "noOverflow": true,
+        "composerFits": true,
+        "sendVisible": true,
+        "inputVisible": true,
+        "minFont": 13,
+        "materialPreserved": true,
+        "rootScrollable": true
+      },
+      {
+        "width": 2560,
+        "height": 1440,
+        "shortcuts": 7,
+        "noOverflow": true,
+        "composerFits": true,
+        "sendVisible": true,
+        "inputVisible": true,
+        "minFont": 13,
+        "materialPreserved": true,
+        "rootScrollable": true
+      },
+      {
+        "width": 3840,
+        "height": 2160,
+        "shortcuts": 7,
+        "noOverflow": true,
+        "composerFits": true,
+        "sendVisible": true,
+        "inputVisible": true,
+        "minFont": 13,
+        "materialPreserved": true,
+        "rootScrollable": true
+      }
+    ],
+    "screenshotRoot": ".reader-cache/desktop-smoke-1788694938740-35832-d34d85"
+  },
+  "packaging": {
+    "passed": true,
+    "directory": "release-1.5.0-deep-research",
+    "version": "1.5.0",
+    "bundledResearchSkills": 7,
+    "directorySmoke": ".reader-cache/desktop-packaged-smoke-1788695330542-14824-fc5a01",
+    "portableSmoke": ".reader-cache/desktop-packaged-smoke-1788695391630-26060-10af4a",
+    "artifacts": "deep-research-1.5.0-artifacts.json"
+  }
+}

@@ -2,6 +2,14 @@ const sharedPermissions = Object.freeze({ domains: [], applications: [], command
 
 const CONVERSATION_WORKFLOWS = Object.freeze([
   {
+    id: 'deep-literature-research', name: '深度文献研究', category: '文献与阅读', featured: false,
+    description: '拆解问题、跨库检索、按缺口补查，生成逐项核对原文摘录的研究报告。',
+    prompt: '说明研究问题、希望比较的方法和范围；可选择项目资料一起分析。', outputHint: '检索过程、证据主张、假设与下一步', keywords: ['深度研究', '深度调研', '研究现状', '证据缺口'],
+    skillId: 'xiaohe-literature-evidence', taskType: 'research', sourceSelection: 'optional', minimumSources: 0, maximumSources: 6,
+    requiredTools: ['project.inspect', 'literature.search'], optionalTools: ['research.source.read'],
+    permissionRequirements: { domains: ['api.crossref.org', 'export.arxiv.org'], applications: [], commands: [] },
+  },
+  {
     id: 'research-kickoff', name: '课题立项与推进计划', category: '选题与规划', featured: false,
     description: '结合目标、资源和已有证据，形成问题边界、文献路线、最小基线与阶段检查点。',
     prompt: '说说研究方向、导师要求、现有基础、设备和时间；不确定的可以直接写不知道。', outputHint: '立项草案、阶段证据与下一步', keywords: ['立项', '开题', '全流程', '课题规划'],
@@ -158,7 +166,12 @@ function buildConversationWorkflowSteps(workflow, objective, project, input = {}
   if (sourceIds.length < minimumSources) throw new Error(`“${workflow.name}”需要先选择至少 ${minimumSources} 份项目资料。`)
   const steps = [{ kind: 'tool', toolName: 'project.inspect', title: '查看当前项目', rationale: '先确认本次任务正在正确的项目范围内进行。', input: { root, _conversationWorkflowStep: 'inspect-project' } }]
   if (input.pastedText) steps.push({ kind: 'tool', toolName: 'research.source.read', title: '读取本次原始材料', rationale: '保留用户粘贴的原文，整理结果可回查来源。', input: { pastedText: input.pastedText, _conversationWorkflowStep: 'read-pasted-material' } })
-  if (workflow.id === 'literature-search') {
+  if (workflow.id === 'deep-literature-research') {
+    sourceIds.forEach((sourceId, index) => steps.push({ kind: 'tool', toolName: 'research.source.read', title: `读取项目资料 ${index + 1}`, input: { sourceId, _conversationWorkflowStep: `read-source-${index + 1}` } }))
+    steps.push({ kind: 'model', title: '拆解研究问题与检索词', rationale: '结合主题与所选资料，用至多三组适合数据库的检索词覆盖核心问题、基线和反向证据。', input: { role: 'planner', _deepResearchRound: 1, _conversationWorkflowStep: 'deep-plan' } })
+    steps.push({ kind: 'model', title: '检查证据缺口并补查', rationale: '根据真实检索结果，补充至多两组不同检索词；证据足够时停止，并说明依据。', input: { role: 'planner', _deepResearchRound: 2, _conversationWorkflowStep: 'deep-refine' } })
+    steps.push({ kind: 'model', title: '形成可核对的研究报告', rationale: '每项主张引用来源 ID 和原文摘录，比较支持、反对和背景证据；将待验证假设与证据缺口分开，给出下一步实验。', input: { role: 'executor', _conversationWorkflowStep: 'deep-report' } })
+  } else if (workflow.id === 'literature-search') {
     const query = encodeURIComponent(objective)
     steps.push({
       kind: 'tool', toolName: 'web.fetch', title: '检索候选文献',
@@ -185,6 +198,7 @@ function buildConversationWorkflowSteps(workflow, objective, project, input = {}
 
 function inferConversationWorkflow(objective) {
   const value = String(objective || '')
+  if (/深度.{0,4}(文献|研究|调研)|系统.{0,4}调研|研究现状/.test(value)) return getConversationWorkflow('deep-literature-research')
   if (/(整理|记录|归档|收集).{0,12}(实验记录|实验日志|实验笔记|散乱|零散)|(散乱|零散).{0,12}(实验|日志|记录)/.test(value)) return getConversationWorkflow('experiment-intake')
   if (/导师.{0,10}(视角|指导|审查|看看|建议|反馈)|从导师|像导师/.test(value)) return getConversationWorkflow('mentor-review')
   if (/立项|开题|课题规划|全流程规划/.test(value)) return getConversationWorkflow('research-kickoff')

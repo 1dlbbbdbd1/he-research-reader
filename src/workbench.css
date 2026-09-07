@@ -47,3 +47,9 @@
 .sidebar-memory-button > span, .sidebar-memory-button > small { white-space: nowrap; }
 .research-cycle-shortcuts button:focus-visible { outline: 2px solid #795ec6; outline-offset: 2px; }
 .agent-composer small { font-size: max(13px, var(--ui-text-xs, 13px)); }
+.research-report-preview { max-width: 100%; min-width: 0; overflow: auto; overflow-wrap: anywhere; font-size: 14px; line-height: 1.7; }
+.research-report-preview summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.research-report-preview table { border-collapse: collapse; }
+.research-report-preview th, .research-report-preview td { padding: 6px 10px; border: 1px solid var(--border-color, #d8dce4); }
+.research-report-preview pre { white-space: pre-wrap; }
+.editable-result footer button.workbench-primary { background: #684bb0; color: #fff; border-color: #684bb0; }

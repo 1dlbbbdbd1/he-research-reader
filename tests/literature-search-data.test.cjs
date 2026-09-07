@@ -8,6 +8,7 @@ test('Crossref 与 arXiv 真实响应会规范化为可追溯候选', () => {
     { completedAt: '2026-09-05T00:00:01Z', input: { url: 'https://export.arxiv.org/api/query?search_query=all:robot&start=0&max_results=10' }, output: { text: '<feed><entry><id>http://arxiv.org/abs/2401.12345v2</id><title> Preprint Robot </title><summary>Preprint abstract</summary><published>2024-01-02T00:00:00Z</published></entry></feed>' } },
   ], { objective: 'robot' })
   assert.equal(search.status, 'ok'); assert.equal(search.candidateCount, 2); assert.equal(search.candidates[0].doi, '10.1000/robot'); assert.equal(search.candidates[1].arxivId, '2401.12345v2'); assert.equal(search.requests[0].scope.rows, '10')
+  assert.equal(search.candidates[0].evidenceLevel, 'abstract'); assert.equal(search.candidates[1].evidenceLevel, 'preprint_abstract')
 })
 
 test('无效响应保留明确解析错误，不伪装成无结果', () => {
