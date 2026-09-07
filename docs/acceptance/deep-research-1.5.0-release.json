@@ -1,0 +1,31 @@
+{
+  "version": "1.5.0",
+  "publishedAt": "2026-09-07T04:27:21Z",
+  "releaseId": 383828297,
+  "url": "https://github.com/1dlbbbdbd1/he-research-reader/releases/tag/v1.5.0",
+  "tag": "v1.5.0",
+  "commit": "edef8a43ebfd3c4e4babc96ebc7c4f520824e347",
+  "workflowRun": 34082812305,
+  "workflowStatus": "success",
+  "checksumsVerifiedAgainstGitHubDigests": true,
+  "assets": [
+    {
+      "name": "SHA256SUMS.txt",
+      "size": 225,
+      "digest": "sha256:59ce5eca68f970598320c63633bef59e94aa3fa386d330b8f1259d3a56b18f00",
+      "browser_download_url": "https://github.com/1dlbbbdbd1/he-research-reader/releases/download/v1.5.0/SHA256SUMS.txt"
+    },
+    {
+      "name": "XiaoHeResearchAssistant-Portable-1.5.0-x64.exe",
+      "size": 106731599,
+      "digest": "sha256:accc4e12b017712c4eff8496f60148d7361a6e2df8952adab19678d310738a0c",
+      "browser_download_url": "https://github.com/1dlbbbdbd1/he-research-reader/releases/download/v1.5.0/XiaoHeResearchAssistant-Portable-1.5.0-x64.exe"
+    },
+    {
+      "name": "XiaoHeResearchAssistant-Setup-1.5.0-x64.exe",
+      "size": 435977283,
+      "digest": "sha256:f6dc45458b7e3fc94ade237f87d2344cb36d8ef1781462eb1751db3df4b22aa5",
+      "browser_download_url": "https://github.com/1dlbbbdbd1/he-research-reader/releases/download/v1.5.0/XiaoHeResearchAssistant-Setup-1.5.0-x64.exe"
+    }
+  ]
+}

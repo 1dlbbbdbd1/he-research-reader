@@ -183,5 +183,17 @@
     "directorySmoke": ".reader-cache/desktop-packaged-smoke-1788695330542-14824-fc5a01",
     "portableSmoke": ".reader-cache/desktop-packaged-smoke-1788695391630-26060-10af4a",
     "artifacts": "deep-research-1.5.0-artifacts.json"
+  },
+  "remoteTrial": {
+    "status": "success",
+    "runId": 34082394452,
+    "commit": "edef8a43ebfd3c4e4babc96ebc7c4f520824e347",
+    "url": "https://github.com/1dlbbbdbd1/he-research-reader/actions/runs/34082394452"
+  },
+  "release": {
+    "date": "2026-09-07",
+    "workflowRun": 34082812305,
+    "status": "published",
+    "receipt": "deep-research-1.5.0-release.json"
   }
 }

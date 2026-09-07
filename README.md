@@ -2,7 +2,7 @@
 
 面向个人研究者的 Windows 科研 Agent。围绕一个课题持续对话，管理文献、证据、实验记录、研究决定和写作成果。每个研究文件夹独立保存资料、会话、已确认记忆及任务过程。
 
-源码版本：**1.5.0，本地成品验收通过**。当前正式下载见 [GitHub Releases](https://github.com/1dlbbbdbd1/he-research-reader/releases/latest)。
+当前版本：**1.5.0，2026-09-07 正式发布**。安装版与便携版见 [GitHub Releases](https://github.com/1dlbbbdbd1/he-research-reader/releases/tag/v1.5.0)。
 
 ## 从一个课题开始
 
@@ -56,7 +56,7 @@ AI 任务会将选中的资料、相关对话及项目上下文发送给所配�
 
 本轮先调研 Elicit、Consensus、Scite、GPT Researcher、Open Deep Research、Sakana AI Scientist 与 FutureHouse Robin，再补上多步检索、证据摘录检查和长文相关片段。[市场对比与实施记录](docs/agent-market-comparison-2026-09-06.md)说明采用理由、证据边界与验收状态。
 
-当前已通过完整测试 277 项、生产构建、四档源码桌面验收及生产依赖审计（0 项漏洞）。真实模型完成两轮检索与自动修订，53 篇候选中形成 10 项出处匹配的主张；安装版和便携版已生成，目录版与便携版成品桌面验收通过；远端发布待完成。本地成品位于 `release-1.5.0-deep-research/`，目录内提供 `SHA256SUMS.txt`。详见 [本轮验收记录](docs/acceptance/deep-research-1.5.0.json)。
+当前已通过完整测试 277 项、生产构建、四档源码桌面验收及生产依赖审计（0 项漏洞）。真实模型完成两轮检索与自动修订，53 篇候选中形成 10 项出处匹配的主张；目录版与便携版成品桌面验收通过。GitHub 独立试打包与正式发布均通过，安装版、便携版及校验文件已发布，公开校验值与 GitHub 文件摘要一致。详见 [本轮验收记录](docs/acceptance/deep-research-1.5.0.json) 和 [发布凭据](docs/acceptance/deep-research-1.5.0-release.json)。本地成品位于 `release-1.5.0-deep-research/`，各构建的文件使用各自随包的 `SHA256SUMS.txt` 核对。
 
 开发命令：
 
